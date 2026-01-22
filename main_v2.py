@@ -430,30 +430,21 @@ class PerssonModelGUI_V2:
         )
         self.calc_status_label.pack()
 
-        # Create figure for calculation progress with 2 subplots
-        self.fig_calc_progress = Figure(figsize=(14, 4), dpi=100)
-        self.ax_calc_dma = self.fig_calc_progress.add_subplot(121)
-        self.ax_calc_psd = self.fig_calc_progress.add_subplot(122)
+        # Create figure for calculation progress with single plot
+        self.fig_calc_progress = Figure(figsize=(12, 5), dpi=100)
+        self.ax_calc_progress = self.fig_calc_progress.add_subplot(111)
 
         self.canvas_calc_progress = FigureCanvasTkAgg(self.fig_calc_progress, viz_frame)
         self.canvas_calc_progress.draw()
         self.canvas_calc_progress.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         # Initialize empty DMA plot
-        self.ax_calc_dma.set_xlabel('각주파수 ω (rad/s)')
-        self.ax_calc_dma.set_ylabel('저장 탄성률 E\' (Pa)')
-        self.ax_calc_dma.set_xscale('log')
-        self.ax_calc_dma.set_yscale('log')
-        self.ax_calc_dma.grid(True, alpha=0.3)
-        self.ax_calc_dma.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=10, fontweight='bold')
-
-        # Initialize empty PSD plot
-        self.ax_calc_psd.set_xlabel('파수 q (1/m)')
-        self.ax_calc_psd.set_ylabel('PSD C(q) (m⁴)')
-        self.ax_calc_psd.set_xscale('log')
-        self.ax_calc_psd.set_yscale('log')
-        self.ax_calc_psd.grid(True, alpha=0.3)
-        self.ax_calc_psd.set_title('PSD (사용 파수 범위)', fontsize=10, fontweight='bold')
+        self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)', fontsize=11, fontweight='bold')
+        self.ax_calc_progress.set_ylabel('탄성률 (Pa)', fontsize=11, fontweight='bold')
+        self.ax_calc_progress.set_xscale('log')
+        self.ax_calc_progress.set_yscale('log')
+        self.ax_calc_progress.grid(True, alpha=0.3)
+        self.ax_calc_progress.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=12, fontweight='bold')
 
         self.fig_calc_progress.tight_layout()
 
@@ -819,10 +810,9 @@ class PerssonModelGUI_V2:
                 integration_method='trapz'
             )
 
-            # Initialize calculation progress plots with master curves
+            # Initialize calculation progress plot with master curve
             try:
-                self.ax_calc_dma.clear()
-                self.ax_calc_psd.clear()
+                self.ax_calc_progress.clear()
 
                 # Plot DMA master curve
                 if self.material is not None:
@@ -830,28 +820,16 @@ class PerssonModelGUI_V2:
                     E_prime = self.material.get_storage_modulus(omega_plot)
                     E_double_prime = self.material.get_loss_modulus(omega_plot)
 
-                    self.ax_calc_dma.plot(omega_plot, E_prime, 'b-', linewidth=1.5, label="E' (저장 탄성률)")
-                    self.ax_calc_dma.plot(omega_plot, E_double_prime, 'r--', linewidth=1.5, label="E'' (손실 탄성률)")
+                    self.ax_calc_progress.plot(omega_plot, E_prime, 'b-', linewidth=2, label="E' (저장 탄성률)")
+                    self.ax_calc_progress.plot(omega_plot, E_double_prime, 'r--', linewidth=2, label="E'' (손실 탄성률)")
 
-                    self.ax_calc_dma.set_xlabel('각주파수 ω (rad/s)', fontsize=10)
-                    self.ax_calc_dma.set_ylabel('탄성률 (Pa)', fontsize=10)
-                    self.ax_calc_dma.set_xscale('log')
-                    self.ax_calc_dma.set_yscale('log')
-                    self.ax_calc_dma.grid(True, alpha=0.3)
-                    self.ax_calc_dma.legend(loc='best', fontsize=8)
-                    self.ax_calc_dma.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=10, fontweight='bold')
-
-                # Plot PSD
-                if self.psd_model is not None:
-                    q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
-                    C_q = self.psd_model(q_plot)
-
-                    self.ax_calc_psd.loglog(q_plot, C_q, 'g-', linewidth=2, label='C(q)')
-                    self.ax_calc_psd.set_xlabel('파수 q (1/m)', fontsize=10)
-                    self.ax_calc_psd.set_ylabel('PSD C(q) (m⁴)', fontsize=10)
-                    self.ax_calc_psd.grid(True, alpha=0.3)
-                    self.ax_calc_psd.legend(loc='best', fontsize=8)
-                    self.ax_calc_psd.set_title('PSD (사용 파수 범위)', fontsize=10, fontweight='bold')
+                    self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)', fontsize=11, fontweight='bold')
+                    self.ax_calc_progress.set_ylabel('탄성률 (Pa)', fontsize=11, fontweight='bold')
+                    self.ax_calc_progress.set_xscale('log')
+                    self.ax_calc_progress.set_yscale('log')
+                    self.ax_calc_progress.grid(True, alpha=0.3)
+                    self.ax_calc_progress.legend(loc='best', fontsize=9)
+                    self.ax_calc_progress.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=12, fontweight='bold')
 
                 self.fig_calc_progress.tight_layout()
                 self.canvas_calc_progress.draw()
@@ -882,25 +860,20 @@ class PerssonModelGUI_V2:
                         foreground='red'
                     )
 
-                    # Highlight frequency and wavenumber ranges
+                    # Highlight frequency range on DMA plot
                     try:
                         # Remove ALL previous highlight bands (clear old highlights)
-                        for artist in self.ax_calc_dma.collections[:]:
-                            if hasattr(artist, '_is_highlight'):
-                                artist.remove()
-                        for artist in self.ax_calc_psd.collections[:]:
+                        for artist in self.ax_calc_progress.collections[:]:
                             if hasattr(artist, '_is_highlight'):
                                 artist.remove()
 
-                        # Add vertical band to DMA plot (current frequency range)
-                        band_dma = self.ax_calc_dma.axvspan(omega_min, omega_max,
-                                                            alpha=0.2, color='red', zorder=0)
-                        band_dma._is_highlight = True
-
-                        # Add vertical band to PSD plot (current wavenumber range)
-                        band_psd = self.ax_calc_psd.axvspan(q_min_used, q_max_used,
-                                                            alpha=0.2, color='red', zorder=0)
-                        band_psd._is_highlight = True
+                        # Add vertical band to show current frequency range being used
+                        # Use yellow color with edge for better visibility
+                        band = self.ax_calc_progress.axvspan(omega_min, omega_max,
+                                                            alpha=0.3, color='yellow',
+                                                            edgecolor='orange', linewidth=2,
+                                                            zorder=10)
+                        band._is_highlight = True
 
                         self.canvas_calc_progress.draw()
                     except:
@@ -915,10 +888,7 @@ class PerssonModelGUI_V2:
             # Clear highlight after calculation and show completion message
             try:
                 # Remove all highlights
-                for artist in self.ax_calc_dma.collections[:]:
-                    if hasattr(artist, '_is_highlight'):
-                        artist.remove()
-                for artist in self.ax_calc_psd.collections[:]:
+                for artist in self.ax_calc_progress.collections[:]:
                     if hasattr(artist, '_is_highlight'):
                         artist.remove()
 
@@ -1025,7 +995,7 @@ class PerssonModelGUI_V2:
         # Plot 2: Gaussian stress distribution p(σ) for multiple velocities
         # Based on Persson theory: p(σ) = (1/√(2πσ₀²G)) * exp(-(σ-σ₀)²/(2σ₀²G))
         # Get nominal pressure from calculation settings
-        sigma_0_MPa = results['sigma_0'] / 1e6  # Convert Pa to MPa
+        sigma_0_MPa = self.results['sigma_0'] / 1e6  # Convert Pa to MPa
 
         # Create stress array (in MPa)
         sigma_array = np.linspace(0, 3 * sigma_0_MPa, 500)
