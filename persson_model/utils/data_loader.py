@@ -6,7 +6,8 @@ Functions to load measured PSD and DMA data from files.
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from scipy import signal
+from typing import Tuple, Optional, Dict
 import os
 
 
@@ -294,6 +295,93 @@ def create_psd_from_data(
     )
 
     return psd
+
+
+def smooth_dma_data(
+    omega: np.ndarray,
+    E_storage: np.ndarray,
+    E_loss: np.ndarray,
+    window_length: int = None,
+    polyorder: int = 2
+) -> Dict[str, np.ndarray]:
+    """
+    Smooth DMA data using Savitzky-Golay filter in log space.
+
+    Applies smoothing to reduce measurement noise while preserving
+    the overall trend of viscoelastic master curves.
+
+    Parameters
+    ----------
+    omega : np.ndarray
+        Angular frequency (rad/s)
+    E_storage : np.ndarray
+        Storage modulus E' (Pa)
+    E_loss : np.ndarray
+        Loss modulus E'' (Pa)
+    window_length : int, optional
+        Window length for Savitzky-Golay filter.
+        If None, automatically determined based on data length.
+        Must be odd and >= polyorder + 2.
+    polyorder : int, optional
+        Polynomial order for Savitzky-Golay filter (default: 2)
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'omega': angular frequency (same as input)
+        - 'E_storage_smooth': smoothed storage modulus
+        - 'E_loss_smooth': smoothed loss modulus
+        - 'omega_raw': original omega
+        - 'E_storage_raw': original E_storage
+        - 'E_loss_raw': original E_loss
+    """
+    n = len(omega)
+
+    # Determine window length if not specified
+    if window_length is None:
+        # Use about 10-15% of data points, ensure odd
+        window_length = max(5, min(51, int(n * 0.12)))
+        if window_length % 2 == 0:
+            window_length += 1
+
+    # Ensure window length is valid
+    window_length = min(window_length, n)
+    if window_length % 2 == 0:
+        window_length -= 1
+    window_length = max(polyorder + 2, window_length)
+
+    # If not enough points, skip smoothing
+    if n < polyorder + 2:
+        return {
+            'omega': omega,
+            'E_storage_smooth': E_storage,
+            'E_loss_smooth': E_loss,
+            'omega_raw': omega,
+            'E_storage_raw': E_storage,
+            'E_loss_raw': E_loss
+        }
+
+    # Smooth in log space for better results
+    log_E_storage = np.log10(np.maximum(E_storage, 1e3))
+    log_E_loss = np.log10(np.maximum(E_loss, 1.0))
+
+    # Apply Savitzky-Golay filter
+    log_E_storage_smooth = signal.savgol_filter(log_E_storage, window_length, polyorder)
+    log_E_loss_smooth = signal.savgol_filter(log_E_loss, window_length, polyorder)
+
+    # Convert back to linear space
+    E_storage_smooth = 10**log_E_storage_smooth
+    E_loss_smooth = 10**log_E_loss_smooth
+
+    return {
+        'omega': omega,
+        'E_storage_smooth': E_storage_smooth,
+        'E_loss_smooth': E_loss_smooth,
+        'omega_raw': omega,
+        'E_storage_raw': E_storage,
+        'E_loss_raw': E_loss
+    }
 
 
 def save_example_data(output_dir: str = 'examples/data'):

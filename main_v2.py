@@ -44,7 +44,8 @@ from persson_model.utils.data_loader import (
     load_psd_from_file,
     load_dma_from_file,
     create_material_from_dma,
-    create_psd_from_data
+    create_psd_from_data,
+    smooth_dma_data
 )
 
 # Configure matplotlib for better Korean font support
@@ -96,6 +97,7 @@ class PerssonModelGUI_V2:
         self.psd_model = None
         self.g_calculator = None
         self.results = {}
+        self.raw_dma_data = None  # Store raw DMA data for plotting
 
         # Create UI
         self._create_menu()
@@ -117,18 +119,29 @@ class PerssonModelGUI_V2:
 
             if os.path.exists(psd_file) and os.path.exists(dma_file):
                 # Load DMA data
-                omega, E_storage, E_loss = load_dma_from_file(
+                omega_raw, E_storage_raw, E_loss_raw = load_dma_from_file(
                     dma_file,
                     skip_header=1,
                     freq_unit='Hz',
                     modulus_unit='MPa'
                 )
 
+                # Apply smoothing/fitting
+                smoothed = smooth_dma_data(omega_raw, E_storage_raw, E_loss_raw)
+
+                # Store raw data for visualization
+                self.raw_dma_data = {
+                    'omega': omega_raw,
+                    'E_storage': E_storage_raw,
+                    'E_loss': E_loss_raw
+                }
+
+                # Create material from smoothed data
                 self.material = create_material_from_dma(
-                    omega=omega,
-                    E_storage=E_storage,
-                    E_loss=E_loss,
-                    material_name="Measured Rubber",
+                    omega=smoothed['omega'],
+                    E_storage=smoothed['E_storage_smooth'],
+                    E_loss=smoothed['E_loss_smooth'],
+                    material_name="Measured Rubber (smoothed)",
                     reference_temp=20.0
                 )
 
@@ -417,28 +430,34 @@ class PerssonModelGUI_V2:
         self.ax_master_curve.clear()
         self.ax_psd.clear()
 
-        # Plot 1: Master Curve (E', E'', tan δ)
+        # Plot 1: Master Curve (E', E'')
         omega = np.logspace(-2, 12, 200)
         E_storage = self.material.get_storage_modulus(omega)
         E_loss = self.material.get_loss_modulus(omega)
-        tan_delta = E_loss / E_storage
 
         ax1 = self.ax_master_curve
-        ax1_twin = ax1.twinx()
 
-        ax1.loglog(omega, E_storage/1e6, 'g-', linewidth=2, label="E' (저장 탄성률)", alpha=0.9)
-        ax1.loglog(omega, E_loss/1e6, 'orange', linewidth=2, label="E'' (손실 탄성률)", alpha=0.9)
-        ax1_twin.semilogx(omega, tan_delta, 'r--', linewidth=2, label="tan(δ)", alpha=0.9)
+        # Plot smoothed data (from interpolator)
+        ax1.loglog(omega, E_storage/1e6, 'g-', linewidth=2.5, label="E' (보간/평활화)", alpha=0.9, zorder=2)
+        ax1.loglog(omega, E_loss/1e6, 'orange', linewidth=2.5, label="E'' (보간/평활화)", alpha=0.9, zorder=2)
+
+        # Plot raw measured data if available
+        if self.raw_dma_data is not None:
+            ax1.scatter(self.raw_dma_data['omega'], self.raw_dma_data['E_storage']/1e6,
+                       c='darkgreen', s=20, alpha=0.5, label="E' (측정값)", zorder=1)
+            ax1.scatter(self.raw_dma_data['omega'], self.raw_dma_data['E_loss']/1e6,
+                       c='darkorange', s=20, alpha=0.5, label="E'' (측정값)", zorder=1)
 
         ax1.set_xlabel('각주파수 ω (rad/s)', fontweight='bold', fontsize=11, labelpad=5)
-        ax1.set_ylabel('탄성률 (MPa)', fontweight='bold', fontsize=11, color='g',
-                       rotation=90, labelpad=10)
-        ax1_twin.set_ylabel('tan(δ)', fontweight='bold', fontsize=11, color='r',
-                           rotation=90, labelpad=10)
+        ax1.set_ylabel('탄성률 (MPa)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
         ax1.set_title('점탄성 마스터 곡선', fontweight='bold', fontsize=12, pad=10)
-        ax1.legend(loc='upper left', fontsize=9)
-        ax1_twin.legend(loc='upper right', fontsize=9)
+        ax1.legend(loc='upper left', fontsize=8, ncol=2)
         ax1.grid(True, alpha=0.3)
+
+        # Fix axis formatter to avoid box numbers
+        from matplotlib.ticker import LogFormatterSciNotation
+        ax1.xaxis.set_major_formatter(LogFormatterSciNotation())
+        ax1.yaxis.set_major_formatter(LogFormatterSciNotation())
 
         # Plot 2: PSD C(q) with Hurst exponent
         if self.psd_model is not None:
@@ -473,6 +492,11 @@ class PerssonModelGUI_V2:
             self.ax_psd.legend(fontsize=9)
             self.ax_psd.grid(True, alpha=0.3)
 
+            # Fix axis formatter
+            from matplotlib.ticker import LogFormatterSciNotation
+            self.ax_psd.xaxis.set_major_formatter(LogFormatterSciNotation())
+            self.ax_psd.yaxis.set_major_formatter(LogFormatterSciNotation())
+
         self.fig_verification.tight_layout(pad=2.0)
         self.canvas_verification.draw()
 
@@ -489,18 +513,31 @@ class PerssonModelGUI_V2:
 
         if filename:
             try:
-                omega, E_storage, E_loss = load_dma_from_file(
+                omega_raw, E_storage_raw, E_loss_raw = load_dma_from_file(
                     filename, skip_header=1, freq_unit='Hz', modulus_unit='MPa'
                 )
 
+                # Apply smoothing/fitting
+                smoothed = smooth_dma_data(omega_raw, E_storage_raw, E_loss_raw)
+
+                # Store raw data for visualization
+                self.raw_dma_data = {
+                    'omega': omega_raw,
+                    'E_storage': E_storage_raw,
+                    'E_loss': E_loss_raw
+                }
+
+                # Create material from smoothed data
                 self.material = create_material_from_dma(
-                    omega, E_storage, E_loss,
-                    material_name=os.path.splitext(os.path.basename(filename))[0],
+                    omega=smoothed['omega'],
+                    E_storage=smoothed['E_storage_smooth'],
+                    E_loss=smoothed['E_loss_smooth'],
+                    material_name=os.path.splitext(os.path.basename(filename))[0] + " (smoothed)",
                     reference_temp=float(self.temperature_var.get())
                 )
 
                 self._update_verification_plots()
-                messagebox.showinfo("Success", f"DMA data loaded: {len(omega)} points")
+                messagebox.showinfo("Success", f"DMA data loaded and smoothed: {len(omega_raw)} points")
 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load DMA data:\n{str(e)}")
@@ -646,6 +683,11 @@ class PerssonModelGUI_V2:
         ax1.legend(fontsize=7, ncol=2)
         ax1.grid(True, alpha=0.3)
 
+        # Fix axis formatter
+        from matplotlib.ticker import LogFormatterSciNotation
+        ax1.xaxis.set_major_formatter(LogFormatterSciNotation())
+        ax1.yaxis.set_major_formatter(LogFormatterSciNotation())
+
         # Plot 2: G(q,v) Heatmap (히트맵)
         # Create proper meshgrid for pcolormesh
         V_mesh, Q_mesh = np.meshgrid(v, q)
@@ -659,6 +701,10 @@ class PerssonModelGUI_V2:
         cbar = self.fig_results.colorbar(im, ax=ax2)
         cbar.set_label('G', fontweight='bold', fontsize=10, rotation=90)
 
+        # Fix axis formatter
+        ax2.xaxis.set_major_formatter(LogFormatterSciNotation())
+        ax2.yaxis.set_major_formatter(LogFormatterSciNotation())
+
         # Plot 3: Contact Area P(q,v) (접촉 면적)
         for j, (v_val, color) in enumerate(zip(v, colors)):
             if j % max(1, len(v) // 10) == 0:
@@ -671,6 +717,9 @@ class PerssonModelGUI_V2:
         ax3.legend(fontsize=7, ncol=2)
         ax3.grid(True, alpha=0.3)
 
+        # Fix axis formatter
+        ax3.xaxis.set_major_formatter(LogFormatterSciNotation())
+
         # Plot 4: Final contact area vs velocity (속도에 따른 최종 접촉 면적)
         P_final = P_matrix[-1, :]
         ax4.semilogx(v, P_final, 'ro-', linewidth=2, markersize=4)
@@ -679,7 +728,11 @@ class PerssonModelGUI_V2:
         ax4.set_title('(d) 속도에 따른 접촉 면적', fontweight='bold', fontsize=11, pad=8)
         ax4.grid(True, alpha=0.3)
 
+        # Fix axis formatter
+        ax4.xaxis.set_major_formatter(LogFormatterSciNotation())
+
         # Plot 5: Inner integral vs q for multiple velocities (다중 속도에서의 내부 적분)
+        # Physical meaning: Normalized viscoelastic response averaged over all angles
         if has_detailed:
             cmap_detail = plt.get_cmap('plasma')
             for i, detail_result in enumerate(detailed_multi_v):
@@ -689,10 +742,15 @@ class PerssonModelGUI_V2:
                           color=color, linewidth=1.5, label=f'v={v_val:.4f} m/s', alpha=0.8)
 
             ax5.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
-            ax5.set_ylabel('내부 적분 값', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
-            ax5.set_title('(e) 다중 속도에서의 내부 적분', fontweight='bold', fontsize=11, pad=8)
+            ax5.set_ylabel('각도 평균 점탄성 응답\n∫dφ|E(qvcosφ)|²', fontweight='bold', fontsize=10, rotation=90, labelpad=12)
+            ax5.set_title('(e) 내부 적분 (각도 적분)', fontweight='bold', fontsize=11, pad=8)
             ax5.legend(fontsize=7, ncol=2)
             ax5.grid(True, alpha=0.3)
+
+            # Fix axis formatter
+            from matplotlib.ticker import LogFormatterSciNotation
+            ax5.xaxis.set_major_formatter(LogFormatterSciNotation())
+            ax5.yaxis.set_major_formatter(LogFormatterSciNotation())
         else:
             ax5.text(0.5, 0.5, '내부 적분 데이터 없음',
                     ha='center', va='center', transform=ax5.transAxes, fontsize=10)
@@ -707,10 +765,14 @@ class PerssonModelGUI_V2:
                           color=color, linewidth=1.5, label=f'v={v_val:.4f} m/s', alpha=0.8)
 
             ax6.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
-            ax6.set_ylabel('G 피적분함수', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+            ax6.set_ylabel('G 피적분함수\nq³C(q)×각도적분', fontweight='bold', fontsize=10, rotation=90, labelpad=12)
             ax6.set_title('(f) 다중 속도에서의 G 피적분함수', fontweight='bold', fontsize=11, pad=8)
             ax6.legend(fontsize=7, ncol=2)
             ax6.grid(True, alpha=0.3)
+
+            # Fix axis formatter
+            ax6.xaxis.set_major_formatter(LogFormatterSciNotation())
+            ax6.yaxis.set_major_formatter(LogFormatterSciNotation())
         else:
             ax6.text(0.5, 0.5, '상세 데이터 없음',
                     ha='center', va='center', transform=ax6.transAxes, fontsize=10)
