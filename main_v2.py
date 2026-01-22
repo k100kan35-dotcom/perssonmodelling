@@ -1019,6 +1019,15 @@ class PerssonModelGUI_V2:
         # Create stress array (in MPa)
         sigma_array = np.linspace(0, sigma_max, 500)
 
+        # Debug: Print some values to verify calculations
+        print(f"\n=== Debug: Stress Distribution ===")
+        print(f"σ0 = {sigma_0_MPa:.4f} MPa")
+        print(f"G_matrix shape: {G_matrix.shape}")
+        print(f"G_matrix[0, 0] (first q, first v): {G_matrix[0, 0]:.2e}")
+        print(f"G_matrix[-1, 0] (last q, first v): {G_matrix[-1, 0]:.2e}")
+        print(f"G_max: {G_max:.2e}")
+        print(f"sigma_max: {sigma_max:.2f} MPa")
+
         # Plot stress distributions for selected velocities
         for j, v_val in enumerate(v):
             if j % max(1, len(v) // 10) == 0:
@@ -1028,6 +1037,16 @@ class PerssonModelGUI_V2:
                 G_q0 = G_matrix[0, j]      # G at minimum wavenumber
                 G_qmax = G_matrix[-1, j]   # G at maximum wavenumber
 
+                # Debug: Print for first velocity
+                if j == 0:
+                    variance_debug = (sigma_0_MPa**2) * G_qmax
+                    std_debug = np.sqrt(variance_debug)
+                    print(f"\nFor v = {v_val:.4e} m/s:")
+                    print(f"  G(q0) = {G_q0:.2e}, G(qmax) = {G_qmax:.2e}")
+                    print(f"  variance = σ0² * G = {variance_debug:.2e} MPa²")
+                    print(f"  std = {std_debug:.2f} MPa")
+                    print(f"  Peak should be at σ0 = {sigma_0_MPa:.4f} MPa")
+
                 # Calculate stress distribution at q0 (dotted line)
                 if G_q0 > 1e-10:
                     # Variance in MPa²
@@ -1035,8 +1054,8 @@ class PerssonModelGUI_V2:
                     P_sigma_q0 = (1 / np.sqrt(4 * np.pi * variance_q0)) * \
                                  (np.exp(-(sigma_array - sigma_0_MPa)**2 / (4 * variance_q0)) - \
                                   np.exp(-(sigma_array + sigma_0_MPa)**2 / (4 * variance_q0)))
-                    ax2.plot(sigma_array, P_sigma_q0, color=color, linestyle='--', linewidth=1.5,
-                            alpha=0.6)
+                    ax2.plot(sigma_array, P_sigma_q0, color=color, linestyle=':', linewidth=2.5,
+                            alpha=0.6)  # No label for q0 lines to reduce legend clutter
 
                 # Calculate stress distribution at q_max (solid line)
                 if G_qmax > 1e-10:
@@ -1046,7 +1065,7 @@ class PerssonModelGUI_V2:
                                    (np.exp(-(sigma_array - sigma_0_MPa)**2 / (4 * variance_qmax)) - \
                                     np.exp(-(sigma_array + sigma_0_MPa)**2 / (4 * variance_qmax)))
                     ax2.plot(sigma_array, P_sigma_qmax, color=color, linestyle='-', linewidth=2,
-                            label=f'v={v_val:.4f} m/s', alpha=0.8)
+                            label=f'v={v_val:.4f} m/s', alpha=0.9)
 
         # Add vertical line for nominal pressure
         ax2.axvline(sigma_0_MPa, color='black', linestyle='--', linewidth=2,
