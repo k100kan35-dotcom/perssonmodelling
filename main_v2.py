@@ -454,10 +454,16 @@ class PerssonModelGUI_V2:
         ax1.legend(loc='upper left', fontsize=8, ncol=2)
         ax1.grid(True, alpha=0.3)
 
-        # Fix axis formatter to avoid box numbers
-        from matplotlib.ticker import LogFormatterSciNotation
-        ax1.xaxis.set_major_formatter(LogFormatterSciNotation())
-        ax1.yaxis.set_major_formatter(LogFormatterSciNotation())
+        # Fix axis formatter to avoid box numbers and minus sign issues
+        from matplotlib.ticker import FuncFormatter
+        def log_tick_formatter(val, pos=None):
+            if val >= 1:
+                return f'{val:.0f}'
+            else:
+                exponent = int(np.floor(np.log10(val)))
+                return f'$10^{{{exponent}}}$'
+        ax1.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+        ax1.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         # Plot 2: PSD C(q) with Hurst exponent
         if self.psd_model is not None:
@@ -493,9 +499,8 @@ class PerssonModelGUI_V2:
             self.ax_psd.grid(True, alpha=0.3)
 
             # Fix axis formatter
-            from matplotlib.ticker import LogFormatterSciNotation
-            self.ax_psd.xaxis.set_major_formatter(LogFormatterSciNotation())
-            self.ax_psd.yaxis.set_major_formatter(LogFormatterSciNotation())
+            self.ax_psd.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+            self.ax_psd.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         self.fig_verification.tight_layout(pad=2.0)
         self.canvas_verification.draw()
@@ -601,14 +606,48 @@ class PerssonModelGUI_V2:
                 integration_method='trapz'
             )
 
-            # Calculate G(q,v) 2D matrix
+            # Calculate G(q,v) 2D matrix with real-time visualization
             def progress_callback(percent):
                 self.progress_var.set(percent)
+                # Update status to show which velocity is being calculated
+                v_idx = int(percent / 100 * len(v_array))
+                if v_idx < len(v_array):
+                    current_v = v_array[v_idx]
+                    # Calculate frequency range used
+                    omega_min = q_array[0] * current_v
+                    omega_max = q_array[-1] * current_v
+                    self.status_var.set(f"계산 중... v={current_v:.4f} m/s (ω: {omega_min:.2e} ~ {omega_max:.2e} rad/s)")
+
+                    # Highlight frequency range on verification plot if visible
+                    try:
+                        # Clear previous highlights
+                        for line in self.ax_master_curve.lines[:]:
+                            if hasattr(line, '_is_highlight'):
+                                line.remove()
+
+                        # Add vertical bands to show frequency range being used
+                        ylim = self.ax_master_curve.get_ylim()
+                        band = self.ax_master_curve.axvspan(omega_min, omega_max,
+                                                           alpha=0.1, color='red', zorder=0)
+                        band._is_highlight = True
+                        self.canvas_verification.draw()
+                    except:
+                        pass
+
                 self.root.update()
 
             results_2d = self.g_calculator.calculate_G_multi_velocity(
                 q_array, v_array, q_min=q_min, progress_callback=progress_callback
             )
+
+            # Clear highlight after calculation
+            try:
+                for line in self.ax_master_curve.lines[:]:
+                    if hasattr(line, '_is_highlight'):
+                        line.remove()
+                self.canvas_verification.draw()
+            except:
+                pass
 
             # Calculate detailed results for selected velocities (for visualization)
             # Select 5-8 velocities spanning the range
@@ -684,26 +723,44 @@ class PerssonModelGUI_V2:
         ax1.grid(True, alpha=0.3)
 
         # Fix axis formatter
-        from matplotlib.ticker import LogFormatterSciNotation
-        ax1.xaxis.set_major_formatter(LogFormatterSciNotation())
-        ax1.yaxis.set_major_formatter(LogFormatterSciNotation())
+        from matplotlib.ticker import FuncFormatter
+        def log_tick_formatter(val, pos=None):
+            if val >= 1:
+                return f'{val:.0f}'
+            else:
+                exponent = int(np.floor(np.log10(val)))
+                return f'$10^{{{exponent}}}$'
+        ax1.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+        ax1.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
-        # Plot 2: G(q,v) Heatmap (히트맵)
-        # Create proper meshgrid for pcolormesh
-        V_mesh, Q_mesh = np.meshgrid(v, q)
-        im = ax2.pcolormesh(V_mesh, Q_mesh, G_matrix,
-                            cmap='hot', shading='auto', norm=matplotlib.colors.LogNorm())
-        ax2.set_xscale('log')
-        ax2.set_yscale('log')
-        ax2.set_xlabel('속도 v (m/s)', fontweight='bold', fontsize=11, labelpad=5)
-        ax2.set_ylabel('파수 q (1/m)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
-        ax2.set_title('(b) G(q,v) 히트맵', fontweight='bold', fontsize=11, pad=8)
-        cbar = self.fig_results.colorbar(im, ax=ax2)
-        cbar.set_label('G', fontweight='bold', fontsize=10, rotation=90)
+        # Plot 2: Stress distribution p(q) for multiple velocities (응력 분포 곡선)
+        # Calculate normalized stress distribution from G(q)
+        # p(q) approximation: derivative of contact area with respect to log(q)
+        for j, (v_val, color) in enumerate(zip(v, colors)):
+            if j % max(1, len(v) // 10) == 0:
+                # Calculate stress distribution: approximately -d(P)/d(log q)
+                P_curve = P_matrix[:, j]
+                # Use numerical derivative
+                log_q = np.log10(q)
+                p_q = -np.gradient(P_curve, log_q)
+                p_q = np.maximum(p_q, 0)  # Only positive values
+
+                # Normalize for visualization
+                if np.max(p_q) > 0:
+                    p_q_norm = p_q / np.max(p_q)
+                    # Fill area under curve to visualize integral
+                    ax2.fill_between(q, 0, p_q_norm, color=color, alpha=0.3)
+                    ax2.semilogx(q, p_q_norm, color=color, linewidth=1.5,
+                              label=f'v={v_val:.4f} m/s', alpha=0.9)
+
+        ax2.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
+        ax2.set_ylabel('정규화 응력 분포 p(q)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+        ax2.set_title('(b) 속도별 응력 분포 (∫p(q)>0)', fontweight='bold', fontsize=11, pad=8)
+        ax2.legend(fontsize=7, ncol=2)
+        ax2.grid(True, alpha=0.3)
 
         # Fix axis formatter
-        ax2.xaxis.set_major_formatter(LogFormatterSciNotation())
-        ax2.yaxis.set_major_formatter(LogFormatterSciNotation())
+        ax2.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         # Plot 3: Contact Area P(q,v) (접촉 면적)
         for j, (v_val, color) in enumerate(zip(v, colors)):
@@ -718,7 +775,7 @@ class PerssonModelGUI_V2:
         ax3.grid(True, alpha=0.3)
 
         # Fix axis formatter
-        ax3.xaxis.set_major_formatter(LogFormatterSciNotation())
+        ax3.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         # Plot 4: Final contact area vs velocity (속도에 따른 최종 접촉 면적)
         P_final = P_matrix[-1, :]
@@ -729,7 +786,7 @@ class PerssonModelGUI_V2:
         ax4.grid(True, alpha=0.3)
 
         # Fix axis formatter
-        ax4.xaxis.set_major_formatter(LogFormatterSciNotation())
+        ax4.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         # Plot 5: Inner integral vs q for multiple velocities (다중 속도에서의 내부 적분)
         # Physical meaning: Normalized viscoelastic response averaged over all angles
@@ -748,9 +805,8 @@ class PerssonModelGUI_V2:
             ax5.grid(True, alpha=0.3)
 
             # Fix axis formatter
-            from matplotlib.ticker import LogFormatterSciNotation
-            ax5.xaxis.set_major_formatter(LogFormatterSciNotation())
-            ax5.yaxis.set_major_formatter(LogFormatterSciNotation())
+            ax5.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+            ax5.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
         else:
             ax5.text(0.5, 0.5, '내부 적분 데이터 없음',
                     ha='center', va='center', transform=ax5.transAxes, fontsize=10)
@@ -771,8 +827,8 @@ class PerssonModelGUI_V2:
             ax6.grid(True, alpha=0.3)
 
             # Fix axis formatter
-            ax6.xaxis.set_major_formatter(LogFormatterSciNotation())
-            ax6.yaxis.set_major_formatter(LogFormatterSciNotation())
+            ax6.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+            ax6.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
         else:
             ax6.text(0.5, 0.5, '상세 데이터 없음',
                     ha='center', va='center', transform=ax6.transAxes, fontsize=10)

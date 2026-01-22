@@ -302,7 +302,8 @@ def smooth_dma_data(
     E_storage: np.ndarray,
     E_loss: np.ndarray,
     window_length: int = None,
-    polyorder: int = 2
+    polyorder: int = 2,
+    remove_outliers: bool = True
 ) -> Dict[str, np.ndarray]:
     """
     Smooth DMA data using Savitzky-Golay filter in log space.
@@ -324,6 +325,8 @@ def smooth_dma_data(
         Must be odd and >= polyorder + 2.
     polyorder : int, optional
         Polynomial order for Savitzky-Golay filter (default: 2)
+    remove_outliers : bool, optional
+        If True, remove outliers before smoothing (default: True)
 
     Returns
     -------
@@ -338,10 +341,44 @@ def smooth_dma_data(
     """
     n = len(omega)
 
+    # Remove outliers if requested
+    if remove_outliers and n > 10:
+        # Calculate median absolute deviation in log space
+        log_E_storage = np.log10(np.maximum(E_storage, 1e3))
+        log_E_loss = np.log10(np.maximum(E_loss, 1.0))
+
+        # Compute rolling median
+        from scipy.ndimage import median_filter
+        window_size = min(7, n if n % 2 == 1 else n - 1)
+        median_E_storage = median_filter(log_E_storage, size=window_size, mode='nearest')
+        median_E_loss = median_filter(log_E_loss, size=window_size, mode='nearest')
+
+        # Calculate deviation
+        dev_E_storage = np.abs(log_E_storage - median_E_storage)
+        dev_E_loss = np.abs(log_E_loss - median_E_loss)
+
+        # Threshold: 3 times median absolute deviation
+        mad_E_storage = np.median(dev_E_storage)
+        mad_E_loss = np.median(dev_E_loss)
+        threshold_storage = 3.0 * mad_E_storage
+        threshold_loss = 3.0 * mad_E_loss
+
+        # Mark outliers
+        outlier_mask = (dev_E_storage > threshold_storage) | (dev_E_loss > threshold_loss)
+
+        # Replace outliers with median values
+        E_storage_clean = E_storage.copy()
+        E_loss_clean = E_loss.copy()
+        E_storage_clean[outlier_mask] = 10**median_E_storage[outlier_mask]
+        E_loss_clean[outlier_mask] = 10**median_E_loss[outlier_mask]
+    else:
+        E_storage_clean = E_storage
+        E_loss_clean = E_loss
+
     # Determine window length if not specified
     if window_length is None:
-        # Use about 10-15% of data points, ensure odd
-        window_length = max(5, min(51, int(n * 0.12)))
+        # Use about 15-25% of data points for stronger smoothing
+        window_length = max(7, min(51, int(n * 0.20)))
         if window_length % 2 == 0:
             window_length += 1
 
@@ -363,12 +400,20 @@ def smooth_dma_data(
         }
 
     # Smooth in log space for better results
-    log_E_storage = np.log10(np.maximum(E_storage, 1e3))
-    log_E_loss = np.log10(np.maximum(E_loss, 1.0))
+    log_E_storage = np.log10(np.maximum(E_storage_clean, 1e3))
+    log_E_loss = np.log10(np.maximum(E_loss_clean, 1.0))
 
-    # Apply Savitzky-Golay filter
+    # Apply Savitzky-Golay filter multiple times for stronger smoothing
     log_E_storage_smooth = signal.savgol_filter(log_E_storage, window_length, polyorder)
     log_E_loss_smooth = signal.savgol_filter(log_E_loss, window_length, polyorder)
+
+    # Apply second pass with smaller window for refinement
+    window_length_2 = max(5, window_length // 2)
+    if window_length_2 % 2 == 0:
+        window_length_2 += 1
+    if window_length_2 >= polyorder + 2:
+        log_E_storage_smooth = signal.savgol_filter(log_E_storage_smooth, window_length_2, polyorder)
+        log_E_loss_smooth = signal.savgol_filter(log_E_loss_smooth, window_length_2, polyorder)
 
     # Convert back to linear space
     E_storage_smooth = 10**log_E_storage_smooth
