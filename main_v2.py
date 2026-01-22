@@ -338,7 +338,7 @@ class PerssonModelGUI_V2:
 
         # Nominal pressure
         ttk.Label(input_frame, text="공칭 압력 (MPa):").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.sigma_0_var = tk.StringVar(value="1.0")
+        self.sigma_0_var = tk.StringVar(value="0.3")
         ttk.Entry(input_frame, textvariable=self.sigma_0_var, width=15).grid(row=row, column=1, pady=5)
 
         # Velocity range
@@ -376,12 +376,12 @@ class PerssonModelGUI_V2:
         # Wavenumber range
         row += 1
         ttk.Label(input_frame, text="최소 파수 q_min (1/m):").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.q_min_var = tk.StringVar(value="2e1")
+        self.q_min_var = tk.StringVar(value="2.00e-01")
         ttk.Entry(input_frame, textvariable=self.q_min_var, width=15).grid(row=row, column=1, pady=5)
 
         row += 1
         ttk.Label(input_frame, text="최대 파수 q_max (1/m):").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.q_max_var = tk.StringVar(value="1e9")
+        self.q_max_var = tk.StringVar(value="6.0e+5")
         ttk.Entry(input_frame, textvariable=self.q_max_var, width=15).grid(row=row, column=1, pady=5)
 
         row += 1
