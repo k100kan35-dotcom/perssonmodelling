@@ -377,8 +377,8 @@ def smooth_dma_data(
 
     # Determine window length if not specified
     if window_length is None:
-        # Use about 15-25% of data points for stronger smoothing
-        window_length = max(7, min(51, int(n * 0.20)))
+        # Use about 30-40% of data points for stronger smoothing
+        window_length = max(11, min(71, int(n * 0.35)))
         if window_length % 2 == 0:
             window_length += 1
 
@@ -428,7 +428,7 @@ def smooth_dma_data(
     )
 
     # Apply second pass with smaller window for refinement
-    window_length_2 = max(5, window_length // 2)
+    window_length_2 = max(7, window_length // 2)
     if window_length_2 % 2 == 0:
         window_length_2 += 1
     if window_length_2 >= polyorder + 2:
@@ -437,6 +437,18 @@ def smooth_dma_data(
         )
         log_E_loss_smooth = signal.savgol_filter(
             log_E_loss_smooth, window_length_2, polyorder, mode='interp'
+        )
+
+    # Apply third pass for extra smoothness
+    window_length_3 = max(5, window_length_2 // 2)
+    if window_length_3 % 2 == 0:
+        window_length_3 += 1
+    if window_length_3 >= polyorder + 2:
+        log_E_storage_smooth = signal.savgol_filter(
+            log_E_storage_smooth, window_length_3, polyorder, mode='interp'
+        )
+        log_E_loss_smooth = signal.savgol_filter(
+            log_E_loss_smooth, window_length_3, polyorder, mode='interp'
         )
 
     # Blend with original slope at low frequencies to maintain natural behavior

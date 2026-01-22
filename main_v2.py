@@ -220,6 +220,11 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_friction, text="4. 마찰 분석")
         self._create_friction_tab(self.tab_friction)
 
+        # Tab 5: RMS Analysis (Parseval theorem)
+        self.tab_rms = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_rms, text="5. RMS 분석")
+        self._create_rms_tab(self.tab_rms)
+
     def _create_verification_tab(self, parent):
         """Create input data verification tab."""
         # Instruction label
@@ -413,26 +418,43 @@ class PerssonModelGUI_V2:
         viz_frame = ttk.LabelFrame(parent, text="계산 과정 시각화", padding=10)
         viz_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # Create figure for calculation progress
-        self.fig_calc_progress = Figure(figsize=(12, 4), dpi=100)
-        self.ax_calc_progress = self.fig_calc_progress.add_subplot(111)
+        # Status display for current calculation state
+        status_display_frame = ttk.Frame(viz_frame)
+        status_display_frame.pack(fill=tk.X, pady=(0, 5))
+
+        self.calc_status_label = ttk.Label(
+            status_display_frame,
+            text="대기 중 | v = - m/s | q 범위 = - ~ - (1/m) | ω 범위 = - ~ - (rad/s)",
+            font=('Arial', 10, 'bold'),
+            foreground='blue'
+        )
+        self.calc_status_label.pack()
+
+        # Create figure for calculation progress with 2 subplots
+        self.fig_calc_progress = Figure(figsize=(14, 4), dpi=100)
+        self.ax_calc_dma = self.fig_calc_progress.add_subplot(121)
+        self.ax_calc_psd = self.fig_calc_progress.add_subplot(122)
 
         self.canvas_calc_progress = FigureCanvasTkAgg(self.fig_calc_progress, viz_frame)
         self.canvas_calc_progress.draw()
         self.canvas_calc_progress.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Initialize empty plot
-        self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)')
-        self.ax_calc_progress.set_ylabel('저장 탄성률 E\' (Pa)')
-        self.ax_calc_progress.set_xscale('log')
-        self.ax_calc_progress.set_yscale('log')
-        self.ax_calc_progress.grid(True, alpha=0.3)
-        self.ax_calc_progress.text(
-            0.5, 0.5, '계산 시작 전',
-            transform=self.ax_calc_progress.transAxes,
-            ha='center', va='center',
-            fontsize=14, color='gray'
-        )
+        # Initialize empty DMA plot
+        self.ax_calc_dma.set_xlabel('각주파수 ω (rad/s)')
+        self.ax_calc_dma.set_ylabel('저장 탄성률 E\' (Pa)')
+        self.ax_calc_dma.set_xscale('log')
+        self.ax_calc_dma.set_yscale('log')
+        self.ax_calc_dma.grid(True, alpha=0.3)
+        self.ax_calc_dma.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=10, fontweight='bold')
+
+        # Initialize empty PSD plot
+        self.ax_calc_psd.set_xlabel('파수 q (1/m)')
+        self.ax_calc_psd.set_ylabel('PSD C(q) (m⁴)')
+        self.ax_calc_psd.set_xscale('log')
+        self.ax_calc_psd.set_yscale('log')
+        self.ax_calc_psd.grid(True, alpha=0.3)
+        self.ax_calc_psd.set_title('PSD (사용 파수 범위)', fontsize=10, fontweight='bold')
+
         self.fig_calc_progress.tight_layout()
 
     def _create_results_tab(self, parent):
@@ -482,6 +504,56 @@ class PerssonModelGUI_V2:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.results_text.config(yscrollcommand=scrollbar.set)
 
+    def _create_rms_tab(self, parent):
+        """Create RMS analysis tab based on Parseval theorem."""
+        # Instruction
+        instruction = ttk.LabelFrame(parent, text="탭 설명", padding=10)
+        instruction.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(instruction, text=
+            "Parseval 정리를 이용한 RMS 높이 및 기울기 분석.\n"
+            "PSD로부터 표면 거칠기 특성을 정량화합니다.",
+            font=('Arial', 10)
+        ).pack()
+
+        # Plot area
+        plot_frame = ttk.Frame(parent)
+        plot_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create figure with 3 subplots
+        self.fig_rms = Figure(figsize=(14, 10), dpi=100)
+
+        self.ax_rms_cumulative = self.fig_rms.add_subplot(311)
+        self.ax_rms_contribution = self.fig_rms.add_subplot(312)
+        self.ax_rms_spectrum = self.fig_rms.add_subplot(313)
+
+        self.canvas_rms = FigureCanvasTkAgg(self.fig_rms, plot_frame)
+        self.canvas_rms.draw()
+        self.canvas_rms.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2Tk(self.canvas_rms, plot_frame)
+        toolbar.update()
+
+        # Calculate button
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(
+            btn_frame,
+            text="RMS 분석 실행",
+            command=self._calculate_rms_analysis
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Results summary
+        self.rms_summary_var = tk.StringVar(value="분석 전")
+        summary_label = ttk.Label(
+            btn_frame,
+            textvariable=self.rms_summary_var,
+            font=('Arial', 10, 'bold'),
+            foreground='blue'
+        )
+        summary_label.pack(side=tk.LEFT, padx=20)
+
     def _create_status_bar(self):
         """Create status bar."""
         self.status_var = tk.StringVar(value="준비")
@@ -526,14 +598,22 @@ class PerssonModelGUI_V2:
         ax1.legend(loc='upper left', fontsize=8, ncol=2)
         ax1.grid(True, alpha=0.3)
 
-        # Fix axis formatter to avoid box numbers and minus sign issues
+        # Fix axis formatter to use superscript notation for all log axes
         from matplotlib.ticker import FuncFormatter
         def log_tick_formatter(val, pos=None):
-            if val >= 1:
-                return f'{val:.0f}'
-            else:
-                exponent = int(np.floor(np.log10(val)))
+            if val <= 0:
+                return ''
+            exponent = int(np.floor(np.log10(val)))
+            # For cleaner display, show integer if it's exactly a power of 10
+            if abs(val - 10**exponent) < 1e-10:
                 return f'$10^{{{exponent}}}$'
+            else:
+                # For intermediate values, still show in exponential form
+                mantissa = val / (10**exponent)
+                if abs(mantissa - 1.0) < 0.01:
+                    return f'$10^{{{exponent}}}$'
+                else:
+                    return f'${mantissa:.1f} \\times 10^{{{exponent}}}$'
         ax1.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
         ax1.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
@@ -739,26 +819,42 @@ class PerssonModelGUI_V2:
                 integration_method='trapz'
             )
 
-            # Initialize calculation progress plot with master curve
+            # Initialize calculation progress plots with master curves
             try:
-                self.ax_calc_progress.clear()
-                # Plot master curve
+                self.ax_calc_dma.clear()
+                self.ax_calc_psd.clear()
+
+                # Plot DMA master curve
                 if self.material is not None:
                     omega_plot = np.logspace(-2, 8, 200)
                     E_prime = self.material.get_storage_modulus(omega_plot)
                     E_double_prime = self.material.get_loss_modulus(omega_plot)
 
-                    self.ax_calc_progress.plot(omega_plot, E_prime, 'b-', linewidth=1.5, label="E' (저장 탄성률)")
-                    self.ax_calc_progress.plot(omega_plot, E_double_prime, 'r--', linewidth=1.5, label="E'' (손실 탄성률)")
+                    self.ax_calc_dma.plot(omega_plot, E_prime, 'b-', linewidth=1.5, label="E' (저장 탄성률)")
+                    self.ax_calc_dma.plot(omega_plot, E_double_prime, 'r--', linewidth=1.5, label="E'' (손실 탄성률)")
 
-                    self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)', fontsize=10)
-                    self.ax_calc_progress.set_ylabel('탄성률 (Pa)', fontsize=10)
-                    self.ax_calc_progress.set_xscale('log')
-                    self.ax_calc_progress.set_yscale('log')
-                    self.ax_calc_progress.grid(True, alpha=0.3)
-                    self.ax_calc_progress.legend(loc='best', fontsize=9)
-                    self.fig_calc_progress.tight_layout()
-                    self.canvas_calc_progress.draw()
+                    self.ax_calc_dma.set_xlabel('각주파수 ω (rad/s)', fontsize=10)
+                    self.ax_calc_dma.set_ylabel('탄성률 (Pa)', fontsize=10)
+                    self.ax_calc_dma.set_xscale('log')
+                    self.ax_calc_dma.set_yscale('log')
+                    self.ax_calc_dma.grid(True, alpha=0.3)
+                    self.ax_calc_dma.legend(loc='best', fontsize=8)
+                    self.ax_calc_dma.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=10, fontweight='bold')
+
+                # Plot PSD
+                if self.psd_model is not None:
+                    q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
+                    C_q = self.psd_model(q_plot)
+
+                    self.ax_calc_psd.loglog(q_plot, C_q, 'g-', linewidth=2, label='C(q)')
+                    self.ax_calc_psd.set_xlabel('파수 q (1/m)', fontsize=10)
+                    self.ax_calc_psd.set_ylabel('PSD C(q) (m⁴)', fontsize=10)
+                    self.ax_calc_psd.grid(True, alpha=0.3)
+                    self.ax_calc_psd.legend(loc='best', fontsize=8)
+                    self.ax_calc_psd.set_title('PSD (사용 파수 범위)', fontsize=10, fontweight='bold')
+
+                self.fig_calc_progress.tight_layout()
+                self.canvas_calc_progress.draw()
             except:
                 pass
 
@@ -769,22 +865,43 @@ class PerssonModelGUI_V2:
                 v_idx = int(percent / 100 * len(v_array))
                 if v_idx < len(v_array):
                     current_v = v_array[v_idx]
-                    # Calculate frequency range used
+                    # Calculate frequency and wavenumber ranges
                     omega_min = q_array[0] * current_v
                     omega_max = q_array[-1] * current_v
+                    q_min_used = q_array[0]
+                    q_max_used = q_array[-1]
+
+                    # Update main status bar
                     self.status_var.set(f"계산 중... v={current_v:.4f} m/s (ω: {omega_min:.2e} ~ {omega_max:.2e} rad/s)")
 
-                    # Highlight frequency range on calculation progress plot
+                    # Update calculation status label
+                    self.calc_status_label.config(
+                        text=f"계산 중 ({percent:.0f}%) | v = {current_v:.4f} m/s | "
+                             f"q 범위 = {q_min_used:.2e} ~ {q_max_used:.2e} (1/m) | "
+                             f"ω 범위 = {omega_min:.2e} ~ {omega_max:.2e} (rad/s)",
+                        foreground='red'
+                    )
+
+                    # Highlight frequency and wavenumber ranges
                     try:
-                        # Remove previous highlight bands (not lines)
-                        for artist in self.ax_calc_progress.collections[:]:
+                        # Remove ALL previous highlight bands (clear old highlights)
+                        for artist in self.ax_calc_dma.collections[:]:
+                            if hasattr(artist, '_is_highlight'):
+                                artist.remove()
+                        for artist in self.ax_calc_psd.collections[:]:
                             if hasattr(artist, '_is_highlight'):
                                 artist.remove()
 
-                        # Add vertical band to show frequency range being used
-                        band = self.ax_calc_progress.axvspan(omega_min, omega_max,
-                                                            alpha=0.15, color='red', zorder=0)
-                        band._is_highlight = True
+                        # Add vertical band to DMA plot (current frequency range)
+                        band_dma = self.ax_calc_dma.axvspan(omega_min, omega_max,
+                                                            alpha=0.2, color='red', zorder=0)
+                        band_dma._is_highlight = True
+
+                        # Add vertical band to PSD plot (current wavenumber range)
+                        band_psd = self.ax_calc_psd.axvspan(q_min_used, q_max_used,
+                                                            alpha=0.2, color='red', zorder=0)
+                        band_psd._is_highlight = True
+
                         self.canvas_calc_progress.draw()
                     except:
                         pass
@@ -797,17 +914,20 @@ class PerssonModelGUI_V2:
 
             # Clear highlight after calculation and show completion message
             try:
-                for artist in self.ax_calc_progress.collections[:]:
+                # Remove all highlights
+                for artist in self.ax_calc_dma.collections[:]:
                     if hasattr(artist, '_is_highlight'):
                         artist.remove()
-                # Add completion message
-                self.ax_calc_progress.text(
-                    0.5, 0.95, '계산 완료!',
-                    transform=self.ax_calc_progress.transAxes,
-                    ha='center', va='top',
-                    fontsize=12, color='green', fontweight='bold',
-                    bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5)
+                for artist in self.ax_calc_psd.collections[:]:
+                    if hasattr(artist, '_is_highlight'):
+                        artist.remove()
+
+                # Update status label to show completion
+                self.calc_status_label.config(
+                    text=f"계산 완료! | 총 {len(v_array)}개 속도 × {len(q_array)}개 파수",
+                    foreground='green'
                 )
+
                 self.canvas_calc_progress.draw()
             except:
                 pass
@@ -885,50 +1005,72 @@ class PerssonModelGUI_V2:
         ax1.legend(fontsize=7, ncol=2)
         ax1.grid(True, alpha=0.3)
 
-        # Fix axis formatter
+        # Fix axis formatter to use superscript notation
         from matplotlib.ticker import FuncFormatter
         def log_tick_formatter(val, pos=None):
-            if val >= 1:
-                return f'{val:.0f}'
-            else:
-                exponent = int(np.floor(np.log10(val)))
+            if val <= 0:
+                return ''
+            exponent = int(np.floor(np.log10(val)))
+            if abs(val - 10**exponent) < 1e-10:
                 return f'$10^{{{exponent}}}$'
+            else:
+                mantissa = val / (10**exponent)
+                if abs(mantissa - 1.0) < 0.01:
+                    return f'$10^{{{exponent}}}$'
+                else:
+                    return f'${mantissa:.1f} \\times 10^{{{exponent}}}$'
         ax1.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
         ax1.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
-        # Plot 2: Stress distribution p(q) for multiple velocities (응력 분포 곡선)
-        # Calculate normalized stress distribution from G(q)
-        # p(q) approximation: derivative of contact area with respect to log(q)
+        # Plot 2: Gaussian stress distribution p(σ) for multiple velocities
+        # Based on Persson theory: p(σ) = (1/√(2πσ₀²G)) * exp(-(σ-σ₀)²/(2σ₀²G))
+        # Get nominal pressure from calculation settings
+        sigma_0_MPa = results['sigma_0'] / 1e6  # Convert Pa to MPa
+
+        # Create stress array (in MPa)
+        sigma_array = np.linspace(0, 3 * sigma_0_MPa, 500)
+
         for j, (v_val, color) in enumerate(zip(v, colors)):
             if j % max(1, len(v) // 10) == 0:
-                # Calculate stress distribution: approximately -d(P)/d(log q)
-                P_curve = P_matrix[:, j]
-                # Use numerical derivative
-                log_q = np.log10(q)
-                p_q = -np.gradient(P_curve, log_q)
-                p_q = np.maximum(p_q, 0)  # Only positive values
+                # Get G value at the last wavenumber (most relevant for overall contact)
+                G_val = G_matrix[-1, j]
 
-                # Normalize for visualization
-                if np.max(p_q) > 0:
-                    p_q_norm = p_q / np.max(p_q)
-                    # Fill area under curve to visualize integral
-                    ax2.fill_between(q, 0, p_q_norm, color=color, alpha=0.3)
-                    ax2.semilogx(q, p_q_norm, color=color, linewidth=1.5,
-                              label=f'v={v_val:.4f} m/s', alpha=0.9)
+                # Gaussian stress distribution
+                # p(σ) = (1/√(2πσ₀²G)) * exp(-(σ-σ₀)²/(2σ₀²G))
+                if G_val > 1e-10:
+                    variance = (sigma_0_MPa**2) * G_val
+                    p_sigma = (1 / np.sqrt(2 * np.pi * variance)) * \
+                              np.exp(-(sigma_array - sigma_0_MPa)**2 / (2 * variance))
 
-        ax2.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
-        ax2.set_ylabel('정규화 응력 분포 p(q)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
-        ax2.set_title('(b) 속도별 응력 분포 (∫p(q)>0)', fontweight='bold', fontsize=11, pad=8)
-        ax2.legend(fontsize=7, ncol=2)
+                    # Plot line
+                    ax2.plot(sigma_array, p_sigma, color=color, linewidth=1.5,
+                            label=f'v={v_val:.4f} m/s (G={G_val:.3f})', alpha=0.9)
+
+                    # Fill area where stress > 0 (compressive region)
+                    positive_mask = sigma_array >= 0
+                    ax2.fill_between(sigma_array[positive_mask], 0, p_sigma[positive_mask],
+                                    color=color, alpha=0.2)
+
+        # Add vertical line for nominal pressure
+        ax2.axvline(sigma_0_MPa, color='black', linestyle='--', linewidth=2,
+                   label=f'σ₀ = {sigma_0_MPa:.2f} MPa', alpha=0.7)
+
+        ax2.set_xlabel('응력 σ (MPa)', fontweight='bold', fontsize=11, labelpad=5)
+        ax2.set_ylabel('응력 분포 p(σ) (1/MPa)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+        ax2.set_title('(b) 속도별 가우시안 응력 분포', fontweight='bold', fontsize=11, pad=8)
+        ax2.legend(fontsize=7, ncol=2, loc='upper right')
         ax2.grid(True, alpha=0.3)
-
-        # Fix axis formatter
-        ax2.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
+        ax2.set_xlim(0, 3 * sigma_0_MPa)
 
         # Plot 3: Contact Area P(q,v) (접촉 면적)
         for j, (v_val, color) in enumerate(zip(v, colors)):
             if j % max(1, len(v) // 10) == 0:
-                ax3.semilogx(q, P_matrix[:, j], color=color, linewidth=1.5,
+                # Filter out values very close to 1.0 for better visualization
+                P_curve = P_matrix[:, j].copy()
+                # Clip very small differences from 1.0
+                P_curve = np.clip(P_curve, 0, 0.999)
+
+                ax3.semilogx(q, P_curve, color=color, linewidth=1.5,
                             label=f'v={v_val:.4f} m/s')
 
         ax3.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
@@ -936,6 +1078,7 @@ class PerssonModelGUI_V2:
         ax3.set_title('(c) 다중 속도에서의 접촉 면적', fontweight='bold', fontsize=11, pad=8)
         ax3.legend(fontsize=7, ncol=2)
         ax3.grid(True, alpha=0.3)
+        ax3.set_ylim(0, 1.0)  # Set y-axis limit for better visualization
 
         # Fix axis formatter
         ax3.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
@@ -952,7 +1095,7 @@ class PerssonModelGUI_V2:
         ax4.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         # Plot 5: Inner integral vs q for multiple velocities (다중 속도에서의 내부 적분)
-        # Physical meaning: Normalized viscoelastic response averaged over all angles
+        # Physical meaning: ∫dφ |E(qvcosφ)|² - 슬립 방향 성분의 점탄성 응답
         if has_detailed:
             cmap_detail = plt.get_cmap('plasma')
             for i, detail_result in enumerate(detailed_multi_v):
@@ -962,10 +1105,19 @@ class PerssonModelGUI_V2:
                           color=color, linewidth=1.5, label=f'v={v_val:.4f} m/s', alpha=0.8)
 
             ax5.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
-            ax5.set_ylabel('각도 평균 점탄성 응답\n∫dφ|E(qvcosφ)|²', fontweight='bold', fontsize=10, rotation=90, labelpad=12)
-            ax5.set_title('(e) 내부 적분 (각도 적분)', fontweight='bold', fontsize=11, pad=8)
+            ax5.set_ylabel('각도 적분 ∫dφ|E(qvcosφ)|²', fontweight='bold', fontsize=10, rotation=90, labelpad=12)
+            ax5.set_title('(e) 내부 적분: 슬립 방향 점탄성 응답', fontweight='bold', fontsize=11, pad=8)
             ax5.legend(fontsize=7, ncol=2)
             ax5.grid(True, alpha=0.3)
+
+            # Add physical interpretation text box
+            textstr = ('물리적 의미: 모든 슬립 방향(φ=0~2π)에 대해\n'
+                      '탄성률의 제곱을 적분 → 에너지 손실량 측정\n'
+                      '높은 값 = 더 많은 변형 에너지 소산 = 높은 마찰\n'
+                      '각 파수(거칠기 스케일)의 마찰 기여도')
+            props = dict(boxstyle='round', facecolor='wheat', alpha=0.3)
+            ax5.text(0.98, 0.02, textstr, transform=ax5.transAxes, fontsize=7,
+                    verticalalignment='bottom', horizontalalignment='right', bbox=props)
 
             # Fix axis formatter
             ax5.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
@@ -975,27 +1127,62 @@ class PerssonModelGUI_V2:
                     ha='center', va='center', transform=ax5.transAxes, fontsize=10)
             ax5.set_title('(e) 내부 적분', fontweight='bold', fontsize=11, pad=8)
 
-        # Plot 6: G integrand for multiple velocities (다중 속도에서의 G 피적분함수)
-        if has_detailed:
-            for i, detail_result in enumerate(detailed_multi_v):
-                v_val = detail_result['velocity']
-                color = cmap_detail(i / len(detailed_multi_v))
-                ax6.loglog(detail_result['q'], detail_result['G_integrand'],
-                          color=color, linewidth=1.5, label=f'v={v_val:.4f} m/s', alpha=0.8)
+        # Plot 6: Parseval theorem - Cumulative h_rms and slope_rms from PSD
+        # h_rms² = ∫ C(q) dq
+        # slope_rms² = ∫ q² C(q) dq
+        if self.psd_model is not None:
+            # Calculate cumulative RMS height and slope
+            q_parse = np.logspace(np.log10(q[0]), np.log10(q[-1]), 500)
+            C_q_parse = self.psd_model(q_parse)
+
+            # Cumulative integration (from q_min to each q)
+            h_rms_cumulative = np.zeros_like(q_parse)
+            slope_rms_cumulative = np.zeros_like(q_parse)
+
+            for i in range(len(q_parse)):
+                # Integrate from start to current q
+                q_int = q_parse[:i+1]
+                C_int = C_q_parse[:i+1]
+
+                # Trapezoidal integration
+                h_rms_cumulative[i] = np.sqrt(np.trapz(C_int, q_int))
+                slope_rms_cumulative[i] = np.sqrt(np.trapz(q_int**2 * C_int, q_int))
+
+            # Plot on twin axes
+            ax6_twin = ax6.twinx()
+
+            line1 = ax6.semilogx(q_parse, h_rms_cumulative * 1e6, 'b-', linewidth=2,
+                                label='누적 h_rms', alpha=0.8)
+            line2 = ax6_twin.semilogx(q_parse, slope_rms_cumulative, 'r-', linewidth=2,
+                                     label='누적 slope_rms', alpha=0.8)
 
             ax6.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
-            ax6.set_ylabel('G 피적분함수\nq³C(q)×각도적분', fontweight='bold', fontsize=10, rotation=90, labelpad=12)
-            ax6.set_title('(f) 다중 속도에서의 G 피적분함수', fontweight='bold', fontsize=11, pad=8)
-            ax6.legend(fontsize=7, ncol=2)
+            ax6.set_ylabel('누적 h_rms (μm)', fontweight='bold', fontsize=10, color='b', rotation=90, labelpad=12)
+            ax6_twin.set_ylabel('누적 RMS 기울기', fontweight='bold', fontsize=10, color='r', rotation=90, labelpad=12)
+            ax6.set_title('(f) Parseval 정리: 누적 RMS 높이 및 기울기', fontweight='bold', fontsize=11, pad=8)
+
+            # Combine legends
+            lines = line1 + line2
+            labels = [l.get_label() for l in lines]
+            ax6.legend(lines, labels, fontsize=8, loc='upper left')
+
             ax6.grid(True, alpha=0.3)
+            ax6.tick_params(axis='y', labelcolor='b')
+            ax6_twin.tick_params(axis='y', labelcolor='r')
+
+            # Add final values as text
+            textstr = (f'최종 h_rms = {h_rms_cumulative[-1]*1e6:.2f} μm\n'
+                      f'최종 slope_rms = {slope_rms_cumulative[-1]:.3f}')
+            props = dict(boxstyle='round', facecolor='lightblue', alpha=0.5)
+            ax6.text(0.02, 0.98, textstr, transform=ax6.transAxes, fontsize=9,
+                    verticalalignment='top', bbox=props)
 
             # Fix axis formatter
             ax6.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
-            ax6.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
         else:
-            ax6.text(0.5, 0.5, '상세 데이터 없음',
+            ax6.text(0.5, 0.5, 'PSD 데이터 없음',
                     ha='center', va='center', transform=ax6.transAxes, fontsize=10)
-            ax6.set_title('(f) G 피적분함수', fontweight='bold', fontsize=11, pad=8)
+            ax6.set_title('(f) Parseval 정리', fontweight='bold', fontsize=11, pad=8)
 
         self.fig_results.suptitle('G(q,v) 2D 행렬 계산 결과', fontweight='bold', fontsize=13, y=0.995)
         self.fig_results.tight_layout(rect=[0, 0, 1, 0.99])
@@ -1050,6 +1237,129 @@ Persson Friction Calculator v2.1 - User Guide
    - Contact area ratio analysis
         """
         messagebox.showinfo("User Guide", help_text)
+
+    def _calculate_rms_analysis(self):
+        """Calculate and plot RMS analysis based on Parseval theorem."""
+        if self.psd_model is None:
+            messagebox.showwarning("Warning", "No PSD data loaded!")
+            return
+
+        try:
+            # Get q range from settings
+            q_min = float(self.q_min_var.get())
+            q_max = float(self.q_max_var.get())
+
+            # Create fine q array for integration
+            q_array = np.logspace(np.log10(q_min), np.log10(q_max), 1000)
+            C_q = self.psd_model(q_array)
+
+            # Calculate cumulative RMS height and slope
+            h_rms_cumulative = np.zeros_like(q_array)
+            slope_rms_cumulative = np.zeros_like(q_array)
+
+            for i in range(len(q_array)):
+                q_int = q_array[:i+1]
+                C_int = C_q[:i+1]
+
+                # Parseval theorem: h_rms² = ∫ C(q) dq
+                h_rms_cumulative[i] = np.sqrt(np.trapz(C_int, q_int))
+                # RMS slope: slope² = ∫ q² C(q) dq
+                slope_rms_cumulative[i] = np.sqrt(np.trapz(q_int**2 * C_int, q_int))
+
+            # Calculate incremental contribution per decade
+            log_q = np.log10(q_array)
+            dh_rms_dlogq = np.gradient(h_rms_cumulative**2, log_q)
+            dslope_rms_dlogq = np.gradient(slope_rms_cumulative**2, log_q)
+
+            # Clear previous plots
+            self.ax_rms_cumulative.clear()
+            self.ax_rms_contribution.clear()
+            self.ax_rms_spectrum.clear()
+
+            # Plot 1: Cumulative RMS values
+            ax1 = self.ax_rms_cumulative
+            ax1_twin = ax1.twinx()
+
+            line1 = ax1.semilogx(q_array, h_rms_cumulative * 1e6, 'b-', linewidth=2.5, label='누적 h_rms')
+            line2 = ax1_twin.semilogx(q_array, slope_rms_cumulative, 'r-', linewidth=2.5, label='누적 slope_rms')
+
+            ax1.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
+            ax1.set_ylabel('누적 h_rms (μm)', fontweight='bold', fontsize=11, color='b')
+            ax1_twin.set_ylabel('누적 RMS 기울기', fontweight='bold', fontsize=11, color='r')
+            ax1.set_title('(a) Parseval 정리: 누적 RMS 값', fontweight='bold', fontsize=12)
+            ax1.grid(True, alpha=0.3)
+            ax1.tick_params(axis='y', labelcolor='b')
+            ax1_twin.tick_params(axis='y', labelcolor='r')
+
+            lines = line1 + line2
+            labels = [l.get_label() for l in lines]
+            ax1.legend(lines, labels, loc='upper left', fontsize=10)
+
+            # Plot 2: Incremental contribution per decade
+            ax2 = self.ax_rms_contribution
+            ax2_twin = ax2.twinx()
+
+            line3 = ax2.semilogx(q_array, dh_rms_dlogq * 1e12, 'b-', linewidth=2, label='dh²/d(log q)')
+            line4 = ax2_twin.semilogx(q_array, dslope_rms_dlogq, 'r-', linewidth=2, label='d(slope²)/d(log q)')
+
+            ax2.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
+            ax2.set_ylabel('h² 기여도 (μm²/decade)', fontweight='bold', fontsize=11, color='b')
+            ax2_twin.set_ylabel('slope² 기여도 (1/decade)', fontweight='bold', fontsize=11, color='r')
+            ax2.set_title('(b) 파수별 기여도 (각 decade의 기여량)', fontweight='bold', fontsize=12)
+            ax2.grid(True, alpha=0.3)
+            ax2.tick_params(axis='y', labelcolor='b')
+            ax2_twin.tick_params(axis='y', labelcolor='r')
+
+            lines2 = line3 + line4
+            labels2 = [l.get_label() for l in lines2]
+            ax2.legend(lines2, labels2, loc='upper left', fontsize=10)
+
+            # Plot 3: PSD spectrum with annotations
+            ax3 = self.ax_rms_spectrum
+            ax3.loglog(q_array, C_q, 'g-', linewidth=2.5, label='C(q)')
+
+            # Calculate and show Hurst exponent
+            mid_idx_start = len(q_array) // 3
+            mid_idx_end = 2 * len(q_array) // 3
+            log_q_fit = np.log10(q_array[mid_idx_start:mid_idx_end])
+            log_C_fit = np.log10(C_q[mid_idx_start:mid_idx_end])
+            slope_fit = np.polyfit(log_q_fit, log_C_fit, 1)[0]
+            H = -slope_fit / 2 - 1
+
+            ax3.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
+            ax3.set_ylabel('PSD C(q) (m⁴)', fontweight='bold', fontsize=11)
+            ax3.set_title(f'(c) PSD 스펙트럼 (Hurst 지수 H ≈ {H:.3f})', fontweight='bold', fontsize=12)
+            ax3.grid(True, alpha=0.3)
+            ax3.legend(loc='upper right', fontsize=10)
+
+            # Add wavelength scale annotations
+            wavelengths = [1e-3, 1e-4, 1e-5, 1e-6]  # 1mm, 100μm, 10μm, 1μm
+            for lam in wavelengths:
+                q_lam = 2 * np.pi / lam
+                if q_min < q_lam < q_max:
+                    ax3.axvline(q_lam, color='gray', linestyle='--', alpha=0.5)
+                    if lam >= 1e-3:
+                        ax3.text(q_lam, ax3.get_ylim()[0] * 1.5, f'{lam*1e3:.0f}mm',
+                                rotation=90, fontsize=8, alpha=0.7)
+                    else:
+                        ax3.text(q_lam, ax3.get_ylim()[0] * 1.5, f'{lam*1e6:.0f}μm',
+                                rotation=90, fontsize=8, alpha=0.7)
+
+            self.fig_rms.tight_layout()
+            self.canvas_rms.draw()
+
+            # Update summary
+            final_h_rms = h_rms_cumulative[-1] * 1e6  # μm
+            final_slope_rms = slope_rms_cumulative[-1]
+            self.rms_summary_var.set(
+                f"h_rms = {final_h_rms:.3f} μm | slope_rms = {final_slope_rms:.4f} | Hurst H = {H:.3f}"
+            )
+            self.status_var.set(f"RMS 분석 완료: h_rms={final_h_rms:.3f}μm, slope={final_slope_rms:.4f}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"RMS 분석 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def _show_about(self):
         """Show about dialog."""
