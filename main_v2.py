@@ -157,7 +157,7 @@ class PerssonModelGUI_V2:
                 self._update_material_display()
                 self._update_verification_plots()
 
-                self.status_var.set(f"초기 데이터 로드 완료: PSD ({len(q)}개), DMA ({len(omega)}개)")
+                self.status_var.set(f"초기 데이터 로드 완료: PSD ({len(q)}개), DMA ({len(omega_raw)}개)")
             else:
                 # Use example material
                 self.material = ViscoelasticMaterial.create_example_sbr()
@@ -231,6 +231,52 @@ class PerssonModelGUI_V2:
             "로드되었는지 확인합니다. E', E'', tan(δ) 및 C(q)를 검토하세요.",
             font=('Arial', 10)
         ).pack()
+
+        # DMA smoothing controls
+        smoothing_frame = ttk.LabelFrame(parent, text="DMA 데이터 스무딩 설정", padding=10)
+        smoothing_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Create controls in a grid
+        control_grid = ttk.Frame(smoothing_frame)
+        control_grid.pack(fill=tk.X)
+
+        # Enable smoothing checkbox
+        self.enable_smoothing_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            control_grid,
+            text="스무딩 활성화",
+            variable=self.enable_smoothing_var,
+            command=self._apply_smoothing
+        ).grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
+
+        # Window length control
+        ttk.Label(control_grid, text="스무딩 강도 (윈도우 길이):").grid(row=0, column=1, sticky=tk.W, padx=5, pady=3)
+        self.smoothing_window_var = tk.StringVar(value="auto")
+        smoothing_combo = ttk.Combobox(
+            control_grid,
+            textvariable=self.smoothing_window_var,
+            values=["auto", "7", "11", "15", "21", "31", "51"],
+            width=10,
+            state="readonly"
+        )
+        smoothing_combo.grid(row=0, column=2, sticky=tk.W, padx=5, pady=3)
+        smoothing_combo.bind('<<ComboboxSelected>>', lambda e: self._apply_smoothing())
+
+        # Remove outliers checkbox
+        self.remove_outliers_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            control_grid,
+            text="이상치 제거",
+            variable=self.remove_outliers_var,
+            command=self._apply_smoothing
+        ).grid(row=0, column=3, sticky=tk.W, padx=5, pady=3)
+
+        # Apply button
+        ttk.Button(
+            control_grid,
+            text="적용",
+            command=self._apply_smoothing
+        ).grid(row=0, column=4, sticky=tk.W, padx=5, pady=3)
 
         # Plot area
         plot_frame = ttk.Frame(parent)
@@ -362,6 +408,32 @@ class PerssonModelGUI_V2:
             maximum=100
         )
         self.progress_bar.pack(fill=tk.X, pady=5)
+
+        # Calculation visualization area
+        viz_frame = ttk.LabelFrame(parent, text="계산 과정 시각화", padding=10)
+        viz_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create figure for calculation progress
+        self.fig_calc_progress = Figure(figsize=(12, 4), dpi=100)
+        self.ax_calc_progress = self.fig_calc_progress.add_subplot(111)
+
+        self.canvas_calc_progress = FigureCanvasTkAgg(self.fig_calc_progress, viz_frame)
+        self.canvas_calc_progress.draw()
+        self.canvas_calc_progress.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Initialize empty plot
+        self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)')
+        self.ax_calc_progress.set_ylabel('저장 탄성률 E\' (Pa)')
+        self.ax_calc_progress.set_xscale('log')
+        self.ax_calc_progress.set_yscale('log')
+        self.ax_calc_progress.grid(True, alpha=0.3)
+        self.ax_calc_progress.text(
+            0.5, 0.5, '계산 시작 전',
+            transform=self.ax_calc_progress.transAxes,
+            ha='center', va='center',
+            fontsize=14, color='gray'
+        )
+        self.fig_calc_progress.tight_layout()
 
     def _create_results_tab(self, parent):
         """Create G(q,v) results tab."""
@@ -569,6 +641,67 @@ class PerssonModelGUI_V2:
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load PSD data:\n{str(e)}")
 
+    def _apply_smoothing(self):
+        """Apply smoothing to DMA data with current settings."""
+        # Check if raw DMA data exists
+        if not hasattr(self, 'raw_dma_data') or self.raw_dma_data is None:
+            return
+
+        try:
+            omega_raw = self.raw_dma_data['omega']
+            E_storage_raw = self.raw_dma_data['E_storage']
+            E_loss_raw = self.raw_dma_data['E_loss']
+
+            # Get smoothing parameters from GUI
+            enable_smoothing = self.enable_smoothing_var.get()
+            remove_outliers = self.remove_outliers_var.get()
+            window_str = self.smoothing_window_var.get()
+
+            # Parse window length
+            if window_str == "auto":
+                window_length = None  # Auto-determine
+            else:
+                window_length = int(window_str)
+
+            if enable_smoothing:
+                # Apply smoothing
+                smoothed = smooth_dma_data(
+                    omega_raw,
+                    E_storage_raw,
+                    E_loss_raw,
+                    window_length=window_length,
+                    polyorder=2,
+                    remove_outliers=remove_outliers
+                )
+
+                # Create material from smoothed data
+                self.material = create_material_from_dma(
+                    omega=smoothed['omega'],
+                    E_storage=smoothed['E_storage_smooth'],
+                    E_loss=smoothed['E_loss_smooth'],
+                    material_name="Measured Rubber (smoothed)",
+                    reference_temp=float(self.temperature_var.get())
+                )
+            else:
+                # Use raw data without smoothing
+                self.material = create_material_from_dma(
+                    omega=omega_raw,
+                    E_storage=E_storage_raw,
+                    E_loss=E_loss_raw,
+                    material_name="Measured Rubber (raw)",
+                    reference_temp=float(self.temperature_var.get())
+                )
+
+            # Update plots
+            self._update_material_display()
+            self._update_verification_plots()
+            self.status_var.set(f"스무딩 적용 완료 (윈도우: {window_str}, 이상치 제거: {remove_outliers})")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"스무딩 적용 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def _run_calculation(self):
         """Run G(q,v) 2D calculation."""
         if self.material is None or self.psd_model is None:
@@ -606,6 +739,29 @@ class PerssonModelGUI_V2:
                 integration_method='trapz'
             )
 
+            # Initialize calculation progress plot with master curve
+            try:
+                self.ax_calc_progress.clear()
+                # Plot master curve
+                if self.material is not None:
+                    omega_plot = np.logspace(-2, 8, 200)
+                    E_prime = self.material.get_storage_modulus(omega_plot)
+                    E_double_prime = self.material.get_loss_modulus(omega_plot)
+
+                    self.ax_calc_progress.plot(omega_plot, E_prime, 'b-', linewidth=1.5, label="E' (저장 탄성률)")
+                    self.ax_calc_progress.plot(omega_plot, E_double_prime, 'r--', linewidth=1.5, label="E'' (손실 탄성률)")
+
+                    self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)', fontsize=10)
+                    self.ax_calc_progress.set_ylabel('탄성률 (Pa)', fontsize=10)
+                    self.ax_calc_progress.set_xscale('log')
+                    self.ax_calc_progress.set_yscale('log')
+                    self.ax_calc_progress.grid(True, alpha=0.3)
+                    self.ax_calc_progress.legend(loc='best', fontsize=9)
+                    self.fig_calc_progress.tight_layout()
+                    self.canvas_calc_progress.draw()
+            except:
+                pass
+
             # Calculate G(q,v) 2D matrix with real-time visualization
             def progress_callback(percent):
                 self.progress_var.set(percent)
@@ -618,19 +774,18 @@ class PerssonModelGUI_V2:
                     omega_max = q_array[-1] * current_v
                     self.status_var.set(f"계산 중... v={current_v:.4f} m/s (ω: {omega_min:.2e} ~ {omega_max:.2e} rad/s)")
 
-                    # Highlight frequency range on verification plot if visible
+                    # Highlight frequency range on calculation progress plot
                     try:
-                        # Clear previous highlights
-                        for line in self.ax_master_curve.lines[:]:
-                            if hasattr(line, '_is_highlight'):
-                                line.remove()
+                        # Remove previous highlight bands (not lines)
+                        for artist in self.ax_calc_progress.collections[:]:
+                            if hasattr(artist, '_is_highlight'):
+                                artist.remove()
 
-                        # Add vertical bands to show frequency range being used
-                        ylim = self.ax_master_curve.get_ylim()
-                        band = self.ax_master_curve.axvspan(omega_min, omega_max,
-                                                           alpha=0.1, color='red', zorder=0)
+                        # Add vertical band to show frequency range being used
+                        band = self.ax_calc_progress.axvspan(omega_min, omega_max,
+                                                            alpha=0.15, color='red', zorder=0)
                         band._is_highlight = True
-                        self.canvas_verification.draw()
+                        self.canvas_calc_progress.draw()
                     except:
                         pass
 
@@ -640,12 +795,20 @@ class PerssonModelGUI_V2:
                 q_array, v_array, q_min=q_min, progress_callback=progress_callback
             )
 
-            # Clear highlight after calculation
+            # Clear highlight after calculation and show completion message
             try:
-                for line in self.ax_master_curve.lines[:]:
-                    if hasattr(line, '_is_highlight'):
-                        line.remove()
-                self.canvas_verification.draw()
+                for artist in self.ax_calc_progress.collections[:]:
+                    if hasattr(artist, '_is_highlight'):
+                        artist.remove()
+                # Add completion message
+                self.ax_calc_progress.text(
+                    0.5, 0.95, '계산 완료!',
+                    transform=self.ax_calc_progress.transAxes,
+                    ha='center', va='top',
+                    fontsize=12, color='green', fontweight='bold',
+                    bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5)
+                )
+                self.canvas_calc_progress.draw()
             except:
                 pass
 

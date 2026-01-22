@@ -400,20 +400,68 @@ def smooth_dma_data(
         }
 
     # Smooth in log space for better results
+    log_omega = np.log10(omega)
     log_E_storage = np.log10(np.maximum(E_storage_clean, 1e3))
     log_E_loss = np.log10(np.maximum(E_loss_clean, 1.0))
 
-    # Apply Savitzky-Golay filter multiple times for stronger smoothing
-    log_E_storage_smooth = signal.savgol_filter(log_E_storage, window_length, polyorder)
-    log_E_loss_smooth = signal.savgol_filter(log_E_loss, window_length, polyorder)
+    # Preserve low-frequency slope by fitting initial trend
+    # Use first 20% of data or at least 5 points for slope estimation
+    n_low_freq = max(5, int(n * 0.2))
+    n_low_freq = min(n_low_freq, n // 2)  # Don't use more than half
+
+    # Fit linear trend in log-log space for low frequencies
+    if n_low_freq >= 3:
+        # Storage modulus low-freq slope
+        p_storage = np.polyfit(log_omega[:n_low_freq], log_E_storage[:n_low_freq], 1)
+        # Loss modulus low-freq slope
+        p_loss = np.polyfit(log_omega[:n_low_freq], log_E_loss[:n_low_freq], 1)
+    else:
+        p_storage = [0, log_E_storage[0]]
+        p_loss = [0, log_E_loss[0]]
+
+    # Apply Savitzky-Golay filter with 'interp' mode for better edge handling
+    log_E_storage_smooth = signal.savgol_filter(
+        log_E_storage, window_length, polyorder, mode='interp'
+    )
+    log_E_loss_smooth = signal.savgol_filter(
+        log_E_loss, window_length, polyorder, mode='interp'
+    )
 
     # Apply second pass with smaller window for refinement
     window_length_2 = max(5, window_length // 2)
     if window_length_2 % 2 == 0:
         window_length_2 += 1
     if window_length_2 >= polyorder + 2:
-        log_E_storage_smooth = signal.savgol_filter(log_E_storage_smooth, window_length_2, polyorder)
-        log_E_loss_smooth = signal.savgol_filter(log_E_loss_smooth, window_length_2, polyorder)
+        log_E_storage_smooth = signal.savgol_filter(
+            log_E_storage_smooth, window_length_2, polyorder, mode='interp'
+        )
+        log_E_loss_smooth = signal.savgol_filter(
+            log_E_loss_smooth, window_length_2, polyorder, mode='interp'
+        )
+
+    # Blend with original slope at low frequencies to maintain natural behavior
+    # Create smooth transition using sigmoid-like weight
+    blend_points = min(n_low_freq, n // 3)
+    if blend_points >= 2:
+        # Weight decreases from 1 to 0 over blend region
+        blend_weights = np.zeros(n)
+        blend_region = np.linspace(0, 1, blend_points)
+        # Smooth transition using cosine taper
+        blend_weights[:blend_points] = 0.5 * (1 + np.cos(blend_region * np.pi))
+
+        # Calculate what the original slope predicts
+        log_E_storage_trend = p_storage[0] * log_omega + p_storage[1]
+        log_E_loss_trend = p_loss[0] * log_omega + p_loss[1]
+
+        # Blend smoothed data with original trend at low frequencies
+        log_E_storage_smooth = (
+            blend_weights * log_E_storage_trend +
+            (1 - blend_weights) * log_E_storage_smooth
+        )
+        log_E_loss_smooth = (
+            blend_weights * log_E_loss_trend +
+            (1 - blend_weights) * log_E_loss_smooth
+        )
 
     # Convert back to linear space
     E_storage_smooth = 10**log_E_storage_smooth
