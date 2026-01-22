@@ -537,12 +537,98 @@ class PerssonModelGUI:
         self.results_text.insert(1.0, output)
 
     def _load_material(self):
-        """Load material from file."""
-        messagebox.showinfo("정보", "재료 파일 로드 기능은 추후 구현 예정입니다.")
+        """Load material DMA data from file."""
+        filename = filedialog.askopenfilename(
+            title="DMA 데이터 파일 선택",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if filename:
+            try:
+                from utils.data_loader import load_dma_from_file, create_material_from_dma
+
+                # Load DMA data
+                omega, E_storage, E_loss = load_dma_from_file(
+                    filename,
+                    skip_header=1,  # Skip first line (header)
+                    freq_unit='Hz',
+                    modulus_unit='MPa'
+                )
+
+                # Create material
+                material_name = os.path.splitext(os.path.basename(filename))[0]
+                self.material = create_material_from_dma(
+                    omega=omega,
+                    E_storage=E_storage,
+                    E_loss=E_loss,
+                    material_name=material_name,
+                    reference_temp=float(self.temperature_var.get())
+                )
+
+                self._update_material_display()
+
+                messagebox.showinfo("성공",
+                    f"재료 데이터 로드 완료:\n{filename}\n\n"
+                    f"재료명: {self.material.name}\n"
+                    f"데이터 포인트: {len(omega)}개\n"
+                    f"주파수 범위: {omega[0]:.2e} ~ {omega[-1]:.2e} rad/s\n"
+                    f"E' 범위: {E_storage.min()/1e6:.2f} ~ {E_storage.max()/1e6:.2f} MPa")
+
+            except Exception as e:
+                messagebox.showerror("오류", f"재료 파일 로드 실패:\n{str(e)}")
+                import traceback
+                traceback.print_exc()
 
     def _load_psd_data(self):
         """Load PSD data from file."""
-        messagebox.showinfo("정보", "PSD 데이터 로드 기능은 추후 구현 예정입니다.")
+        filename = filedialog.askopenfilename(
+            title="PSD 데이터 파일 선택",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if filename:
+            try:
+                from utils.data_loader import load_psd_from_file, create_psd_from_data
+
+                # Load PSD data
+                q, C_q = load_psd_from_file(
+                    filename,
+                    skip_header=1  # Skip first line (header)
+                )
+
+                # Create PSD model
+                self.psd_model = create_psd_from_data(
+                    q=q,
+                    C_q=C_q,
+                    interpolation_kind='log-log'
+                )
+
+                # Update q range
+                self.q_min_var.set(f"{q[0]:.2e}")
+                self.q_max_var.set(f"{q[-1]:.2e}")
+
+                # Switch to measured PSD mode
+                self.psd_type_var.set("measured")
+                self._on_psd_type_change()
+
+                messagebox.showinfo("성공",
+                    f"PSD 데이터 로드 완료:\n{filename}\n\n"
+                    f"데이터 포인트: {len(q)}개\n"
+                    f"파수 범위: {q[0]:.2e} ~ {q[-1]:.2e} 1/m\n"
+                    f"PSD 범위: {C_q.min():.2e} ~ {C_q.max():.2e} m⁴")
+
+            except Exception as e:
+                messagebox.showerror("오류", f"PSD 파일 로드 실패:\n{str(e)}")
+                import traceback
+                traceback.print_exc()
 
     def _save_results(self):
         """Save calculation results summary to text file."""

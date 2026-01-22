@@ -59,11 +59,53 @@ python example_detailed_output.py
 - `output/persson_PSD.csv` - PSD 플롯 데이터
 - `persson_detailed_visualization.png` - 종합 그래프
 
+### 4. example_measured_data.py ⭐ 신규
+실제 측정 데이터 사용 예제
+
+**실행 방법:**
+```bash
+cd examples
+python example_measured_data.py
+```
+
+**내용:**
+- 측정된 PSD 데이터 로드 (q vs C(q))
+- 측정된 DMA 데이터 로드 (주파수, E', E'')
+- 단위 자동 변환 (Hz→rad/s, MPa→Pa)
+- 실제 데이터 기반 G(q) 계산
+- 9개 그래프로 시각화
+
+**출력 파일:**
+- `measured_data_results.csv` - 계산 결과
+- `measured_data_summary.txt` - 요약
+- `measured_data_visualization.png` - 그래프
+
+## 데이터 파일 형식
+
+### PSD 데이터 (`examples/data/measured_psd.txt`)
+```
+# Measured Surface PSD Data
+# Wavenumber q (1/m)	PSD C(q) (m^4)
+2.0e+01	3.0e-09
+3.0e+01	6.0e-10
+...
+```
+
+### DMA 데이터 (`examples/data/measured_dma.txt`)
+```
+# Measured DMA Master Curve Data
+# Frequency(Hz)  E'(MPa)  E''(MPa)
+0.01      6.7     0.7
+0.1       7.8     1.0
+...
+```
+
 ## 출력 파일
 
 각 예제는 실행 후 PNG 이미지 파일을 생성합니다:
 - `persson_basic_results.png` - 기본 예제 결과
 - `persson_contact_results.png` - 접촉 역학 결과
+- `measured_data_visualization.png` - 측정 데이터 결과
 
 ## 사용자 정의
 
@@ -82,3 +124,16 @@ h_rms = 20e-6  # 20 μm
 # Hurst 지수 변경
 hurst = 0.7
 ```
+
+## 측정 데이터 사용
+
+자신의 측정 데이터를 사용하려면:
+
+1. **PSD 데이터 준비**: 위 형식으로 텍스트 파일 생성
+2. **DMA 데이터 준비**: 위 형식으로 텍스트 파일 생성
+3. **예제 4 수정**: 파일 경로 변경
+4. **실행**: `python example_measured_data.py`
+
+또는 **GUI 사용**:
+- `파일 → 재료 물성 불러오기` (DMA 데이터)
+- `파일 → PSD 데이터 불러오기` (PSD 데이터)
