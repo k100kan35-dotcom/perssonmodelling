@@ -426,33 +426,54 @@ class PerssonModelGUI_V2:
         ax1 = self.ax_master_curve
         ax1_twin = ax1.twinx()
 
-        ax1.loglog(omega, E_storage/1e6, 'g-', linewidth=2, label="E' (저장 탄성률)")
-        ax1.loglog(omega, E_loss/1e6, 'orange', linewidth=2, label="E'' (손실 탄성률)")
-        ax1_twin.semilogx(omega, tan_delta, 'r--', linewidth=2, label="tan(δ)")
+        ax1.loglog(omega, E_storage/1e6, 'g-', linewidth=2, label="E' (저장 탄성률)", alpha=0.9)
+        ax1.loglog(omega, E_loss/1e6, 'orange', linewidth=2, label="E'' (손실 탄성률)", alpha=0.9)
+        ax1_twin.semilogx(omega, tan_delta, 'r--', linewidth=2, label="tan(δ)", alpha=0.9)
 
-        ax1.set_xlabel('각주파수 ω (rad/s)', fontweight='bold', fontsize=11)
-        ax1.set_ylabel('탄성률 (MPa)', fontweight='bold', fontsize=11, color='g')
-        ax1_twin.set_ylabel('tan(δ)', fontweight='bold', fontsize=11, color='r')
-        ax1.set_title('점탄성 마스터 곡선', fontweight='bold', fontsize=12)
+        ax1.set_xlabel('각주파수 ω (rad/s)', fontweight='bold', fontsize=11, labelpad=5)
+        ax1.set_ylabel('탄성률 (MPa)', fontweight='bold', fontsize=11, color='g',
+                       rotation=90, labelpad=10)
+        ax1_twin.set_ylabel('tan(δ)', fontweight='bold', fontsize=11, color='r',
+                           rotation=90, labelpad=10)
+        ax1.set_title('점탄성 마스터 곡선', fontweight='bold', fontsize=12, pad=10)
         ax1.legend(loc='upper left', fontsize=9)
         ax1_twin.legend(loc='upper right', fontsize=9)
         ax1.grid(True, alpha=0.3)
 
-        # Plot 2: PSD C(q)
+        # Plot 2: PSD C(q) with Hurst exponent
         if self.psd_model is not None:
             q_min = float(self.q_min_var.get())
             q_max = float(self.q_max_var.get())
             q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
             C_q = self.psd_model(q_plot)
 
-            self.ax_psd.loglog(q_plot, C_q, 'b-', linewidth=2, label='로드된 PSD')
-            self.ax_psd.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
-            self.ax_psd.set_ylabel('PSD C(q) (m⁴)', fontweight='bold', fontsize=11)
-            self.ax_psd.set_title('표면 거칠기 PSD', fontweight='bold', fontsize=12)
+            # Calculate Hurst exponent from power law fitting
+            # C(q) = A * q^(-2(H+1)) => log(C) = log(A) - 2(H+1)*log(q)
+            # Use middle range for fitting (avoid edge artifacts)
+            fit_idx = (q_plot > q_min * 10) & (q_plot < q_max / 10)
+            if np.sum(fit_idx) > 10:
+                log_q_fit = np.log10(q_plot[fit_idx])
+                log_C_fit = np.log10(C_q[fit_idx])
+                # Linear fit: log(C) = a + b*log(q), where b = -2(H+1)
+                coeffs = np.polyfit(log_q_fit, log_C_fit, 1)
+                slope = coeffs[0]
+                intercept = coeffs[1]
+                H = -slope / 2.0 - 1.0  # Hurst exponent
+
+                # Plot fitted line
+                C_fit = 10**(intercept + slope * np.log10(q_plot))
+                self.ax_psd.loglog(q_plot, C_fit, 'r--', linewidth=1.5, alpha=0.7,
+                                  label=f'Power law fit (H={H:.3f})')
+
+            self.ax_psd.loglog(q_plot, C_q, 'b-', linewidth=2, label='로드된 PSD', alpha=0.9)
+            self.ax_psd.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
+            self.ax_psd.set_ylabel('PSD C(q) (m⁴)', fontweight='bold', fontsize=11,
+                                   rotation=90, labelpad=10)
+            self.ax_psd.set_title('표면 거칠기 PSD', fontweight='bold', fontsize=12, pad=10)
             self.ax_psd.legend(fontsize=9)
             self.ax_psd.grid(True, alpha=0.3)
 
-        self.fig_verification.tight_layout()
+        self.fig_verification.tight_layout(pad=2.0)
         self.canvas_verification.draw()
 
     def _update_material_display(self):
@@ -552,17 +573,23 @@ class PerssonModelGUI_V2:
                 q_array, v_array, q_min=q_min, progress_callback=progress_callback
             )
 
-            # Calculate inner integral details for middle velocity (for visualization)
-            mid_v_idx = len(v_array) // 2
-            self.g_calculator.velocity = v_array[mid_v_idx]
-            detailed_results = self.g_calculator.calculate_G_with_details(
-                q_array, q_min=q_min, store_inner_integral=True
-            )
+            # Calculate detailed results for selected velocities (for visualization)
+            # Select 5-8 velocities spanning the range
+            n_detail_v = min(8, len(v_array))
+            detail_v_indices = np.linspace(0, len(v_array)-1, n_detail_v, dtype=int)
+            detailed_results_multi_v = []
+
+            for v_idx in detail_v_indices:
+                self.g_calculator.velocity = v_array[v_idx]
+                detailed = self.g_calculator.calculate_G_with_details(
+                    q_array, q_min=q_min, store_inner_integral=False
+                )
+                detailed['velocity'] = v_array[v_idx]
+                detailed_results_multi_v.append(detailed)
 
             self.results = {
                 '2d_results': results_2d,
-                'detailed_results': detailed_results,
-                'representative_velocity': v_array[mid_v_idx],
+                'detailed_results_multi_v': detailed_results_multi_v,
                 'sigma_0': sigma_0,
                 'temperature': temperature,
                 'poisson': poisson
@@ -592,10 +619,9 @@ class PerssonModelGUI_V2:
         P_matrix = results_2d['P_matrix']
 
         # Get detailed results if available
-        has_detailed = 'detailed_results' in self.results
+        has_detailed = 'detailed_results_multi_v' in self.results
         if has_detailed:
-            detailed = self.results['detailed_results']
-            rep_v = self.results['representative_velocity']
+            detailed_multi_v = self.results['detailed_results_multi_v']
 
         # Create 2x3 subplot layout
         ax1 = self.fig_results.add_subplot(2, 3, 1)
@@ -614,9 +640,9 @@ class PerssonModelGUI_V2:
                 ax1.loglog(q, G_matrix[:, j], color=color, linewidth=1.5,
                           label=f'v={v_val:.4f} m/s')
 
-        ax1.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
-        ax1.set_ylabel('G(q)', fontweight='bold', fontsize=11)
-        ax1.set_title('(a) 다중 속도에서의 G(q)', fontweight='bold', fontsize=12)
+        ax1.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
+        ax1.set_ylabel('G(q)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+        ax1.set_title('(a) 다중 속도에서의 G(q)', fontweight='bold', fontsize=11, pad=8)
         ax1.legend(fontsize=7, ncol=2)
         ax1.grid(True, alpha=0.3)
 
@@ -627,11 +653,11 @@ class PerssonModelGUI_V2:
                             cmap='hot', shading='auto', norm=matplotlib.colors.LogNorm())
         ax2.set_xscale('log')
         ax2.set_yscale('log')
-        ax2.set_xlabel('속도 v (m/s)', fontweight='bold', fontsize=11)
-        ax2.set_ylabel('파수 q (1/m)', fontweight='bold', fontsize=11)
-        ax2.set_title('(b) G(q,v) 히트맵', fontweight='bold', fontsize=12)
+        ax2.set_xlabel('속도 v (m/s)', fontweight='bold', fontsize=11, labelpad=5)
+        ax2.set_ylabel('파수 q (1/m)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+        ax2.set_title('(b) G(q,v) 히트맵', fontweight='bold', fontsize=11, pad=8)
         cbar = self.fig_results.colorbar(im, ax=ax2)
-        cbar.set_label('G', fontweight='bold', fontsize=10)
+        cbar.set_label('G', fontweight='bold', fontsize=10, rotation=90)
 
         # Plot 3: Contact Area P(q,v) (접촉 면적)
         for j, (v_val, color) in enumerate(zip(v, colors)):
@@ -639,66 +665,59 @@ class PerssonModelGUI_V2:
                 ax3.semilogx(q, P_matrix[:, j], color=color, linewidth=1.5,
                             label=f'v={v_val:.4f} m/s')
 
-        ax3.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
-        ax3.set_ylabel('접촉 면적 비율 P(q)', fontweight='bold', fontsize=11)
-        ax3.set_title('(c) 다중 속도에서의 접촉 면적', fontweight='bold', fontsize=12)
+        ax3.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
+        ax3.set_ylabel('접촉 면적 비율 P(q)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+        ax3.set_title('(c) 다중 속도에서의 접촉 면적', fontweight='bold', fontsize=11, pad=8)
         ax3.legend(fontsize=7, ncol=2)
         ax3.grid(True, alpha=0.3)
 
         # Plot 4: Final contact area vs velocity (속도에 따른 최종 접촉 면적)
         P_final = P_matrix[-1, :]
         ax4.semilogx(v, P_final, 'ro-', linewidth=2, markersize=4)
-        ax4.set_xlabel('속도 v (m/s)', fontweight='bold', fontsize=11)
-        ax4.set_ylabel('최종 접촉 면적 P(q_max)', fontweight='bold', fontsize=11)
-        ax4.set_title('(d) 속도에 따른 접촉 면적', fontweight='bold', fontsize=12)
+        ax4.set_xlabel('속도 v (m/s)', fontweight='bold', fontsize=11, labelpad=5)
+        ax4.set_ylabel('최종 접촉 면적 P(q_max)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+        ax4.set_title('(d) 속도에 따른 접촉 면적', fontweight='bold', fontsize=11, pad=8)
         ax4.grid(True, alpha=0.3)
 
-        # Plot 5: Inner integral visualization (내부 적분 시각화)
-        if has_detailed and 'inner_integral_details' in detailed:
-            # Plot inner integral for several q values with smoothing
-            inner_details = detailed['inner_integral_details']
-            n_samples = min(5, len(inner_details))
-            indices = np.linspace(0, len(inner_details)-1, n_samples, dtype=int)
+        # Plot 5: Inner integral vs q for multiple velocities (다중 속도에서의 내부 적분)
+        if has_detailed:
+            cmap_detail = plt.get_cmap('plasma')
+            for i, detail_result in enumerate(detailed_multi_v):
+                v_val = detail_result['velocity']
+                color = cmap_detail(i / len(detailed_multi_v))
+                ax5.loglog(detail_result['q'], detail_result['avg_modulus_term'],
+                          color=color, linewidth=1.5, label=f'v={v_val:.4f} m/s', alpha=0.8)
 
-            for idx in indices:
-                detail = inner_details[idx]
-                phi = detail['phi']
-                integrand = detail['integrand']
-
-                # Apply Savitzky-Golay filter for smoothing
-                if len(integrand) >= 5:
-                    window = min(11, len(integrand) if len(integrand) % 2 == 1 else len(integrand)-1)
-                    integrand_smooth = savgol_filter(integrand, window, 3)
-                else:
-                    integrand_smooth = integrand
-
-                ax5.plot(phi, integrand_smooth, linewidth=1.5,
-                        label=f'q={q[idx]:.2e} 1/m')
-
-            ax5.set_xlabel('각도 φ (rad)', fontweight='bold', fontsize=11)
-            ax5.set_ylabel('내부 적분 피적분함수', fontweight='bold', fontsize=11)
-            ax5.set_title(f'(e) 내부 적분 (v={rep_v:.4f} m/s)', fontweight='bold', fontsize=12)
-            ax5.legend(fontsize=7)
+            ax5.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
+            ax5.set_ylabel('내부 적분 값', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+            ax5.set_title('(e) 다중 속도에서의 내부 적분', fontweight='bold', fontsize=11, pad=8)
+            ax5.legend(fontsize=7, ncol=2)
             ax5.grid(True, alpha=0.3)
         else:
             ax5.text(0.5, 0.5, '내부 적분 데이터 없음',
                     ha='center', va='center', transform=ax5.transAxes, fontsize=10)
-            ax5.set_title('(e) 내부 적분', fontweight='bold', fontsize=12)
+            ax5.set_title('(e) 내부 적분', fontweight='bold', fontsize=11, pad=8)
 
-        # Plot 6: G integrand distribution (G 피적분함수 분포)
+        # Plot 6: G integrand for multiple velocities (다중 속도에서의 G 피적분함수)
         if has_detailed:
-            ax6.loglog(detailed['q'], detailed['G_integrand'], 'purple', linewidth=2)
-            ax6.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11)
-            ax6.set_ylabel('G 피적분함수', fontweight='bold', fontsize=11)
-            ax6.set_title(f'(f) G 피적분함수 (v={rep_v:.4f} m/s)', fontweight='bold', fontsize=12)
+            for i, detail_result in enumerate(detailed_multi_v):
+                v_val = detail_result['velocity']
+                color = cmap_detail(i / len(detailed_multi_v))
+                ax6.loglog(detail_result['q'], detail_result['G_integrand'],
+                          color=color, linewidth=1.5, label=f'v={v_val:.4f} m/s', alpha=0.8)
+
+            ax6.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
+            ax6.set_ylabel('G 피적분함수', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
+            ax6.set_title('(f) 다중 속도에서의 G 피적분함수', fontweight='bold', fontsize=11, pad=8)
+            ax6.legend(fontsize=7, ncol=2)
             ax6.grid(True, alpha=0.3)
         else:
             ax6.text(0.5, 0.5, '상세 데이터 없음',
                     ha='center', va='center', transform=ax6.transAxes, fontsize=10)
-            ax6.set_title('(f) G 피적분함수', fontweight='bold', fontsize=12)
+            ax6.set_title('(f) G 피적분함수', fontweight='bold', fontsize=11, pad=8)
 
-        self.fig_results.suptitle('G(q,v) 2D 행렬 계산 결과', fontweight='bold', fontsize=14)
-        self.fig_results.tight_layout()
+        self.fig_results.suptitle('G(q,v) 2D 행렬 계산 결과', fontweight='bold', fontsize=13, y=0.995)
+        self.fig_results.tight_layout(rect=[0, 0, 1, 0.99])
         self.canvas_results.draw()
 
     def _save_detailed_csv(self):
