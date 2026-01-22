@@ -1020,14 +1020,9 @@ class PerssonModelGUI_V2:
                     p_sigma = (1 / np.sqrt(2 * np.pi * variance)) * \
                               np.exp(-(sigma_array - sigma_0_MPa)**2 / (2 * variance))
 
-                    # Plot line
-                    ax2.plot(sigma_array, p_sigma, color=color, linewidth=1.5,
-                            label=f'v={v_val:.4f} m/s (G={G_val:.3f})', alpha=0.9)
-
-                    # Fill area where stress > 0 (compressive region)
-                    positive_mask = sigma_array >= 0
-                    ax2.fill_between(sigma_array[positive_mask], 0, p_sigma[positive_mask],
-                                    color=color, alpha=0.2)
+                    # Plot line only (no fill to avoid stacking effect)
+                    ax2.plot(sigma_array, p_sigma, color=color, linewidth=2,
+                            label=f'v={v_val:.4f} m/s (G={G_val:.3f})', alpha=0.8)
 
         # Add vertical line for nominal pressure
         ax2.axvline(sigma_0_MPa, color='black', linestyle='--', linewidth=2,
