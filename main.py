@@ -157,7 +157,9 @@ class PerssonModelGUI_V2:
 
                 # Update UI
                 self.q_min_var.set(f"{q[0]:.2e}")
-                self.q_max_var.set(f"{q[-1]:.2e}")
+                # Don't overwrite q_max - keep the default value (6.0e+4) for better initial calculations
+                # User can manually adjust if they want to use the full PSD range
+                # self.q_max_var.set(f"{q[-1]:.2e}")
                 self.psd_type_var.set("measured")
 
                 self._update_material_display()
@@ -1062,8 +1064,8 @@ class PerssonModelGUI_V2:
 
         print(f"G_dimensionless(qmax) = {G_stress_array[-1]:.4e}")
         print(f"√G_dimensionless(qmax) = {np.sqrt(G_stress_array[-1]):.4f}")
-        print(f"Expected peak at qmax ≈ √G × σ₀ = {np.sqrt(G_stress_array[-1]) * sigma_0_MPa:.4f} MPa")
-        print(f"Target: peak at σ₀ = {sigma_0_MPa:.2f} MPa")
+        print(f"Peak location: ALWAYS at σ₀ = {sigma_0_MPa:.2f} MPa (independent of G)")
+        print(f"Distribution width at qmax: √G × σ₀ = {np.sqrt(G_stress_array[-1]) * sigma_0_MPa:.4f} MPa")
         print("="*80 + "\n")
 
         # Set x-axis range based on INITIAL wavenumbers (not max!)
