@@ -1083,10 +1083,10 @@ class PerssonModelGUI_V2:
                 if j == 0:
                     print(f"\n>>> APPLYING FIX: Normalize by σ₀")
                     print(f"E_normalized = E*/σ₀ = {E_normalized:.2e}")
-                    print(f"G_dimensionless(qmax) = {G_stress_array[-1]:.4e}")
-                    print(f"G_scaled(qmax) = G × σ₀² = {G_stress_array_MPa2[-1]:.4e} MPa²")
-                    print(f"√G_scaled = {np.sqrt(G_stress_array_MPa2[-1]):.4f} MPa")
-                    print(f">>> Now √G ≈ σ₀, so peak should be at σ₀ = 0.3 MPa!")
+                    print(f"G_dimensionless(qmax) = {G_stress_array_dimensionless[-1]:.4e}")
+                    print(f"√G_dimensionless = {np.sqrt(G_stress_array_dimensionless[-1]):.4f}")
+                    print(f"Expected peak ≈ √G × σ₀ = {np.sqrt(G_stress_array_dimensionless[-1]) * sigma_0_MPa:.4f} MPa")
+                    print(f">>> Target: peak at σ₀ = {sigma_0_MPa:.2f} MPa")
 
                 # Update global maximum (dimensionless)
                 if G_stress_array_dimensionless[-1] > G_stress_max_global:
