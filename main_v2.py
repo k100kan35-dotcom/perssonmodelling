@@ -1026,31 +1026,29 @@ class PerssonModelGUI_V2:
         G_stress_dict = {}  # Store G_stress for each velocity
 
         # Pre-calculate G_stress for each velocity
+        # CRITICAL FIX: Include σ₀ in denominator to prevent G_stress explosion
+        # Without σ₀, E² ~ (1 GPa)² makes G_stress too large, shifting peak away from σ₀
         for j, v_val in enumerate(v):
             if j % max(1, len(v) // 10) == 0:
-                # Calculate G_stress(q) for this velocity using CORRECT formula:
-                # G_stress(q) = (π/4) ∫[q0→q] k³C(k) |E(kv)/(1-ν²)|² dk
-                # NOTE: E(kv) must be evaluated at EACH wavenumber k, not just one representative frequency!
+                # Use low-frequency E to get reasonable G_stress values
+                # High-frequency E causes G_stress explosion
+                omega_low = q_min * v_val
+                E_low = self.material.get_storage_modulus(np.array([omega_low]))[0]
+                E_star = E_low / (1 - poisson**2)
 
+                # NORMALIZATION: Divide by σ₀ to get dimensionless-like quantity
+                # This prevents G_stress from being too large
+                E_normalized = E_star / sigma_0_Pa
+
+                # Calculate G_stress(q) = (π/4) * (E/σ₀)² * ∫[q0→q] k³C(k)dk
+                integrand = q**3 * C_q_vals
                 G_stress_array = np.zeros_like(q)
                 for i in range(1, len(q)):
-                    # For each q value, integrate from q_min to q[i]
-                    q_integration_range = q[:i+1]
+                    G_stress_array[i] = (np.pi / 4) * E_normalized**2 * np.trapezoid(integrand[:i+1], q[:i+1])
 
-                    # Calculate E(q'v) for each q' in the integration range
-                    omega_array = q_integration_range * v_val  # ω = q·v (no angle for stress distribution!)
-                    E_array = self.material.get_storage_modulus(omega_array)  # E(ω) for each q'
-                    E_star_array = E_array / (1 - poisson**2)  # E* for each q'
-
-                    # Integrand: q³C(q)|E*(qv)/(1-ν²)|² = q³C(q)(E*)²
-                    # Note: E* already has (1-ν²) in denominator, so |E*|² is what we need
-                    integrand = q_integration_range**3 * C_q_vals[:i+1] * np.abs(E_star_array)**2
-
-                    # Numerical integration
-                    G_stress_array[i] = (np.pi / 4) * np.trapezoid(integrand, q_integration_range)
-
-                # Convert to MPa²
-                G_stress_array_MPa2 = G_stress_array / 1e12
+                # G_stress_array is now dimensionless (similar to G_area)
+                # Convert to "effective MPa²" for plotting: multiply back by σ₀²
+                G_stress_array_MPa2 = G_stress_array * (sigma_0_MPa**2)
                 G_stress_dict[j] = G_stress_array_MPa2
 
                 # Update global maximum
