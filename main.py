@@ -1091,8 +1091,8 @@ class PerssonModelGUI_V2:
         print(f"std_initial = √G_initial × σ₀ = {std_initial:.4f} MPa")
         print(f"sigma_max (for x-axis) = {sigma_max:.2f} MPa")
 
-        # Select multiple wavenumbers to plot (logarithmic spacing)
-        n_q_selected = 8
+        # Select 3 wavenumbers to plot (first, middle, last)
+        n_q_selected = 3
         q_indices = np.linspace(0, len(q)-1, n_q_selected, dtype=int)
 
         # Create color map for wavenumbers
@@ -1100,16 +1100,13 @@ class PerssonModelGUI_V2:
         colors_q = [cmap_q(i / (n_q_selected-1)) for i in range(n_q_selected)]
 
         print(f"\nPlotting P(σ) for {n_q_selected} wavenumbers:")
+        print("="*80)
 
         # Plot stress distributions for selected wavenumbers
         for i, q_idx in enumerate(q_indices):
             color = colors_q[i]
             q_val = q[q_idx]
             G_norm_q = G_stress_array[q_idx]
-
-            # Debug output
-            if i == 0 or i == len(q_indices)-1:
-                print(f"  q = {q_val:.2e} (1/m):  G = {G_norm_q:.4e},  √G = {np.sqrt(G_norm_q):.4f}")
 
             # Calculate stress distribution at this wavenumber
             if G_norm_q > 1e-10:
@@ -1124,49 +1121,40 @@ class PerssonModelGUI_V2:
                 # Final P(σ) is difference - clip to ensure non-negative (probability cannot be negative)
                 P_sigma = np.maximum(0, term1 - term2)
 
-                # Plot the final distribution (solid line)
-                ax2.plot(sigma_array, P_sigma, color=color, linewidth=2,
-                        label=f'P(σ), q={q_val:.1e}', alpha=0.8)
+                # Calculate P(σ > 0): probability of positive stress
+                positive_indices = sigma_array > 0
+                P_positive = np.trapezoid(P_sigma[positive_indices], sigma_array[positive_indices])
 
-                # Plot individual terms for ALL wavenumbers to show how mirror effect changes
-                # But only add labels for first, middle, and last to avoid legend clutter
-                if i == 0:  # First (lowest q) - with labels
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1.2,
-                            linestyle='--', alpha=0.5, label=f'exp[-(σ-σ₀)²]')
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1.2,
-                            linestyle=':', alpha=0.5, label=f'exp[-(σ+σ₀)²] 거울상')
+                # Total integral for verification
+                integral_total = np.trapezoid(P_sigma, sigma_array)
 
-                    # Debug
-                    integral = np.trapezoid(P_sigma, sigma_array)
-                    print(f"\n>>> 첫 번째 곡선 (q={q_val:.2e}):")
-                    print(f"    G = {G_norm_q:.4e}, √G = {np.sqrt(G_norm_q):.4f}")
-                    print(f"    ∫P(σ)dσ = {integral:.4f}")
-                    print(f"    Max P(σ) at σ = {sigma_array[np.argmax(P_sigma)]:.4f} MPa")
+                # Plot the final distribution (solid line) with P(σ>0) in label
+                label_name = ['최소 q', '중간 q', '최대 q'][i]
+                ax2.plot(sigma_array, P_sigma, color=color, linewidth=2.5,
+                        label=f'{label_name}: P(σ>0)={P_positive:.3f}', alpha=0.9)
 
-                elif i == len(q_indices)//2:  # Middle - with labels
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1.2,
-                            linestyle='--', alpha=0.5, label=f'중간 q: term1')
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1.2,
-                            linestyle=':', alpha=0.5, label=f'중간 q: term2')
+                # Plot individual terms (term1, term2) for all 3 curves
+                # Use shared labels for clarity
+                if i == 0:
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.3,
+                            linestyle='--', alpha=0.6, label=f'term1: exp[-(σ-σ₀)²/4G]')
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.3,
+                            linestyle=':', alpha=0.6, label=f'term2: exp[-(σ+σ₀)²/4G] 거울상')
+                else:
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.3,
+                            linestyle='--', alpha=0.6)
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.3,
+                            linestyle=':', alpha=0.6)
 
-                elif i == len(q_indices)-1:  # Last (highest q) - with labels
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1.2,
-                            linestyle='--', alpha=0.5, label=f'최대 q: term1')
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1.2,
-                            linestyle=':', alpha=0.5, label=f'최대 q: term2')
-
-                    # Debug
-                    integral = np.trapezoid(P_sigma, sigma_array)
-                    print(f"\n>>> 마지막 곡선 (q={q_val:.2e}):")
-                    print(f"    G = {G_norm_q:.4e}, √G = {np.sqrt(G_norm_q):.4f}")
-                    print(f"    ∫P(σ)dσ = {integral:.4f}")
-                    print(f"    Max P(σ) at σ = {sigma_array[np.argmax(P_sigma)]:.4f} MPa")
-
-                else:  # Other wavenumbers - no labels to reduce legend clutter
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1.0,
-                            linestyle='--', alpha=0.4)
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1.0,
-                            linestyle=':', alpha=0.4)
+                # Print debug information
+                print(f"\n[q = {q_val:.2e} 1/m]")
+                print(f"  G = {G_norm_q:.4e} (무차원)")
+                print(f"  √G = {np.sqrt(G_norm_q):.4f}")
+                print(f"  분포 폭 (√G × σ₀) = {np.sqrt(G_norm_q) * sigma_0_MPa:.4f} MPa")
+                print(f"  피크 위치: σ = {sigma_array[np.argmax(P_sigma)]:.4f} MPa")
+                print(f"  ∫P(σ)dσ (전체) = {integral_total:.4f}")
+                print(f"  P(σ > 0) = {P_positive:.4f} ← 양의 응력 확률")
+                print(f"  P(σ ≤ 0) = {1 - P_positive:.4f}")
 
         # Add vertical line for nominal pressure
         ax2.axvline(sigma_0_MPa, color='black', linestyle='--', linewidth=2,
@@ -1175,9 +1163,11 @@ class PerssonModelGUI_V2:
         ax2.set_xlabel('응력 σ (MPa)', fontweight='bold', fontsize=11, labelpad=5)
         ax2.set_ylabel('응력 분포 P(σ)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
         ax2.set_title(f'(b) 파수별 국소 응력 확률 분포 (v={v_fixed:.2f} m/s 고정)', fontweight='bold', fontsize=11, pad=8)
-        ax2.legend(fontsize=5.5, ncol=3, loc='upper right')
+        ax2.legend(fontsize=6.5, ncol=2, loc='upper right')
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(-sigma_0_MPa, sigma_max)  # Include negative region to show mirror image
+
+        print("="*80)
 
         # Plot 3: Contact Area P(q,v) (접촉 면적)
         for j, (v_val, color) in enumerate(zip(v, colors)):
