@@ -1121,8 +1121,8 @@ class PerssonModelGUI_V2:
                 term1 = normalization * np.exp(-(sigma_norm - 1)**2 / (4 * G_norm_q))  # Main peak at σ₀
                 term2 = normalization * np.exp(-(sigma_norm + 1)**2 / (4 * G_norm_q))  # Mirror at -σ₀
 
-                # Final P(σ) is difference
-                P_sigma = term1 - term2
+                # Final P(σ) is difference - clip to ensure non-negative (probability cannot be negative)
+                P_sigma = np.maximum(0, term1 - term2)
 
                 # Plot the final distribution (solid line)
                 ax2.plot(sigma_array, P_sigma, color=color, linewidth=2,
