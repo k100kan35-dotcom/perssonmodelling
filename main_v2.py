@@ -1001,20 +1001,54 @@ class PerssonModelGUI_V2:
         ax1.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
         # Plot 2: Local stress probability distribution P(σ,ζ) for multiple velocities
-        # Persson theory: P(σ,ζ) = 1/√(4πG) [exp(-(σ-σ0)²/4G) - exp(-(σ+σ0)²/4G)]
-        # where G = σ0² * G_dimensionless (variance has dimension of stress²)
+        # Persson theory: P(σ,ζ) = 1/√(4πG_stress) [exp(-(σ-σ0)²/4G_stress) - exp(-(σ+σ0)²/4G_stress)]
+        # where G_stress(q) = (π/4) * (E*)² * ∫[q0→q] k³C(k)dk  [Pa²]
         sigma_0_Pa = self.results['sigma_0']  # Pa
         sigma_0_MPa = sigma_0_Pa / 1e6  # Convert Pa to MPa
 
-        # Find maximum G value to set appropriate x-axis range
-        G_max = np.max(G_matrix)
-        if G_max > 0:
-            # Variance in MPa²: variance = σ0² * G (dimensionless)
-            variance_max_MPa2 = (sigma_0_MPa**2) * G_max
-            std_max = np.sqrt(variance_max_MPa2)
-            sigma_max = sigma_0_MPa + 4 * std_max
-        else:
-            sigma_max = 3 * sigma_0_MPa
+        # Calculate G_stress(q,v) - stress distribution variance parameter
+        # G_stress depends on velocity through E*(ω) where ω = q*v
+        poisson = float(self.poisson_var.get())
+        temperature = float(self.temperature_var.get())
+        q_min = float(self.q_min_var.get())
+        q_max = float(self.q_max_var.get())
+
+        # PSD values (same for all velocities)
+        C_q_vals = self.psd_model(q)
+
+        # Find maximum G_stress across all velocities for x-axis range
+        G_stress_max_global = 0
+        G_stress_dict = {}  # Store G_stress for each velocity
+
+        # Pre-calculate G_stress for each velocity
+        for j, v_val in enumerate(v):
+            if j % max(1, len(v) // 10) == 0:
+                # Representative frequency for this velocity (at mid-wavenumber)
+                q_mid = np.sqrt(q_min * q_max)
+                omega_rep = q_mid * v_val
+
+                # Get E* at representative frequency
+                E_rep = self.material.get_storage_modulus(np.array([omega_rep]))[0]
+                E_star = E_rep / (1 - poisson**2)
+
+                # Calculate G_stress(q) for this velocity
+                # G_stress(q) = (π/4) * E*² * ∫[q0→q] k³C(k)dk
+                integrand = q**3 * C_q_vals
+                G_stress_array = np.zeros_like(q)
+                for i in range(1, len(q)):
+                    G_stress_array[i] = (np.pi / 4) * E_star**2 * np.trapezoid(integrand[:i+1], q[:i+1])
+
+                # Convert to MPa²
+                G_stress_array_MPa2 = G_stress_array / 1e12
+                G_stress_dict[j] = G_stress_array_MPa2
+
+                # Update global maximum
+                if G_stress_array_MPa2[-1] > G_stress_max_global:
+                    G_stress_max_global = G_stress_array_MPa2[-1]
+
+        # Set x-axis range based on maximum G_stress
+        std_max = np.sqrt(G_stress_max_global)
+        sigma_max = sigma_0_MPa + 4 * std_max
 
         # Create stress array (in MPa)
         sigma_array = np.linspace(0, sigma_max, 500)
@@ -1022,48 +1056,47 @@ class PerssonModelGUI_V2:
         # Debug: Print some values to verify calculations
         print(f"\n=== Debug: Stress Distribution ===")
         print(f"σ0 = {sigma_0_MPa:.4f} MPa")
-        print(f"G_matrix shape: {G_matrix.shape}")
-        print(f"G_matrix[0, 0] (first q, first v): {G_matrix[0, 0]:.2e}")
-        print(f"G_matrix[-1, 0] (last q, first v): {G_matrix[-1, 0]:.2e}")
-        print(f"G_max: {G_max:.2e}")
-        print(f"sigma_max: {sigma_max:.2f} MPa")
+        print(f"G_stress_max (across all v) = {G_stress_max_global:.4e} MPa²")
+        print(f"std_max = {std_max:.4f} MPa")
+        print(f"sigma_max = {sigma_max:.2f} MPa")
 
         # Plot stress distributions for selected velocities
         for j, v_val in enumerate(v):
             if j % max(1, len(v) // 10) == 0:
                 color = colors[j]
 
-                # Get G values at q_min (first) and q_max (last)
-                G_q0 = G_matrix[0, j]      # G at minimum wavenumber
-                G_qmax = G_matrix[-1, j]   # G at maximum wavenumber
+                # Get G_stress values for this velocity
+                G_stress_array_MPa2 = G_stress_dict[j]
+                G_stress_q0 = G_stress_array_MPa2[0]      # G_stress at minimum wavenumber
+                G_stress_qmax = G_stress_array_MPa2[-1]   # G_stress at maximum wavenumber
 
-                # Debug: Print for first velocity
+                # Debug for first velocity
                 if j == 0:
-                    variance_debug = (sigma_0_MPa**2) * G_qmax
-                    std_debug = np.sqrt(variance_debug)
+                    q_mid = np.sqrt(q_min * q_max)
+                    omega_rep = q_mid * v_val
+                    E_rep = self.material.get_storage_modulus(np.array([omega_rep]))[0]
+                    E_star = E_rep / (1 - poisson**2)
                     print(f"\nFor v = {v_val:.4e} m/s:")
-                    print(f"  G(q0) = {G_q0:.2e}, G(qmax) = {G_qmax:.2e}")
-                    print(f"  variance = σ0² * G = {variance_debug:.2e} MPa²")
-                    print(f"  std = {std_debug:.2f} MPa")
-                    print(f"  Peak should be at σ0 = {sigma_0_MPa:.4f} MPa")
+                    print(f"  ω_rep = {omega_rep:.2e} rad/s")
+                    print(f"  E(ω_rep) = {E_rep:.2e} Pa")
+                    print(f"  E* = {E_star:.2e} Pa")
+                    print(f"  G_stress(q0) = {G_stress_q0:.4e} MPa²")
+                    print(f"  G_stress(qmax) = {G_stress_qmax:.4e} MPa²")
+                    print(f"  std(qmax) = {np.sqrt(G_stress_qmax):.4f} MPa")
 
                 # Calculate stress distribution at q0 (dotted line)
-                if G_q0 > 1e-10:
-                    # Variance in MPa²
-                    variance_q0 = (sigma_0_MPa**2) * G_q0
-                    P_sigma_q0 = (1 / np.sqrt(4 * np.pi * variance_q0)) * \
-                                 (np.exp(-(sigma_array - sigma_0_MPa)**2 / (4 * variance_q0)) - \
-                                  np.exp(-(sigma_array + sigma_0_MPa)**2 / (4 * variance_q0)))
+                if G_stress_q0 > 1e-10:
+                    P_sigma_q0 = (1 / np.sqrt(4 * np.pi * G_stress_q0)) * \
+                                 (np.exp(-(sigma_array - sigma_0_MPa)**2 / (4 * G_stress_q0)) - \
+                                  np.exp(-(sigma_array + sigma_0_MPa)**2 / (4 * G_stress_q0)))
                     ax2.plot(sigma_array, P_sigma_q0, color=color, linestyle=':', linewidth=2.5,
                             alpha=0.6)  # No label for q0 lines to reduce legend clutter
 
                 # Calculate stress distribution at q_max (solid line)
-                if G_qmax > 1e-10:
-                    # Variance in MPa²
-                    variance_qmax = (sigma_0_MPa**2) * G_qmax
-                    P_sigma_qmax = (1 / np.sqrt(4 * np.pi * variance_qmax)) * \
-                                   (np.exp(-(sigma_array - sigma_0_MPa)**2 / (4 * variance_qmax)) - \
-                                    np.exp(-(sigma_array + sigma_0_MPa)**2 / (4 * variance_qmax)))
+                if G_stress_qmax > 1e-10:
+                    P_sigma_qmax = (1 / np.sqrt(4 * np.pi * G_stress_qmax)) * \
+                                   (np.exp(-(sigma_array - sigma_0_MPa)**2 / (4 * G_stress_qmax)) - \
+                                    np.exp(-(sigma_array + sigma_0_MPa)**2 / (4 * G_stress_qmax)))
                     ax2.plot(sigma_array, P_sigma_qmax, color=color, linestyle='-', linewidth=2,
                             label=f'v={v_val:.4f} m/s', alpha=0.9)
 
