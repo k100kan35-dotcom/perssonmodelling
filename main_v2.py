@@ -1075,10 +1075,10 @@ class PerssonModelGUI_V2:
                     G_stress_array[i] = (np.pi / 4) * E_normalized**2 * np.trapezoid(integrand_partial, q[:i+1])
 
                 # G_stress_array is now dimensionless (like G_area)
-                # For display purposes, scale back by σ₀² to get "effective MPa²"
-                # This ensures √G_display ≈ σ₀
-                G_stress_array_MPa2 = G_stress_array * (sigma_0_MPa**2)
-                G_stress_dict[j] = G_stress_array_MPa2
+                # DO NOT scale back by σ₀² - keep it dimensionless!
+                # This ensures √G ≈ 1, and peak stays at σ₀
+                G_stress_array_dimensionless = G_stress_array  # Keep dimensionless
+                G_stress_dict[j] = G_stress_array_dimensionless
 
                 if j == 0:
                     print(f"\n>>> APPLYING FIX: Normalize by σ₀")
@@ -1088,19 +1088,20 @@ class PerssonModelGUI_V2:
                     print(f"√G_scaled = {np.sqrt(G_stress_array_MPa2[-1]):.4f} MPa")
                     print(f">>> Now √G ≈ σ₀, so peak should be at σ₀ = 0.3 MPa!")
 
-                # Update global maximum
-                if G_stress_array_MPa2[-1] > G_stress_max_global:
-                    G_stress_max_global = G_stress_array_MPa2[-1]
+                # Update global maximum (dimensionless)
+                if G_stress_array_dimensionless[-1] > G_stress_max_global:
+                    G_stress_max_global = G_stress_array_dimensionless[-1]
 
-        print(f"\nG_stress_max (across all velocities) = {G_stress_max_global:.4e} MPa²")
-        print(f"√G_max = {np.sqrt(G_stress_max_global):.2f} MPa")
-        print(f"Ratio: √G_max / σ₀ = {np.sqrt(G_stress_max_global) / sigma_0_MPa:.1f}")
-        print("\n>>> PROBLEM DIAGNOSIS: √G >> σ₀, so peak shifts to √(2G) instead of σ₀")
-        print(">>> This means the G_stress formula or P(σ) formula needs revision!")
+        print(f"\nG_dimensionless_max (across all velocities) = {G_stress_max_global:.4e}")
+        print(f"√G_dimensionless_max = {np.sqrt(G_stress_max_global):.2f}")
+        print(f"Expected peak location ≈ {np.sqrt(G_stress_max_global) * sigma_0_MPa:.2f} MPa")
+        print(f"Target peak location = σ₀ = {sigma_0_MPa:.2f} MPa")
+        print("\n>>> If √G_dimensionless ≈ 1, peak will be at σ₀!")
         print("="*80 + "\n")
 
         # Set x-axis range based on maximum G_stress
-        std_max = np.sqrt(G_stress_max_global)
+        # Since G is dimensionless, multiply by σ₀ to get MPa
+        std_max = np.sqrt(G_stress_max_global) * sigma_0_MPa
         sigma_max = sigma_0_MPa + 4 * std_max
 
         # Create stress array (in MPa)
@@ -1109,8 +1110,8 @@ class PerssonModelGUI_V2:
         # Debug: Print some values to verify calculations
         print(f"\n=== Debug: Stress Distribution ===")
         print(f"σ0 = {sigma_0_MPa:.4f} MPa")
-        print(f"G_stress_max (across all v) = {G_stress_max_global:.4e} MPa²")
-        print(f"std_max = {std_max:.4f} MPa")
+        print(f"G_dimensionless_max (across all v) = {G_stress_max_global:.4e}")
+        print(f"std_max = √G × σ₀ = {std_max:.4f} MPa")
         print(f"sigma_max = {sigma_max:.2f} MPa")
 
         # Plot stress distributions for selected velocities
@@ -1118,15 +1119,14 @@ class PerssonModelGUI_V2:
             if j % max(1, len(v) // 10) == 0:
                 color = colors[j]
 
-                # Get G_stress values for this velocity
-                G_stress_array_MPa2 = G_stress_dict[j]
-                G_stress_q0 = G_stress_array_MPa2[0]      # G_stress at minimum wavenumber
-                G_stress_qmax = G_stress_array_MPa2[-1]   # G_stress at maximum wavenumber
+                # Get G_stress values for this velocity (already dimensionless!)
+                G_stress_array_dimensionless = G_stress_dict[j]
+                G_norm_q0 = G_stress_array_dimensionless[0]      # Already dimensionless
+                G_norm_qmax = G_stress_array_dimensionless[-1]   # Already dimensionless
 
-                # CRITICAL FIX: Normalize G_stress by σ₀² before using in P(σ) formula
-                # This ensures peak stays at σ₀ regardless of G magnitude
-                G_norm_q0 = G_stress_q0 / (sigma_0_MPa**2)  # Dimensionless
-                G_norm_qmax = G_stress_qmax / (sigma_0_MPa**2)  # Dimensionless
+                # Convert back to "MPa²" for display in debug output
+                G_stress_q0_display = G_norm_q0 * (sigma_0_MPa**2)
+                G_stress_qmax_display = G_norm_qmax * (sigma_0_MPa**2)
 
                 # Debug for first velocity
                 if j == 0:
@@ -1138,13 +1138,14 @@ class PerssonModelGUI_V2:
                     print(f"  ω_rep = {omega_rep:.2e} rad/s")
                     print(f"  E(ω_rep) = {E_rep:.2e} Pa")
                     print(f"  E* = {E_star:.2e} Pa")
-                    print(f"  G_stress(q0) = {G_stress_q0:.4e} MPa²")
-                    print(f"  G_stress(qmax) = {G_stress_qmax:.4e} MPa²")
-                    print(f"  std(qmax) = {np.sqrt(G_stress_qmax):.4f} MPa")
+                    print(f"  G_dimensionless(q0) = {G_norm_q0:.4e}")
+                    print(f"  G_dimensionless(qmax) = {G_norm_qmax:.4e}")
+                    print(f"  √G_dimensionless(qmax) = {np.sqrt(G_norm_qmax):.4f}")
                     print(f"\n>>> P(σ) Calculation Fix Applied:")
-                    print(f"  G_norm(qmax) = G/σ₀² = {G_stress_qmax:.4f}/{sigma_0_MPa**2:.4f} = {G_norm_qmax:.2f}")
-                    print(f"  Using normalized formula: peak at σ_norm = 1 (σ = {sigma_0_MPa:.2f} MPa)")
-                    print(f"  Now peak ALWAYS at σ₀, regardless of G magnitude!")
+                    print(f"  G is already dimensionless (normalized by σ₀²)")
+                    print(f"  √G ≈ {np.sqrt(G_norm_qmax):.2f}, so peak at σ ≈ {np.sqrt(G_norm_qmax)*sigma_0_MPa:.2f} MPa")
+                    print(f"  Target: peak at σ₀ = {sigma_0_MPa:.2f} MPa")
+                    print(f"  If √G ≈ 1, peak will be at σ₀!")
 
                 # Calculate stress distribution at q0 (dotted line)
                 # Using normalized formula: all in units of σ₀
