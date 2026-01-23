@@ -1023,6 +1023,13 @@ class PerssonModelGUI_V2:
         # PSD values
         C_q_vals = self.psd_model(q)
 
+        # Filter q array to user-specified range (q_min to q_max)
+        q_mask = (q >= q_min) & (q <= q_max)
+        q = q[q_mask]
+        C_q_vals = C_q_vals[q_mask]
+
+        print(f"Filtered q range: {q[0]:.2e} ~ {q[-1]:.2e} (1/m), {len(q)} points")
+
         # Fixed velocity for wavenumber analysis
         v_fixed = 0.01  # m/s (lower velocity to see clearer peak at σ₀)
 
@@ -1124,6 +1131,7 @@ class PerssonModelGUI_V2:
                 # Calculate P(σ > 0): probability of positive stress
                 positive_indices = sigma_array > 0
                 P_positive = np.trapezoid(P_sigma[positive_indices], sigma_array[positive_indices])
+                P_positive_percent = P_positive * 100  # Convert to percentage
 
                 # Total integral for verification
                 integral_total = np.trapezoid(P_sigma, sigma_array)
@@ -1131,7 +1139,7 @@ class PerssonModelGUI_V2:
                 # Plot the final distribution (solid line) with P(σ>0) in label
                 label_name = ['최소 q', '중간 q', '최대 q'][i]
                 ax2.plot(sigma_array, P_sigma, color=color, linewidth=2.5,
-                        label=f'{label_name}: P(σ>0)={P_positive:.3f}', alpha=0.9)
+                        label=f'{label_name}: P(σ>0)={P_positive_percent:.1f}%', alpha=0.9)
 
                 # Plot individual terms (term1, term2) for all 3 curves
                 # Use shared labels for clarity
@@ -1153,8 +1161,8 @@ class PerssonModelGUI_V2:
                 print(f"  분포 폭 (√G × σ₀) = {np.sqrt(G_norm_q) * sigma_0_MPa:.4f} MPa")
                 print(f"  피크 위치: σ = {sigma_array[np.argmax(P_sigma)]:.4f} MPa")
                 print(f"  ∫P(σ)dσ (전체) = {integral_total:.4f}")
-                print(f"  P(σ > 0) = {P_positive:.4f} ← 양의 응력 확률")
-                print(f"  P(σ ≤ 0) = {1 - P_positive:.4f}")
+                print(f"  P(σ > 0) = {P_positive_percent:.2f}% ← 양의 응력 확률")
+                print(f"  P(σ ≤ 0) = {(1 - P_positive)*100:.2f}%")
 
         # Add vertical line for nominal pressure
         ax2.axvline(sigma_0_MPa, color='black', linestyle='--', linewidth=2,
