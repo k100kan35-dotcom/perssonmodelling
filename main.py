@@ -1024,7 +1024,7 @@ class PerssonModelGUI_V2:
         C_q_vals = self.psd_model(q)
 
         # Fixed velocity for wavenumber analysis
-        v_fixed = 1.0  # m/s
+        v_fixed = 0.01  # m/s (lower velocity to see clearer peak at σ₀)
 
         # Calculate G_stress(q) at fixed velocity
         # Calculate G_stress(q) at fixed velocity
@@ -1126,40 +1126,47 @@ class PerssonModelGUI_V2:
 
                 # Plot the final distribution (solid line)
                 ax2.plot(sigma_array, P_sigma, color=color, linewidth=2,
-                        label=f'q={q_val:.1e} 1/m', alpha=0.8)
+                        label=f'P(σ), q={q_val:.1e}', alpha=0.8)
 
-                # For first AND last wavenumber, plot individual terms to show mirror effect
-                if i == 0:  # First (lowest q)
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1.5,
-                            linestyle='--', alpha=0.6, label=f'term1 (q={q_val:.1e})')
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1.5,
-                            linestyle=':', alpha=0.6, label=f'term2 거울상 (q={q_val:.1e})')
+                # Plot individual terms for ALL wavenumbers to show how mirror effect changes
+                # But only add labels for first, middle, and last to avoid legend clutter
+                if i == 0:  # First (lowest q) - with labels
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.2,
+                            linestyle='--', alpha=0.5, label=f'exp[-(σ-σ₀)²]')
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.2,
+                            linestyle=':', alpha=0.5, label=f'exp[-(σ+σ₀)²] 거울상')
 
-                    # Debug: print integral to check normalization
+                    # Debug
                     integral = np.trapezoid(P_sigma, sigma_array)
                     print(f"\n>>> 첫 번째 곡선 (q={q_val:.2e}):")
-                    print(f"    G = {G_norm_q:.4e}")
-                    print(f"    √G = {np.sqrt(G_norm_q):.4f}")
-                    print(f"    정규화 계수 = {normalization:.4e}")
-                    print(f"    ∫P(σ)dσ = {integral:.4f} (should be ≈ 1)")
-                    print(f"    Max P(σ) = {np.max(P_sigma):.4f}")
-                    print(f"    P(σ₀={sigma_0_MPa}) = {P_sigma[np.argmin(np.abs(sigma_array - sigma_0_MPa))]:.4f}")
+                    print(f"    G = {G_norm_q:.4e}, √G = {np.sqrt(G_norm_q):.4f}")
+                    print(f"    ∫P(σ)dσ = {integral:.4f}")
+                    print(f"    Max P(σ) at σ = {sigma_array[np.argmax(P_sigma)]:.4f} MPa")
 
-                elif i == len(q_indices)-1:  # Last (highest q)
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1.5,
-                            linestyle='--', alpha=0.6, label=f'term1 (q={q_val:.1e})')
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1.5,
-                            linestyle=':', alpha=0.6, label=f'term2 거울상 (q={q_val:.1e})')
+                elif i == len(q_indices)//2:  # Middle - with labels
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.2,
+                            linestyle='--', alpha=0.5, label=f'중간 q: term1')
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.2,
+                            linestyle=':', alpha=0.5, label=f'중간 q: term2')
 
-                    # Debug: print integral to check normalization
+                elif i == len(q_indices)-1:  # Last (highest q) - with labels
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.2,
+                            linestyle='--', alpha=0.5, label=f'최대 q: term1')
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.2,
+                            linestyle=':', alpha=0.5, label=f'최대 q: term2')
+
+                    # Debug
                     integral = np.trapezoid(P_sigma, sigma_array)
                     print(f"\n>>> 마지막 곡선 (q={q_val:.2e}):")
-                    print(f"    G = {G_norm_q:.4e}")
-                    print(f"    √G = {np.sqrt(G_norm_q):.4f}")
-                    print(f"    정규화 계수 = {normalization:.4e}")
-                    print(f"    ∫P(σ)dσ = {integral:.4f} (should be ≈ 1)")
-                    print(f"    Max P(σ) = {np.max(P_sigma):.4f}")
-                    print(f"    P(σ₀={sigma_0_MPa}) = {P_sigma[np.argmin(np.abs(sigma_array - sigma_0_MPa))]:.4f}")
+                    print(f"    G = {G_norm_q:.4e}, √G = {np.sqrt(G_norm_q):.4f}")
+                    print(f"    ∫P(σ)dσ = {integral:.4f}")
+                    print(f"    Max P(σ) at σ = {sigma_array[np.argmax(P_sigma)]:.4f} MPa")
+
+                else:  # Other wavenumbers - no labels to reduce legend clutter
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.0,
+                            linestyle='--', alpha=0.4)
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.0,
+                            linestyle=':', alpha=0.4)
 
         # Add vertical line for nominal pressure
         ax2.axvline(sigma_0_MPa, color='black', linestyle='--', linewidth=2,
@@ -1167,8 +1174,8 @@ class PerssonModelGUI_V2:
 
         ax2.set_xlabel('응력 σ (MPa)', fontweight='bold', fontsize=11, labelpad=5)
         ax2.set_ylabel('응력 분포 P(σ)', fontweight='bold', fontsize=11, rotation=90, labelpad=10)
-        ax2.set_title(f'(b) 파수별 국소 응력 확률 분포 (v={v_fixed:.1f} m/s 고정)', fontweight='bold', fontsize=11, pad=8)
-        ax2.legend(fontsize=6, ncol=2, loc='upper right')
+        ax2.set_title(f'(b) 파수별 국소 응력 확률 분포 (v={v_fixed:.2f} m/s 고정)', fontweight='bold', fontsize=11, pad=8)
+        ax2.legend(fontsize=5.5, ncol=3, loc='upper right')
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(-sigma_0_MPa, sigma_max)  # Include negative region to show mirror image
 
