@@ -1128,16 +1128,32 @@ class PerssonModelGUI_V2:
                 ax2.plot(sigma_array, P_sigma, color=color, linewidth=2,
                         label=f'q={q_val:.1e} 1/m', alpha=0.8)
 
-                # For first wavenumber, also plot individual terms to show mirror effect
-                if i == 0:
-                    ax2.plot(sigma_array, term1, color=color, linewidth=1,
-                            linestyle='--', alpha=0.5, label=f'exp[-(σ-σ₀)²] (q={q_val:.1e})')
-                    ax2.plot(sigma_array, term2, color=color, linewidth=1,
-                            linestyle=':', alpha=0.5, label=f'exp[-(σ+σ₀)²] (거울상)')
+                # For first AND last wavenumber, plot individual terms to show mirror effect
+                if i == 0:  # First (lowest q)
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.5,
+                            linestyle='--', alpha=0.6, label=f'term1 (q={q_val:.1e})')
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.5,
+                            linestyle=':', alpha=0.6, label=f'term2 거울상 (q={q_val:.1e})')
 
                     # Debug: print integral to check normalization
                     integral = np.trapezoid(P_sigma, sigma_array)
                     print(f"\n>>> 첫 번째 곡선 (q={q_val:.2e}):")
+                    print(f"    G = {G_norm_q:.4e}")
+                    print(f"    √G = {np.sqrt(G_norm_q):.4f}")
+                    print(f"    정규화 계수 = {normalization:.4e}")
+                    print(f"    ∫P(σ)dσ = {integral:.4f} (should be ≈ 1)")
+                    print(f"    Max P(σ) = {np.max(P_sigma):.4f}")
+                    print(f"    P(σ₀={sigma_0_MPa}) = {P_sigma[np.argmin(np.abs(sigma_array - sigma_0_MPa))]:.4f}")
+
+                elif i == len(q_indices)-1:  # Last (highest q)
+                    ax2.plot(sigma_array, term1, color=color, linewidth=1.5,
+                            linestyle='--', alpha=0.6, label=f'term1 (q={q_val:.1e})')
+                    ax2.plot(sigma_array, term2, color=color, linewidth=1.5,
+                            linestyle=':', alpha=0.6, label=f'term2 거울상 (q={q_val:.1e})')
+
+                    # Debug: print integral to check normalization
+                    integral = np.trapezoid(P_sigma, sigma_array)
+                    print(f"\n>>> 마지막 곡선 (q={q_val:.2e}):")
                     print(f"    G = {G_norm_q:.4e}")
                     print(f"    √G = {np.sqrt(G_norm_q):.4f}")
                     print(f"    정규화 계수 = {normalization:.4e}")
