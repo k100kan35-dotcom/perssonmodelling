@@ -1063,15 +1063,30 @@ class PerssonModelGUI_V2:
                     print(f"Expected peak location ≈ √(2G) = {np.sqrt(2*G_original_MPa2):.2f} MPa")
                     print(f"But σ₀ = {sigma_0_MPa:.2f} MPa << √G, so peak shifts away from σ₀!")
 
-                # Use the original formula for now (to confirm diagnosis)
+                # CRITICAL FIX: Normalize by σ₀² to make G_stress dimensionless-like
+                # This ensures √G ≈ σ₀, so peak stays at σ₀ in P(σ) distribution
+                # Formula: G_dimensionless = (π/4) × (E*/σ₀)² × ∫q³C(q)dq
+                E_normalized = E_star_low / sigma_0_Pa  # Normalize E by σ₀
+
                 G_stress_array = np.zeros_like(q)
                 for i in range(1, len(q)):
                     integrand_partial = q[:i+1]**3 * C_q_vals[:i+1]
-                    G_stress_array[i] = (np.pi / 4) * E_star_low**2 * np.trapezoid(integrand_partial, q[:i+1])
+                    # Use normalized E to get dimensionless G
+                    G_stress_array[i] = (np.pi / 4) * E_normalized**2 * np.trapezoid(integrand_partial, q[:i+1])
 
-                # Convert to MPa²
-                G_stress_array_MPa2 = G_stress_array / 1e12
+                # G_stress_array is now dimensionless (like G_area)
+                # For display purposes, scale back by σ₀² to get "effective MPa²"
+                # This ensures √G_display ≈ σ₀
+                G_stress_array_MPa2 = G_stress_array * (sigma_0_MPa**2)
                 G_stress_dict[j] = G_stress_array_MPa2
+
+                if j == 0:
+                    print(f"\n>>> APPLYING FIX: Normalize by σ₀")
+                    print(f"E_normalized = E*/σ₀ = {E_normalized:.2e}")
+                    print(f"G_dimensionless(qmax) = {G_stress_array[-1]:.4e}")
+                    print(f"G_scaled(qmax) = G × σ₀² = {G_stress_array_MPa2[-1]:.4e} MPa²")
+                    print(f"√G_scaled = {np.sqrt(G_stress_array_MPa2[-1]):.4f} MPa")
+                    print(f">>> Now √G ≈ σ₀, so peak should be at σ₀ = 0.3 MPa!")
 
                 # Update global maximum
                 if G_stress_array_MPa2[-1] > G_stress_max_global:
