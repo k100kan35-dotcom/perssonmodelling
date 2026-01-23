@@ -226,6 +226,11 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_friction, text="4. 마찰 분석")
         self._create_friction_tab(self.tab_friction)
 
+        # Tab 5: Equations
+        self.tab_equations = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_equations, text="5. 수식 정리")
+        self._create_equations_tab(self.tab_equations)
+
     def _create_verification_tab(self, parent):
         """Create input data verification tab."""
         # Instruction label
@@ -1357,6 +1362,119 @@ Persson, B.N.J. (2001, 2006)
 Rubber friction theory
         """
         messagebox.showinfo("About", about_text)
+
+    def _create_equations_tab(self, parent):
+        """Create equations reference tab with all formulas used in calculations."""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent, bg='white')
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Create matplotlib figure for equations
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        fig = Figure(figsize=(12, 16), facecolor='white')
+        fig.suptitle('Persson 마찰 이론 - 계산 수식 정리', fontsize=16, fontweight='bold', y=0.98)
+
+        # Single axis for all equations
+        ax = fig.add_subplot(111)
+        ax.axis('off')
+
+        # Equation text with LaTeX and Korean explanations
+        equations_text = r"""
+$\mathbf{1.\ 접촉\ 면적\ 계산용\ G(q,v)\ -\ 무차원}$
+
+$G(q,v) = \frac{1}{8} \int_{q_0}^{q} q'^3 C(q') \left[ \int_0^{2\pi} \left| \frac{E^*(q'v\cos\phi)}{(1-\nu^2)\sigma_0} \right|^2 d\phi \right] dq'$
+
+• $E^*(\omega)$: 복소 탄성률 (주파수 $\omega = qv\cos\phi$에서)
+• $C(q')$: 표면 거칠기 PSD (Power Spectral Density)
+• $\sigma_0$: 명목 접촉 압력 (Nominal pressure)
+• $\nu$: 포아송 비 (Poisson's ratio)
+• $\phi$: 슬립 방향 각도 (0~2π)
+
+**물리적 의미**: 외부 압력 대비 고무의 단단함 (상대적 강성비)
+**단위**: 무차원 (dimensionless)
+**용도**: 접촉 면적 P(q) 계산
+
+
+$\mathbf{2.\ 접촉\ 면적\ P(q,v)}$
+
+$P(q,v) \approx \frac{1}{\sqrt{G(q,v)}}$
+
+**물리적 의미**: 파수 q까지 고려한 실제 접촉 면적 비율
+**범위**: 0 ≤ P ≤ 1
+**특징**: G가 클수록 (고무가 단단) → P가 작음 (접촉 면적 감소)
+
+
+$\mathbf{3.\ 응력\ 분포용\ G_{stress}(q,v)\ -\ Pa^2}$
+
+$G_{stress}(q,v) = \frac{\pi}{4} (E^*)^2 \int_{q_0}^{q} k^3 C(k) dk$
+
+• $E^* = \frac{E}{1-\nu^2}$: 유효 탄성률 (대표 주파수 $\omega = q_{mid} \cdot v$에서)
+• **각도 적분 없음** (접촉 면적용 G와 다름!)
+
+**물리적 의미**: 응력 분포의 분산 (Variance)
+**단위**: Pa² (응력의 제곱)
+**용도**: 국소 응력 확률 분포 P(σ) 계산
+
+
+$\mathbf{4.\ 국소\ 응력\ 확률\ 분포\ P(\sigma,q)}$
+
+$P(\sigma,q) = \frac{1}{\sqrt{4\pi G_{stress}(q)}} \left[ \exp\left(-\frac{(\sigma-\sigma_0)^2}{4G_{stress}}\right) - \exp\left(-\frac{(\sigma+\sigma_0)^2}{4G_{stress}}\right) \right]$
+
+• $\sigma$: 국소 접촉 응력 (Local contact stress)
+• $\sigma_0$: 명목 압력 (분포의 중심)
+
+**물리적 의미**: 특정 응력값이 나타날 확률 밀도
+**특징**:
+  - 피크 위치: $\sigma = \sigma_0$ (모든 속도에서 동일)
+  - $G_{stress}$가 클수록 → 분포가 넓어짐
+  - σ → 0 일 때 P → 0 (인장 응력 없음)
+
+
+$\mathbf{5.\ 마찰\ 계수\ \mu(v)}$
+
+$\mu(v) = f(P(q_{max},v), G(q_{max},v), \dots)$
+
+**현재 구현**: 경험적 관계식 또는 에너지 소산 기반
+**의존성**: 속도, 접촉 면적, 재료 물성
+
+
+$\mathbf{핵심\ 차이점}$
+
+$\begin{array}{|l|c|c|}
+\hline
+\textbf{항목} & \mathbf{G(q,v)\ (접촉\ 면적용)} & \mathbf{G_{stress}(q,v)\ (응력\ 분포용)} \\
+\hline
+\text{단위} & \text{무차원} & \text{Pa}^2 \\
+\text{각도 적분} & \text{있음}\ (\int_0^{2\pi}) & \text{없음} \\
+\text{탄성률} & |E^*/((1-\nu^2)\sigma_0)|^2 & (E^*)^2 \\
+\text{용도} & P(q)\ \text{계산} & P(\sigma)\ \text{계산} \\
+\hline
+\end{array}$
+"""
+
+        ax.text(0.05, 0.95, equations_text, transform=ax.transAxes,
+                fontsize=10, verticalalignment='top', horizontalalignment='left',
+                family='DejaVu Sans', wrap=True)
+
+        # Embed in tkinter
+        canvas_eq = FigureCanvasTkAgg(fig, master=scrollable_frame)
+        canvas_eq.draw()
+        canvas_eq.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Pack scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
 
 def main():
