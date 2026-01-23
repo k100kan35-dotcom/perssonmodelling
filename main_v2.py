@@ -1026,34 +1026,63 @@ class PerssonModelGUI_V2:
         G_stress_dict = {}  # Store G_stress for each velocity
 
         # Pre-calculate G_stress for each velocity
-        # CRITICAL FIX: Include σ₀ in denominator to prevent G_stress explosion
-        # Without σ₀, E² ~ (1 GPa)² makes G_stress too large, shifting peak away from σ₀
+        # DEBUG: Print actual values to diagnose peak shift problem
+        print("\n" + "="*80)
+        print("DEBUG: G_stress Calculation Analysis")
+        print("="*80)
+        print(f"σ₀ = {sigma_0_MPa:.4f} MPa = {sigma_0_Pa:.2e} Pa")
+        print(f"q range: {q_min:.2e} ~ {q_max:.2e} (1/m)")
+        print(f"Poisson ratio: {poisson:.3f}")
+
         for j, v_val in enumerate(v):
             if j % max(1, len(v) // 10) == 0:
-                # Use low-frequency E to get reasonable G_stress values
-                # High-frequency E causes G_stress explosion
+                # Check what E value we're using
                 omega_low = q_min * v_val
+                omega_high = q_max * v_val
                 E_low = self.material.get_storage_modulus(np.array([omega_low]))[0]
-                E_star = E_low / (1 - poisson**2)
+                E_high = self.material.get_storage_modulus(np.array([omega_high]))[0]
+                E_star_low = E_low / (1 - poisson**2)
+                E_star_high = E_high / (1 - poisson**2)
 
-                # NORMALIZATION: Divide by σ₀ to get dimensionless-like quantity
-                # This prevents G_stress from being too large
-                E_normalized = E_star / sigma_0_Pa
-
-                # Calculate G_stress(q) = (π/4) * (E/σ₀)² * ∫[q0→q] k³C(k)dk
+                # Calculate integral of q³C(q)
                 integrand = q**3 * C_q_vals
+                integral_full = np.trapezoid(integrand, q)
+
+                # Original formula WITHOUT σ₀: G = (π/4) × E*² × ∫q³C(q)dq
+                G_original_Pa2 = (np.pi / 4) * E_star_low**2 * integral_full
+                G_original_MPa2 = G_original_Pa2 / 1e12
+
+                if j == 0:
+                    print(f"\n--- First velocity: v = {v_val:.4e} m/s ---")
+                    print(f"ω_low = {omega_low:.2e} rad/s  →  E = {E_low:.2e} Pa  →  E* = {E_star_low:.2e} Pa")
+                    print(f"ω_high = {omega_high:.2e} rad/s  →  E = {E_high:.2e} Pa  →  E* = {E_star_high:.2e} Pa")
+                    print(f"∫ q³C(q)dq = {integral_full:.4e} m⁴")
+                    print(f"E*² = {E_star_low**2:.4e} Pa²")
+                    print(f"G_stress (original formula) = {G_original_MPa2:.4e} MPa²")
+                    print(f"√G_stress = {np.sqrt(G_original_MPa2):.4f} MPa")
+                    print(f"Expected peak location ≈ √(2G) = {np.sqrt(2*G_original_MPa2):.2f} MPa")
+                    print(f"But σ₀ = {sigma_0_MPa:.2f} MPa << √G, so peak shifts away from σ₀!")
+
+                # Use the original formula for now (to confirm diagnosis)
                 G_stress_array = np.zeros_like(q)
                 for i in range(1, len(q)):
-                    G_stress_array[i] = (np.pi / 4) * E_normalized**2 * np.trapezoid(integrand[:i+1], q[:i+1])
+                    integrand_partial = q[:i+1]**3 * C_q_vals[:i+1]
+                    G_stress_array[i] = (np.pi / 4) * E_star_low**2 * np.trapezoid(integrand_partial, q[:i+1])
 
-                # G_stress_array is now dimensionless (similar to G_area)
-                # Convert to "effective MPa²" for plotting: multiply back by σ₀²
-                G_stress_array_MPa2 = G_stress_array * (sigma_0_MPa**2)
+                # Convert to MPa²
+                G_stress_array_MPa2 = G_stress_array / 1e12
                 G_stress_dict[j] = G_stress_array_MPa2
 
                 # Update global maximum
                 if G_stress_array_MPa2[-1] > G_stress_max_global:
                     G_stress_max_global = G_stress_array_MPa2[-1]
+
+        print(f"\nG_stress_max (across all velocities) = {G_stress_max_global:.4e} MPa²")
+        print(f"√G_max = {np.sqrt(G_stress_max_global):.2f} MPa")
+        print(f"Ratio: √G_max / σ₀ = {np.sqrt(G_stress_max_global) / sigma_0_MPa:.1f}")
+        print("\n>>> PROBLEM DIAGNOSIS: √G >> σ₀, so peak shifts to √(2G) instead of σ₀")
+        print(">>> This means the G_stress formula or P(σ) formula needs revision!")
+        print("="*80 + "\n")
 
         # Set x-axis range based on maximum G_stress
         std_max = np.sqrt(G_stress_max_global)
