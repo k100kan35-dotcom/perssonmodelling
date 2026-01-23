@@ -1028,20 +1028,26 @@ class PerssonModelGUI_V2:
         # Pre-calculate G_stress for each velocity
         for j, v_val in enumerate(v):
             if j % max(1, len(v) // 10) == 0:
-                # Representative frequency for this velocity (at mid-wavenumber)
-                q_mid = np.sqrt(q_min * q_max)
-                omega_rep = q_mid * v_val
+                # Calculate G_stress(q) for this velocity using CORRECT formula:
+                # G_stress(q) = (π/4) ∫[q0→q] k³C(k) |E(kv)/(1-ν²)|² dk
+                # NOTE: E(kv) must be evaluated at EACH wavenumber k, not just one representative frequency!
 
-                # Get E* at representative frequency
-                E_rep = self.material.get_storage_modulus(np.array([omega_rep]))[0]
-                E_star = E_rep / (1 - poisson**2)
-
-                # Calculate G_stress(q) for this velocity
-                # G_stress(q) = (π/4) * E*² * ∫[q0→q] k³C(k)dk
-                integrand = q**3 * C_q_vals
                 G_stress_array = np.zeros_like(q)
                 for i in range(1, len(q)):
-                    G_stress_array[i] = (np.pi / 4) * E_star**2 * np.trapezoid(integrand[:i+1], q[:i+1])
+                    # For each q value, integrate from q_min to q[i]
+                    q_integration_range = q[:i+1]
+
+                    # Calculate E(q'v) for each q' in the integration range
+                    omega_array = q_integration_range * v_val  # ω = q·v (no angle for stress distribution!)
+                    E_array = self.material.get_storage_modulus(omega_array)  # E(ω) for each q'
+                    E_star_array = E_array / (1 - poisson**2)  # E* for each q'
+
+                    # Integrand: q³C(q)|E*(qv)/(1-ν²)|² = q³C(q)(E*)²
+                    # Note: E* already has (1-ν²) in denominator, so |E*|² is what we need
+                    integrand = q_integration_range**3 * C_q_vals[:i+1] * np.abs(E_star_array)**2
+
+                    # Numerical integration
+                    G_stress_array[i] = (np.pi / 4) * np.trapezoid(integrand, q_integration_range)
 
                 # Convert to MPa²
                 G_stress_array_MPa2 = G_stress_array / 1e12
@@ -1454,8 +1460,8 @@ C. 점탄성 마찰 계수 $\mu_{visc}$:
 
 $\mu_{visc} \approx \frac{1}{2} \int_{q_0}^{q_1} dq \, q^3 C(q) S(q) P(q) \int_{0}^{2\pi} d\phi \cos\phi \, \text{Im}\left( \frac{E(qv\cos\phi)}{(1-\nu^2)\sigma_0} \right)$
 
-  물리적 의미: 에너지 손실에 의한 마찰 계수 (접촉 면적 P가 가중치)
-  영향 요인: 접촉 면적, 에너지 소산, 재료 물성 (E', E")
+  물리적 의미: 에너지 손실에 의한 마찰 계수 (접촉 면적 $P$가 가중치)
+  영향 요인: 접촉 면적, 에너지 소산, 재료 물성 ($E'$, $E''$)
 
 보정 계수 $S(q)$ (대변형 시 접촉 면적 감소 보정):
   $S(q) = \gamma + (1-\gamma)P^2(q)$  (보통 $\gamma \approx 0.5$)
