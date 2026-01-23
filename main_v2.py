@@ -1149,7 +1149,7 @@ class PerssonModelGUI_V2:
 
                 # Calculate stress distribution at q0 (dotted line)
                 # Using normalized formula: all in units of σ₀
-                if G_stress_q0 > 1e-10:
+                if G_norm_q0 > 1e-10:
                     # Normalize σ by σ₀ for calculation
                     sigma_norm = sigma_array / sigma_0_MPa
                     # P in normalized form (peak at σ_norm = 1)
@@ -1160,7 +1160,7 @@ class PerssonModelGUI_V2:
                             alpha=0.6)  # No label for q0 lines to reduce legend clutter
 
                 # Calculate stress distribution at q_max (solid line)
-                if G_stress_qmax > 1e-10:
+                if G_norm_qmax > 1e-10:
                     sigma_norm = sigma_array / sigma_0_MPa
                     P_sigma_qmax = (1 / (sigma_0_MPa * np.sqrt(4 * np.pi * G_norm_qmax))) * \
                                    (np.exp(-(sigma_norm - 1)**2 / (4 * G_norm_qmax)) - \
