@@ -450,21 +450,45 @@ class PerssonModelGUI_V2:
         )
         self.calc_status_label.pack()
 
-        # Create figure for calculation progress with single plot
-        self.fig_calc_progress = Figure(figsize=(12, 5), dpi=100)
-        self.ax_calc_progress = self.fig_calc_progress.add_subplot(111)
+        # Create figure for calculation progress with three subplots
+        self.fig_calc_progress = Figure(figsize=(18, 5), dpi=100)
+
+        # Left: PSD(q) - wavenumber based (static)
+        self.ax_psd_q = self.fig_calc_progress.add_subplot(131)
+
+        # Middle: DMA master curve (animated with frequency range)
+        self.ax_dma_progress = self.fig_calc_progress.add_subplot(132)
+
+        # Right: PSD(f) - frequency based (animated)
+        self.ax_psd_f = self.fig_calc_progress.add_subplot(133)
 
         self.canvas_calc_progress = FigureCanvasTkAgg(self.fig_calc_progress, viz_frame)
         self.canvas_calc_progress.draw()
         self.canvas_calc_progress.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Initialize empty DMA plot
-        self.ax_calc_progress.set_xlabel('각주파수 ω (rad/s)', fontsize=11, fontweight='bold')
-        self.ax_calc_progress.set_ylabel('탄성률 (Pa)', fontsize=11, fontweight='bold')
-        self.ax_calc_progress.set_xscale('log')
-        self.ax_calc_progress.set_yscale('log')
-        self.ax_calc_progress.grid(True, alpha=0.3)
-        self.ax_calc_progress.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=12, fontweight='bold')
+        # Initialize PSD(q) plot - left
+        self.ax_psd_q.set_xlabel('파수 q (1/m)', fontsize=10, fontweight='bold')
+        self.ax_psd_q.set_ylabel('PSD C(q) (m⁴)', fontsize=10, fontweight='bold')
+        self.ax_psd_q.set_xscale('log')
+        self.ax_psd_q.set_yscale('log')
+        self.ax_psd_q.grid(True, alpha=0.3)
+        self.ax_psd_q.set_title('PSD (파수 기준)', fontsize=11, fontweight='bold')
+
+        # Initialize DMA plot - middle
+        self.ax_dma_progress.set_xlabel('주파수 f (Hz)', fontsize=10, fontweight='bold')
+        self.ax_dma_progress.set_ylabel('탄성률 (Pa)', fontsize=10, fontweight='bold')
+        self.ax_dma_progress.set_xscale('log')
+        self.ax_dma_progress.set_yscale('log')
+        self.ax_dma_progress.grid(True, alpha=0.3)
+        self.ax_dma_progress.set_title('DMA 마스터 곡선', fontsize=11, fontweight='bold')
+
+        # Initialize PSD(f) plot - right
+        self.ax_psd_f.set_xlabel('주파수 f (Hz)', fontsize=10, fontweight='bold')
+        self.ax_psd_f.set_ylabel('PSD C(f) (변환)', fontsize=10, fontweight='bold')
+        self.ax_psd_f.set_xscale('log')
+        self.ax_psd_f.set_yscale('log')
+        self.ax_psd_f.grid(True, alpha=0.3)
+        self.ax_psd_f.set_title('PSD (주파수 기준)', fontsize=11, fontweight='bold')
 
         self.fig_calc_progress.tight_layout()
 
@@ -822,32 +846,81 @@ class PerssonModelGUI_V2:
                 integration_method='trapz'
             )
 
-            # Initialize calculation progress plot with master curve
+            # Initialize calculation progress plots (3 subplots)
             try:
-                self.ax_calc_progress.clear()
+                # Clear all three subplots
+                self.ax_psd_q.clear()
+                self.ax_dma_progress.clear()
+                self.ax_psd_f.clear()
 
-                # Plot DMA master curve
+                # LEFT SUBPLOT: Plot PSD(q) - wavenumber based (static)
+                if self.psd_model is not None:
+                    q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
+                    C_q = self.psd_model(q_plot)
+
+                    self.ax_psd_q.loglog(q_plot, C_q, 'b-', linewidth=2, label='PSD C(q)')
+
+                    # Highlight the q range being used
+                    self.ax_psd_q.axvspan(q_min, q_max, alpha=0.15, facecolor='cyan',
+                                         edgecolor='blue', linewidth=1.5, label='사용 q 범위')
+
+                    self.ax_psd_q.set_xlabel('파수 q (1/m)', fontsize=10, fontweight='bold')
+                    self.ax_psd_q.set_ylabel('PSD C(q) (m⁴)', fontsize=10, fontweight='bold')
+                    self.ax_psd_q.set_xscale('log')
+                    self.ax_psd_q.set_yscale('log')
+                    self.ax_psd_q.grid(True, alpha=0.3)
+                    self.ax_psd_q.legend(loc='best', fontsize=8)
+                    self.ax_psd_q.set_title('PSD (파수 기준)', fontsize=11, fontweight='bold')
+
+                # MIDDLE SUBPLOT: Plot DMA master curve
                 if self.material is not None:
                     omega_plot = np.logspace(-2, 8, 200)
                     f_plot = omega_plot / (2 * np.pi)  # Convert to Hz
                     E_prime = self.material.get_storage_modulus(omega_plot)
                     E_double_prime = self.material.get_loss_modulus(omega_plot)
 
-                    self.ax_calc_progress.plot(f_plot, E_prime, 'b-', linewidth=2, label="E' (저장 탄성률)")
-                    self.ax_calc_progress.plot(f_plot, E_double_prime, 'r--', linewidth=2, label="E'' (손실 탄성률)")
+                    self.ax_dma_progress.plot(f_plot, E_prime, 'b-', linewidth=2, label="E' (저장 탄성률)")
+                    self.ax_dma_progress.plot(f_plot, E_double_prime, 'r--', linewidth=2, label="E'' (손실 탄성률)")
 
-                    self.ax_calc_progress.set_xlabel('주파수 f (Hz)', fontsize=11, fontweight='bold')
-                    self.ax_calc_progress.set_ylabel('탄성률 (Pa)', fontsize=11, fontweight='bold')
-                    self.ax_calc_progress.set_xscale('log')
-                    self.ax_calc_progress.set_yscale('log')
-                    self.ax_calc_progress.grid(True, alpha=0.3)
-                    self.ax_calc_progress.legend(loc='best', fontsize=9)
-                    self.ax_calc_progress.set_title('DMA 마스터 곡선 (사용 주파수 범위)', fontsize=12, fontweight='bold')
+                    self.ax_dma_progress.set_xlabel('주파수 f (Hz)', fontsize=10, fontweight='bold')
+                    self.ax_dma_progress.set_ylabel('탄성률 (Pa)', fontsize=10, fontweight='bold')
+                    self.ax_dma_progress.set_xscale('log')
+                    self.ax_dma_progress.set_yscale('log')
+                    self.ax_dma_progress.grid(True, alpha=0.3)
+                    self.ax_dma_progress.legend(loc='best', fontsize=8)
+                    self.ax_dma_progress.set_title('DMA 마스터 곡선', fontsize=11, fontweight='bold')
+
+                # RIGHT SUBPLOT: Initialize PSD(f) plot - will be updated during animation
+                if self.psd_model is not None:
+                    # Plot a placeholder that will be updated during calculation
+                    # Use initial velocity to show what PSD(f) looks like
+                    v_init = v_min
+                    f_plot_range = np.logspace(-3, 6, 200)  # Wide frequency range
+                    # Convert f to q: q = 2*pi*f/v
+                    q_from_f = 2 * np.pi * f_plot_range / v_init
+                    # Evaluate PSD at these q values (only for valid range)
+                    C_f_init = np.zeros_like(f_plot_range)
+                    valid_mask = (q_from_f >= q_min) & (q_from_f <= q_max)
+                    C_f_init[valid_mask] = self.psd_model(q_from_f[valid_mask])
+                    C_f_init[~valid_mask] = np.nan
+
+                    self.ax_psd_f.loglog(f_plot_range, C_f_init, 'g-', linewidth=2,
+                                        label=f'PSD(f) @ v={v_init:.4f} m/s', alpha=0.3)
+
+                    self.ax_psd_f.set_xlabel('주파수 f (Hz)', fontsize=10, fontweight='bold')
+                    self.ax_psd_f.set_ylabel('PSD C(f)', fontsize=10, fontweight='bold')
+                    self.ax_psd_f.set_xscale('log')
+                    self.ax_psd_f.set_yscale('log')
+                    self.ax_psd_f.grid(True, alpha=0.3)
+                    self.ax_psd_f.legend(loc='best', fontsize=8)
+                    self.ax_psd_f.set_title('PSD (주파수 기준)', fontsize=11, fontweight='bold')
 
                 self.fig_calc_progress.tight_layout()
                 self.canvas_calc_progress.draw()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error initializing plots: {e}")
+                import traceback
+                traceback.print_exc()
 
             # Calculate G(q,v) 2D matrix with real-time visualization
             def progress_callback(percent):
@@ -875,24 +948,64 @@ class PerssonModelGUI_V2:
                         foreground='red'
                     )
 
-                    # Highlight frequency range on DMA plot
+                    # Highlight frequency range on DMA plot (middle subplot)
                     try:
-                        # Remove ALL previous highlight bands (clear old highlights)
-                        for artist in self.ax_calc_progress.collections[:]:
+                        # Remove ALL previous highlight bands from DMA plot
+                        for artist in self.ax_dma_progress.collections[:]:
                             if hasattr(artist, '_is_highlight'):
                                 artist.remove()
 
-                        # Add vertical band to show current frequency range being used
-                        # Use yellow color with edge for better visibility
-                        band = self.ax_calc_progress.axvspan(f_min, f_max,
-                                                            alpha=0.3, facecolor='yellow',
-                                                            edgecolor='orange', linewidth=2,
-                                                            zorder=0)  # Behind curves
-                        band._is_highlight = True
+                        # Add vertical band to show current frequency range on DMA
+                        band_dma = self.ax_dma_progress.axvspan(f_min, f_max,
+                                                                alpha=0.3, facecolor='yellow',
+                                                                edgecolor='orange', linewidth=2,
+                                                                zorder=0)  # Behind curves
+                        band_dma._is_highlight = True
 
                         self.canvas_calc_progress.draw()
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Error updating DMA highlight: {e}")
+
+                    # Update PSD(f) plot with current velocity (right subplot)
+                    try:
+                        # Remove previous PSD(f) lines and highlights
+                        for line in self.ax_psd_f.lines[:]:
+                            if hasattr(line, '_is_psd_f_line'):
+                                line.remove()
+                        for artist in self.ax_psd_f.collections[:]:
+                            if hasattr(artist, '_is_highlight'):
+                                artist.remove()
+
+                        # Plot PSD(f) for current velocity
+                        f_plot_range = np.logspace(np.log10(f_min) - 2, np.log10(f_max) + 2, 300)
+                        # Convert f to q: q = 2*pi*f/v
+                        q_from_f = 2 * np.pi * f_plot_range / current_v
+                        # Evaluate PSD at these q values
+                        C_f = np.zeros_like(f_plot_range)
+                        valid_mask = (q_from_f >= q_array[0]) & (q_from_f <= q_array[-1])
+                        if np.any(valid_mask):
+                            C_f[valid_mask] = self.psd_model(q_from_f[valid_mask])
+                            C_f[~valid_mask] = np.nan
+
+                            # Plot PSD(f) curve
+                            line = self.ax_psd_f.loglog(f_plot_range, C_f, 'g-', linewidth=2,
+                                                       label=f'v={current_v:.4f} m/s', alpha=0.7)[0]
+                            line._is_psd_f_line = True
+
+                            # Highlight the frequency range being used
+                            band_psd = self.ax_psd_f.axvspan(f_min, f_max,
+                                                            alpha=0.3, facecolor='yellow',
+                                                            edgecolor='orange', linewidth=2,
+                                                            zorder=0)
+                            band_psd._is_highlight = True
+
+                            self.ax_psd_f.legend(loc='best', fontsize=8)
+
+                        self.canvas_calc_progress.draw()
+                    except Exception as e:
+                        print(f"Error updating PSD(f): {e}")
+                        import traceback
+                        traceback.print_exc()
 
                 self.root.update()
 
@@ -900,10 +1013,18 @@ class PerssonModelGUI_V2:
                 q_array, v_array, q_min=q_min, progress_callback=progress_callback
             )
 
-            # Clear highlight after calculation and show completion message
+            # Clear highlights after calculation and show completion message
             try:
-                # Remove all highlights
-                for artist in self.ax_calc_progress.collections[:]:
+                # Remove all highlights from DMA plot
+                for artist in self.ax_dma_progress.collections[:]:
+                    if hasattr(artist, '_is_highlight'):
+                        artist.remove()
+
+                # Remove all highlights and lines from PSD(f) plot
+                for line in self.ax_psd_f.lines[:]:
+                    if hasattr(line, '_is_psd_f_line'):
+                        line.remove()
+                for artist in self.ax_psd_f.collections[:]:
                     if hasattr(artist, '_is_highlight'):
                         artist.remove()
 
@@ -914,8 +1035,8 @@ class PerssonModelGUI_V2:
                 )
 
                 self.canvas_calc_progress.draw()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error clearing highlights: {e}")
 
             # Calculate detailed results for selected velocities (for visualization)
             # Select 5-8 velocities spanning the range
