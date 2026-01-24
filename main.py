@@ -1224,14 +1224,15 @@ class PerssonModelGUI_V2:
         q_10percent_idx = len(q_stress) // 10
         G_initial = G_stress_array[q_10percent_idx] if q_10percent_idx > 0 else G_stress_array[-1]
         std_initial = np.sqrt(G_initial) * sigma_0_MPa
-        sigma_max = sigma_0_MPa + 3 * std_initial  # Reduced from 4 to 3
+        sigma_max = sigma_0_MPa + 5 * std_initial  # Increased to 5 to show full Gaussian tail
 
         # Ensure minimum x-axis range
         if sigma_max < 2 * sigma_0_MPa:
             sigma_max = 2 * sigma_0_MPa
 
-        # Create stress array (in MPa) - include negative region to show mirror image
-        sigma_array = np.linspace(-sigma_0_MPa, sigma_max, 500)
+        # Create stress array (in MPa) - include extended negative region to show full mirror image
+        sigma_min = -sigma_0_MPa - 3 * std_initial  # Extended negative side for full mirror
+        sigma_array = np.linspace(sigma_min, sigma_max, 800)  # Increased points for smoother curves
 
         # Debug: Print some values to verify calculations
         print(f"\n=== Debug: Stress Distribution at Fixed Velocity ===")
@@ -1240,7 +1241,9 @@ class PerssonModelGUI_V2:
         print(f"G_dimensionless(q_initial) = {G_initial:.4e}")
         print(f"G_dimensionless(qmax) = {G_stress_array[-1]:.4e}")
         print(f"std_initial = √G_initial × σ₀ = {std_initial:.4f} MPa")
+        print(f"sigma_min (for x-axis) = {sigma_min:.2f} MPa")
         print(f"sigma_max (for x-axis) = {sigma_max:.2f} MPa")
+        print(f"X-axis range: [{sigma_min:.2f}, {sigma_max:.2f}] MPa")
 
         # Select 3 wavenumbers to plot (first, middle, last)
         n_q_selected = 3
@@ -1325,9 +1328,9 @@ class PerssonModelGUI_V2:
         ax2.set_title(f'(b) 파수별 국소 응력 확률 분포 (v={v_fixed:.2f} m/s 고정)', fontweight='bold', fontsize=TITLE_FONT, pad=TITLE_PAD)
         ax2.legend(fontsize=LEGEND_FONT, ncol=2, loc='upper right')
         ax2.grid(True, alpha=0.3)
-        # Set axis limits to show full distribution shape clearly
-        # X-axis: use calculated sigma_max but reduce by 20% for tighter view
-        ax2.set_xlim(-sigma_0_MPa * 0.4, sigma_max * 0.75)
+        # Set axis limits to show FULL Gaussian distribution shapes
+        # X-axis: show full calculated range to capture complete Gaussian tails
+        ax2.set_xlim(sigma_min, sigma_max)
         # Y-axis: use maximum value from all curves with some headroom
         ax2.set_ylim(0, max(max_P_sigma, max_term) * 1.15)
 
