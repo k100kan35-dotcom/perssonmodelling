@@ -1219,31 +1219,29 @@ class PerssonModelGUI_V2:
         print(f"Distribution width at qmax: √G × σ₀ = {np.sqrt(G_stress_array[-1]) * sigma_0_MPa:.4f} MPa")
         print("="*80 + "\n")
 
-        # Set x-axis range based on INITIAL wavenumbers (not max!)
-        # Use G at ~10% of q range to avoid too large x-axis
-        q_10percent_idx = len(q_stress) // 10
-        G_initial = G_stress_array[q_10percent_idx] if q_10percent_idx > 0 else G_stress_array[-1]
-        std_initial = np.sqrt(G_initial) * sigma_0_MPa
-        sigma_max = sigma_0_MPa + 5 * std_initial  # Increased to 5 to show full Gaussian tail
+        # Set x-axis range based on MAXIMUM G to show full Gaussian shapes
+        # Use the maximum G value to ensure all curves fit within the plot
+        G_max = G_stress_array[-1]  # Use maximum G to capture widest distribution
+        std_max = np.sqrt(G_max) * sigma_0_MPa
+        sigma_max = sigma_0_MPa + 6 * std_max  # Use 6σ to show complete Gaussian tail
+        sigma_min = -sigma_0_MPa - 6 * std_max  # Extended negative side for full mirror image
 
         # Ensure minimum x-axis range
         if sigma_max < 2 * sigma_0_MPa:
             sigma_max = 2 * sigma_0_MPa
-
-        # Create stress array (in MPa) - include extended negative region to show full mirror image
-        sigma_min = -sigma_0_MPa - 3 * std_initial  # Extended negative side for full mirror
+            sigma_min = -sigma_max
         sigma_array = np.linspace(sigma_min, sigma_max, 800)  # Increased points for smoother curves
 
         # Debug: Print some values to verify calculations
         print(f"\n=== Debug: Stress Distribution at Fixed Velocity ===")
         print(f"σ0 = {sigma_0_MPa:.4f} MPa")
         print(f"Fixed velocity: v = {v_fixed:.1f} m/s")
-        print(f"G_dimensionless(q_initial) = {G_initial:.4e}")
-        print(f"G_dimensionless(qmax) = {G_stress_array[-1]:.4e}")
-        print(f"std_initial = √G_initial × σ₀ = {std_initial:.4f} MPa")
+        print(f"G_dimensionless(qmax) = {G_max:.4e}")
+        print(f"√G_dimensionless(qmax) = {np.sqrt(G_max):.4f}")
+        print(f"std_max = √G_max × σ₀ = {std_max:.4f} MPa")
         print(f"sigma_min (for x-axis) = {sigma_min:.2f} MPa")
         print(f"sigma_max (for x-axis) = {sigma_max:.2f} MPa")
-        print(f"X-axis range: [{sigma_min:.2f}, {sigma_max:.2f}] MPa")
+        print(f"X-axis range: [{sigma_min:.2f}, {sigma_max:.2f}] MPa (±6σ from σ0)")
 
         # Select 3 wavenumbers to plot (first, middle, last)
         n_q_selected = 3
