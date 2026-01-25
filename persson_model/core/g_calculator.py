@@ -449,13 +449,17 @@ class GCalculator:
             G_arr[i] = G_arr[i-1] + delta_G_arr[i]
 
         # Calculate contact area ratio P(q) = erf(1 / (2√G))
-        # Handle G = 0 case
+        # When G → 0: P → erf(∞) = 1.0 (full contact)
+        # When G → ∞: P → erf(0) = 0.0 (no contact)
+        from scipy.special import erf
         for i in range(n):
-            if G_arr[i] > 1e-20:
-                from scipy.special import erf
-                P_arr[i] = erf(1.0 / (2.0 * np.sqrt(G_arr[i])))
+            if G_arr[i] > 1e-10:
+                sqrt_G = np.sqrt(G_arr[i])
+                arg = 1.0 / (2.0 * sqrt_G)
+                arg = min(arg, 10.0)  # erf(10) ≈ 1.0
+                P_arr[i] = erf(arg)
             else:
-                P_arr[i] = 0.0
+                P_arr[i] = 1.0  # Full contact when G is very small
 
         result = {
             'q': q_values,

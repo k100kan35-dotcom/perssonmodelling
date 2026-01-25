@@ -2007,17 +2007,25 @@ $\begin{array}{lcc}
             # Get strain factor
             strain_factor = float(self.strain_factor_var.get())
 
-            # Get q range
+            # Get q range - use Tab 1/2 settings when 'auto' for consistency
             q_min_str = self.rms_q_min_var.get().strip().lower()
             q_max_str = self.rms_q_max_var.get().strip().lower()
 
             if q_min_str == 'auto':
-                q_min = q_array[0]
+                # Use Tab 1/2 q_min for consistency with G(q) calculation
+                try:
+                    q_min = float(self.q_min_var.get())
+                except:
+                    q_min = q_array[0]
             else:
                 q_min = float(q_min_str)
 
             if q_max_str == 'auto':
-                q_max = q_array[-1]
+                # Use Tab 1/2 q_max for consistency with G(q) calculation
+                try:
+                    q_max = float(self.q_max_var.get())
+                except:
+                    q_max = q_array[-1]
             else:
                 q_max = float(q_max_str)
 
@@ -3296,16 +3304,47 @@ $\begin{array}{lcc}
             peak_mu = mu_array[peak_idx]
             self.mu_result_text.insert(tk.END, f"  최대: μ={smart_fmt(peak_mu)} @ v={v[peak_idx]:.4f} m/s\n")
 
-            # Show diagnostic info from integrand
+            # Show comprehensive diagnostic info
             if details and 'details' in details and len(details['details']) > 0:
+                self.mu_result_text.insert(tk.END, f"\n[진단 정보 - 중간 속도]\n")
                 mid_detail = details['details'][len(details['details']) // 2]
+                mid_v = mid_detail.get('velocity', v[len(v)//2])
+                self.mu_result_text.insert(tk.END, f"  속도: {mid_v:.2e} m/s\n")
+
+                # G(q) values
+                if 'G' in mid_detail:
+                    G = mid_detail['G']
+                    self.mu_result_text.insert(tk.END, f"  G(q) 범위: {np.min(G):.2e} ~ {np.max(G):.2e}\n")
+
+                # P(q) - contact area ratio (critical for mu)
+                if 'P' in mid_detail:
+                    P = mid_detail['P']
+                    P_mean = np.mean(P)
+                    P_min, P_max = np.min(P), np.max(P)
+                    self.mu_result_text.insert(tk.END, f"  P(q) 범위: {P_min:.4f} ~ {P_max:.4f} (평균: {P_mean:.4f})\n")
+                    if P_max < 0.1:
+                        self.mu_result_text.insert(tk.END, f"  ※ 경고: P(q)가 매우 작음 - G(q)가 너무 클 수 있음\n")
+                        self.mu_result_text.insert(tk.END, f"     → σ₀를 높이거나 표면 거칠기를 확인하세요\n")
+
+                # S(q) - contact correction factor
+                if 'S' in mid_detail:
+                    S = mid_detail['S']
+                    self.mu_result_text.insert(tk.END, f"  S(q) 범위: {np.min(S):.4f} ~ {np.max(S):.4f}\n")
+
+                # Angle integral values
                 if 'angle_integral' in mid_detail:
                     angle_int = mid_detail['angle_integral']
-                    self.mu_result_text.insert(tk.END, f"\n[진단 정보]\n")
                     self.mu_result_text.insert(tk.END, f"  각도적분 범위: {np.min(angle_int):.2e} ~ {np.max(angle_int):.2e}\n")
+
+                # Full integrand
                 if 'integrand' in mid_detail:
                     integ = mid_detail['integrand']
-                    self.mu_result_text.insert(tk.END, f"  피적분함수 합: {np.sum(integ):.2e}\n")
+                    self.mu_result_text.insert(tk.END, f"  피적분함수 max: {np.max(integ):.2e}\n")
+
+                # q³C(q)P(q)S(q) term
+                if 'q3CPS' in mid_detail:
+                    q3CPS = mid_detail['q3CPS']
+                    self.mu_result_text.insert(tk.END, f"  q³C(q)P(q)S(q) max: {np.max(q3CPS):.2e}\n")
 
             self.mu_result_text.insert(tk.END, "\n[속도별 μ_visc]\n")
             step = max(1, len(v) // 8)
