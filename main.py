@@ -3438,10 +3438,14 @@ $\begin{array}{lcc}
         self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
         # Plot 2: Real Contact Area Ratio vs velocity
-        # Calculate average P (contact area ratio) for each velocity
+        # Show both P(q_max) and weighted average P for comparison with Tab 3
         P_avg_array = np.zeros(len(v))
+        P_qmax_array = np.zeros(len(v))  # P at q_max for comparison with Tab 3
+
         for i, det in enumerate(details['details']):
             P = det.get('P', np.zeros(1))
+            # P at q_max (same as Tab 3 plot)
+            P_qmax_array[i] = P[-1] if len(P) > 0 else 0
             # Weighted average by integrand contribution
             integrand = det.get('integrand', np.ones_like(P))
             if np.sum(np.abs(integrand)) > 0:
@@ -3452,21 +3456,32 @@ $\begin{array}{lcc}
 
         # P(q) is from nonlinear G(q) when nonlinear correction is applied
         if use_nonlinear:
-            label_str = 'P(q) from 비선형 G(q)'
+            label_avg = '평균 P(q) - 비선형'
+            label_qmax = 'P(q_max) - 비선형'
             color = 'r'
             title_suffix = ' (f,g 보정 적용)'
         else:
-            label_str = 'P(q) from 선형 G(q)'
+            label_avg = '평균 P(q) - 선형'
+            label_qmax = 'P(q_max) - 선형'
             color = 'b'
             title_suffix = ''
+
+        # Plot weighted average P
         self.ax_mu_cumulative.semilogx(v, P_avg_array, f'{color}-', linewidth=2,
-                                        marker='s', markersize=4, label=label_str)
+                                        marker='s', markersize=4, label=label_avg)
+        # Plot P(q_max) for comparison with Tab 3
+        self.ax_mu_cumulative.semilogx(v, P_qmax_array, f'{color}--', linewidth=1.5,
+                                        marker='o', markersize=3, alpha=0.7, label=label_qmax)
+
         self.ax_mu_cumulative.set_title(f'실접촉 면적비율 P(v){title_suffix}', fontweight='bold', fontsize=8)
         self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
-        self.ax_mu_cumulative.set_ylabel('평균 P(q)')
-        self.ax_mu_cumulative.legend(loc='best', fontsize=8)
+        self.ax_mu_cumulative.set_ylabel('P(q)')
+        self.ax_mu_cumulative.legend(loc='best', fontsize=7)
         self.ax_mu_cumulative.grid(True, alpha=0.3)
-        self.ax_mu_cumulative.set_ylim(0, 1.05)
+        # Auto scale to show both curves properly
+        y_max = max(np.max(P_avg_array), np.max(P_qmax_array)) * 1.1
+        y_max = min(y_max, 1.05)  # Cap at 1.05
+        self.ax_mu_cumulative.set_ylim(0, y_max)
 
         # Plot 3: P(q), S(q) for middle velocity
         mid_idx = len(details['details']) // 2
