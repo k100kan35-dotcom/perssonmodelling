@@ -1809,24 +1809,18 @@ $\begin{array}{lcc}
 
     def _create_mu_visc_tab(self, parent):
         """Create enhanced Strain/mu_visc calculation tab with piecewise averaging."""
-        # Instruction label
-        instruction = ttk.LabelFrame(parent, text="탭 설명", padding=10)
-        instruction.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Label(instruction, text=
-            "Strain sweep 데이터를 로드하고 비선형 f,g 곡선을 생성합니다.\n"
-            "Group A/B 온도 선택으로 Piecewise 평균화를 수행하고, μ_visc를 계산합니다.\n"
-            "수식: μ_visc = (1/2) ∫ q³C(q)P(q)S(q) ∫ cosφ·Im[E(qv·cosφ)]/(1-ν²)σ₀ dφ dq",
-            font=('Arial', 10)
-        ).pack()
-
         # Create main container with 2 columns
         main_container = ttk.Frame(parent)
-        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
 
-        # Left panel for inputs (scrollable)
-        left_canvas = tk.Canvas(main_container, width=380)
-        left_scrollbar = ttk.Scrollbar(main_container, orient="vertical", command=left_canvas.yview)
+        # Left panel for inputs (scrollable) - fixed width
+        left_frame = ttk.Frame(main_container, width=350)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        left_frame.pack_propagate(False)  # Keep fixed width
+
+        # Create canvas and scrollbar for left panel
+        left_canvas = tk.Canvas(left_frame, highlightthickness=0)
+        left_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=left_canvas.yview)
         left_panel = ttk.Frame(left_canvas)
 
         left_panel.bind(
@@ -1834,119 +1828,125 @@ $\begin{array}{lcc}
             lambda e: left_canvas.configure(scrollregion=left_canvas.bbox("all"))
         )
 
-        left_canvas.create_window((0, 0), window=left_panel, anchor="nw")
+        left_canvas.create_window((0, 0), window=left_panel, anchor="nw", width=330)
         left_canvas.configure(yscrollcommand=left_scrollbar.set)
 
-        left_canvas.pack(side=tk.LEFT, fill=tk.Y)
-        left_scrollbar.pack(side=tk.LEFT, fill=tk.Y)
+        # Pack scrollbar and canvas
+        left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Right panel for plots
-        right_panel = ttk.Frame(main_container)
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        # Mouse wheel scroll binding for the canvas
+        def _on_mousewheel(event):
+            left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux(event):
+            if event.num == 4:
+                left_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                left_canvas.yview_scroll(1, "units")
+
+        # Bind mouse wheel events
+        left_canvas.bind("<MouseWheel>", _on_mousewheel)  # Windows/Mac
+        left_canvas.bind("<Button-4>", _on_mousewheel_linux)  # Linux scroll up
+        left_canvas.bind("<Button-5>", _on_mousewheel_linux)  # Linux scroll down
+
+        # Also bind to the left_panel for when mouse is over widgets
+        def _bind_mousewheel(widget):
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            widget.bind("<Button-4>", _on_mousewheel_linux)
+            widget.bind("<Button-5>", _on_mousewheel_linux)
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+
+        left_panel.bind("<Map>", lambda e: _bind_mousewheel(left_panel))
 
         # ============== Left Panel: Controls ==============
 
         # 1. Strain Data Loading
-        strain_frame = ttk.LabelFrame(left_panel, text="1) Strain 데이터 로드", padding=8)
-        strain_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
+        strain_frame = ttk.LabelFrame(left_panel, text="1) Strain 데이터", padding=5)
+        strain_frame.pack(fill=tk.X, pady=2, padx=3)
 
         ttk.Button(
             strain_frame,
-            text="Strain Sweep 파일 로드 (txt/csv/xlsx)",
-            command=self._load_strain_sweep_data
-        ).pack(fill=tk.X, pady=2)
+            text="Strain Sweep 로드",
+            command=self._load_strain_sweep_data,
+            width=20
+        ).pack(anchor=tk.W, pady=1)
 
-        self.strain_file_label = ttk.Label(strain_frame, text="(파일 없음)")
-        self.strain_file_label.pack(anchor=tk.W, pady=2)
+        self.strain_file_label = ttk.Label(strain_frame, text="(파일 없음)", font=('Arial', 8))
+        self.strain_file_label.pack(anchor=tk.W)
 
         ttk.Button(
             strain_frame,
-            text="f,g 곡선 파일 로드 (미리 계산된 곡선)",
-            command=self._load_fg_curve_data
-        ).pack(fill=tk.X, pady=2)
+            text="f,g 곡선 로드",
+            command=self._load_fg_curve_data,
+            width=20
+        ).pack(anchor=tk.W, pady=1)
 
-        self.fg_file_label = ttk.Label(strain_frame, text="(파일 없음)")
-        self.fg_file_label.pack(anchor=tk.W, pady=2)
+        self.fg_file_label = ttk.Label(strain_frame, text="(파일 없음)", font=('Arial', 8))
+        self.fg_file_label.pack(anchor=tk.W)
 
         # 2. f,g Calculation Settings
-        fg_settings_frame = ttk.LabelFrame(left_panel, text="2) f,g 계산 설정", padding=8)
-        fg_settings_frame.pack(fill=tk.X, pady=5, padx=5)
+        fg_settings_frame = ttk.LabelFrame(left_panel, text="2) f,g 계산", padding=5)
+        fg_settings_frame.pack(fill=tk.X, pady=2, padx=3)
 
-        # Target frequency
-        row = ttk.Frame(fg_settings_frame)
-        row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text="타겟 주파수 (Hz):").pack(side=tk.LEFT)
+        # Target frequency and E0 points in one row
+        row1 = ttk.Frame(fg_settings_frame)
+        row1.pack(fill=tk.X, pady=1)
+        ttk.Label(row1, text="주파수:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.fg_target_freq_var = tk.StringVar(value="1.0")
-        ttk.Entry(row, textvariable=self.fg_target_freq_var, width=10).pack(side=tk.RIGHT)
-
-        # Strain is percent checkbox
-        self.strain_is_percent_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            fg_settings_frame,
-            text="Strain 값이 % 단위임",
-            variable=self.strain_is_percent_var
-        ).pack(anchor=tk.W, pady=2)
-
-        # E0 points
-        row2 = ttk.Frame(fg_settings_frame)
-        row2.pack(fill=tk.X, pady=2)
-        ttk.Label(row2, text="E0 평균점 개수:").pack(side=tk.LEFT)
+        ttk.Entry(row1, textvariable=self.fg_target_freq_var, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row1, text="Hz  E0점:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.e0_points_var = tk.StringVar(value="5")
-        ttk.Entry(row2, textvariable=self.e0_points_var, width=10).pack(side=tk.RIGHT)
+        ttk.Entry(row1, textvariable=self.e0_points_var, width=4).pack(side=tk.LEFT, padx=2)
 
-        # Clip f,g <= 1
+        # Strain is percent and clip checkboxes
+        self.strain_is_percent_var = tk.BooleanVar(value=True)
         self.clip_fg_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            fg_settings_frame,
-            text="f,g 값 ≤ 1로 클리핑 (Persson 방식)",
-            variable=self.clip_fg_var
-        ).pack(anchor=tk.W, pady=2)
+        check_row = ttk.Frame(fg_settings_frame)
+        check_row.pack(fill=tk.X, pady=1)
+        ttk.Checkbutton(check_row, text="% 단위", variable=self.strain_is_percent_var).pack(side=tk.LEFT)
+        ttk.Checkbutton(check_row, text="Clip ≤1", variable=self.clip_fg_var).pack(side=tk.LEFT)
 
-        # Strain grid extend
-        row_extend = ttk.Frame(fg_settings_frame)
-        row_extend.pack(fill=tk.X, pady=2)
-        ttk.Label(row_extend, text="Grid 최대 Strain (%):").pack(side=tk.LEFT)
+        # Grid max strain and Persson grid
+        row2 = ttk.Frame(fg_settings_frame)
+        row2.pack(fill=tk.X, pady=1)
+        ttk.Label(row2, text="Grid Max(%):", font=('Arial', 8)).pack(side=tk.LEFT)
         self.extend_strain_var = tk.StringVar(value="40")
-        ttk.Entry(row_extend, textvariable=self.extend_strain_var, width=10).pack(side=tk.RIGHT)
-
-        # Use Persson grid
+        ttk.Entry(row2, textvariable=self.extend_strain_var, width=5).pack(side=tk.LEFT, padx=2)
         self.use_persson_grid_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            fg_settings_frame,
-            text="Persson Strain Grid 사용 (1.49e-4부터 ×1.5)",
-            variable=self.use_persson_grid_var
-        ).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(row2, text="Persson Grid", variable=self.use_persson_grid_var).pack(side=tk.LEFT)
 
         # Compute f,g button
         ttk.Button(
             fg_settings_frame,
-            text="f,g 곡선 계산",
-            command=self._compute_fg_curves
-        ).pack(fill=tk.X, pady=5)
+            text="f,g 계산",
+            command=self._compute_fg_curves,
+            width=15
+        ).pack(anchor=tk.W, pady=2)
 
         # 3. Piecewise Temperature Selection (Group A / Group B)
-        piecewise_frame = ttk.LabelFrame(left_panel, text="3) Piecewise 온도 선택 (Strain 범위별)", padding=8)
-        piecewise_frame.pack(fill=tk.X, pady=5, padx=5)
+        piecewise_frame = ttk.LabelFrame(left_panel, text="3) Piecewise 온도", padding=5)
+        piecewise_frame.pack(fill=tk.X, pady=2, padx=3)
 
         # Split strain setting
         split_row = ttk.Frame(piecewise_frame)
-        split_row.pack(fill=tk.X, pady=2)
-        ttk.Label(split_row, text="Split Strain (%):").pack(side=tk.LEFT)
+        split_row.pack(fill=tk.X, pady=1)
+        ttk.Label(split_row, text="Split(%):", font=('Arial', 8)).pack(side=tk.LEFT)
         self.split_strain_var = tk.StringVar(value="15.0")
-        ttk.Entry(split_row, textvariable=self.split_strain_var, width=10).pack(side=tk.RIGHT)
-
-        ttk.Label(piecewise_frame, text="(≤ Split: Group A 사용, > Split: Group B 사용)",
-                  font=('Arial', 8)).pack(anchor=tk.W)
+        ttk.Entry(split_row, textvariable=self.split_strain_var, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(split_row, text="(A≤Split, B>Split)", font=('Arial', 7), foreground='gray').pack(side=tk.LEFT)
 
         # Group A temperatures (low strain)
-        group_a_frame = ttk.LabelFrame(piecewise_frame, text="Group A 온도 (저변형)", padding=5)
-        group_a_frame.pack(fill=tk.X, pady=3)
+        group_a_frame = ttk.LabelFrame(piecewise_frame, text="Group A (저변형)", padding=2)
+        group_a_frame.pack(fill=tk.X, pady=2)
 
         self.temp_listbox_A = tk.Listbox(
             group_a_frame,
-            height=4,
+            height=3,
             selectmode=tk.MULTIPLE,
-            exportselection=False
+            exportselection=False,
+            font=('Arial', 8)
         )
         self.temp_listbox_A.pack(side=tk.LEFT, fill=tk.X, expand=True)
         scrollbar_A = ttk.Scrollbar(group_a_frame, command=self.temp_listbox_A.yview)
@@ -1954,14 +1954,15 @@ $\begin{array}{lcc}
         self.temp_listbox_A.config(yscrollcommand=scrollbar_A.set)
 
         # Group B temperatures (high strain)
-        group_b_frame = ttk.LabelFrame(piecewise_frame, text="Group B 온도 (고변형)", padding=5)
-        group_b_frame.pack(fill=tk.X, pady=3)
+        group_b_frame = ttk.LabelFrame(piecewise_frame, text="Group B (고변형)", padding=2)
+        group_b_frame.pack(fill=tk.X, pady=2)
 
         self.temp_listbox_B = tk.Listbox(
             group_b_frame,
-            height=4,
+            height=3,
             selectmode=tk.MULTIPLE,
-            exportselection=False
+            exportselection=False,
+            font=('Arial', 8)
         )
         self.temp_listbox_B.pack(side=tk.LEFT, fill=tk.X, expand=True)
         scrollbar_B = ttk.Scrollbar(group_b_frame, command=self.temp_listbox_B.yview)
@@ -1970,19 +1971,10 @@ $\begin{array}{lcc}
 
         # Buttons for temperature selection
         temp_btn_frame = ttk.Frame(piecewise_frame)
-        temp_btn_frame.pack(fill=tk.X, pady=3)
+        temp_btn_frame.pack(fill=tk.X, pady=2)
 
-        ttk.Button(
-            temp_btn_frame,
-            text="전체 선택",
-            command=self._select_all_temps
-        ).pack(side=tk.LEFT, padx=2)
-
-        ttk.Button(
-            temp_btn_frame,
-            text="Piecewise 평균화",
-            command=self._piecewise_average_fg_curves
-        ).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
+        ttk.Button(temp_btn_frame, text="전체 선택", command=self._select_all_temps, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Button(temp_btn_frame, text="Piecewise 평균", command=self._piecewise_average_fg_curves, width=15).pack(side=tk.LEFT, padx=1)
 
         # Legacy simple averaging (keep for compatibility)
         self.temp_listbox_frame = ttk.Frame(left_panel)
@@ -1994,133 +1986,79 @@ $\begin{array}{lcc}
         )
 
         # 4. mu_visc Calculation Settings
-        mu_settings_frame = ttk.LabelFrame(left_panel, text="4) μ_visc 계산 설정", padding=8)
-        mu_settings_frame.pack(fill=tk.X, pady=5, padx=5)
+        mu_settings_frame = ttk.LabelFrame(left_panel, text="4) μ_visc 계산", padding=5)
+        mu_settings_frame.pack(fill=tk.X, pady=2, padx=3)
 
-        # Nonlinear correction frame - more prominent
-        nonlinear_frame = ttk.LabelFrame(mu_settings_frame, text="비선형 보정 (f,g)", padding=5)
-        nonlinear_frame.pack(fill=tk.X, pady=3)
+        # Nonlinear correction - single row
+        nonlinear_row = ttk.Frame(mu_settings_frame)
+        nonlinear_row.pack(fill=tk.X, pady=1)
+        self.use_fg_correction_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(nonlinear_row, text="비선형 f,g 보정", variable=self.use_fg_correction_var).pack(side=tk.LEFT)
 
-        self.use_fg_correction_var = tk.BooleanVar(value=False)  # Default OFF
-        ttk.Checkbutton(
-            nonlinear_frame,
-            text="비선형 f,g 보정 적용",
-            variable=self.use_fg_correction_var
-        ).pack(anchor=tk.W, pady=2)
-
-        ttk.Label(nonlinear_frame, text="※ f,g 곡선이 계산되어 있어야 함",
-                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
-
-        # Strain estimation method
-        strain_est_frame = ttk.Frame(nonlinear_frame)
-        strain_est_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(strain_est_frame, text="Strain 추정:").pack(side=tk.LEFT)
+        # Strain estimation in same frame
+        strain_row = ttk.Frame(mu_settings_frame)
+        strain_row.pack(fill=tk.X, pady=1)
+        ttk.Label(strain_row, text="Strain:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.strain_est_method_var = tk.StringVar(value="fixed")
-        strain_est_combo = ttk.Combobox(
-            strain_est_frame,
-            textvariable=self.strain_est_method_var,
-            values=["fixed", "persson", "simple"],
-            width=10,
-            state="readonly"
-        )
-        strain_est_combo.pack(side=tk.RIGHT)
-
-        # Fixed strain value
-        fixed_strain_frame = ttk.Frame(nonlinear_frame)
-        fixed_strain_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(fixed_strain_frame, text="고정 Strain (%):").pack(side=tk.LEFT)
+        ttk.Combobox(strain_row, textvariable=self.strain_est_method_var,
+                     values=["fixed", "persson", "simple"], width=8, state="readonly").pack(side=tk.LEFT, padx=2)
         self.fixed_strain_var = tk.StringVar(value="1.0")
-        ttk.Entry(fixed_strain_frame, textvariable=self.fixed_strain_var, width=10).pack(side=tk.RIGHT)
+        ttk.Entry(strain_row, textvariable=self.fixed_strain_var, width=5).pack(side=tk.LEFT)
+        ttk.Label(strain_row, text="%", font=('Arial', 8)).pack(side=tk.LEFT)
 
-        # Integration settings frame
-        integ_frame = ttk.LabelFrame(mu_settings_frame, text="적분 설정", padding=5)
-        integ_frame.pack(fill=tk.X, pady=3)
-
-        # Gamma value
-        row3 = ttk.Frame(integ_frame)
-        row3.pack(fill=tk.X, pady=2)
-        ttk.Label(row3, text="γ (접촉 보정):").pack(side=tk.LEFT)
+        # Integration parameters in single row
+        integ_row = ttk.Frame(mu_settings_frame)
+        integ_row.pack(fill=tk.X, pady=1)
+        ttk.Label(integ_row, text="γ:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.gamma_var = tk.StringVar(value="0.5")
-        ttk.Entry(row3, textvariable=self.gamma_var, width=10).pack(side=tk.RIGHT)
+        ttk.Entry(integ_row, textvariable=self.gamma_var, width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Label(integ_row, text="φ점:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.n_phi_var = tk.StringVar(value="144")
+        ttk.Entry(integ_row, textvariable=self.n_phi_var, width=5).pack(side=tk.LEFT, padx=2)
 
-        # Number of angle points
-        row4 = ttk.Frame(integ_frame)
-        row4.pack(fill=tk.X, pady=2)
-        ttk.Label(row4, text="각도 적분점:").pack(side=tk.LEFT)
-        self.n_phi_var = tk.StringVar(value="144")  # Increased default for smoother curves
-        ttk.Entry(row4, textvariable=self.n_phi_var, width=10).pack(side=tk.RIGHT)
-
-        # Output smoothing frame
-        smooth_frame = ttk.LabelFrame(mu_settings_frame, text="결과 스무딩", padding=5)
-        smooth_frame.pack(fill=tk.X, pady=3)
-
-        self.smooth_mu_var = tk.BooleanVar(value=True)  # Default ON for smoother curves
-        ttk.Checkbutton(
-            smooth_frame,
-            text="μ_visc 곡선 스무딩 적용",
-            variable=self.smooth_mu_var
-        ).pack(anchor=tk.W, pady=2)
-
-        smooth_window_frame = ttk.Frame(smooth_frame)
-        smooth_window_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(smooth_window_frame, text="스무딩 윈도우:").pack(side=tk.LEFT)
+        # Smoothing in single row
+        smooth_row = ttk.Frame(mu_settings_frame)
+        smooth_row.pack(fill=tk.X, pady=1)
+        self.smooth_mu_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(smooth_row, text="스무딩", variable=self.smooth_mu_var).pack(side=tk.LEFT)
         self.smooth_window_var = tk.StringVar(value="5")
-        smooth_combo = ttk.Combobox(
-            smooth_window_frame,
-            textvariable=self.smooth_window_var,
-            values=["3", "5", "7", "9", "11"],
-            width=10,
-            state="readonly"
-        )
-        smooth_combo.pack(side=tk.RIGHT)
+        ttk.Combobox(smooth_row, textvariable=self.smooth_window_var,
+                     values=["3", "5", "7", "9", "11"], width=4, state="readonly").pack(side=tk.LEFT, padx=2)
 
-        # Calculate mu_visc button
-        self.mu_calc_button = ttk.Button(
-            mu_settings_frame,
-            text="μ_visc 계산 실행",
-            command=self._calculate_mu_visc
-        )
-        self.mu_calc_button.pack(fill=tk.X, pady=5)
+        # Calculate button and progress bar
+        calc_row = ttk.Frame(mu_settings_frame)
+        calc_row.pack(fill=tk.X, pady=2)
+        self.mu_calc_button = ttk.Button(calc_row, text="μ_visc 계산", command=self._calculate_mu_visc, width=15)
+        self.mu_calc_button.pack(side=tk.LEFT, padx=2)
 
-        # Progress bar for mu_visc calculation
         self.mu_progress_var = tk.IntVar()
-        self.mu_progress_bar = ttk.Progressbar(
-            mu_settings_frame,
-            variable=self.mu_progress_var,
-            maximum=100
-        )
-        self.mu_progress_bar.pack(fill=tk.X, pady=2)
+        self.mu_progress_bar = ttk.Progressbar(calc_row, variable=self.mu_progress_var, maximum=100, length=150)
+        self.mu_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         # 5. Results Display
-        results_frame = ttk.LabelFrame(left_panel, text="5) 계산 결과", padding=8)
-        results_frame.pack(fill=tk.X, pady=5, padx=5)
+        results_frame = ttk.LabelFrame(left_panel, text="5) 결과", padding=5)
+        results_frame.pack(fill=tk.X, pady=2, padx=3)
 
-        self.mu_result_text = tk.Text(results_frame, height=10, font=("Courier", 9))
+        self.mu_result_text = tk.Text(results_frame, height=8, font=("Courier", 8), wrap=tk.WORD)
         self.mu_result_text.pack(fill=tk.X)
 
         # Export buttons
         export_btn_frame = ttk.Frame(results_frame)
-        export_btn_frame.pack(fill=tk.X, pady=3)
+        export_btn_frame.pack(fill=tk.X, pady=2)
 
-        ttk.Button(
-            export_btn_frame,
-            text="μ_visc CSV",
-            command=self._export_mu_visc_results
-        ).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-
-        ttk.Button(
-            export_btn_frame,
-            text="f,g 곡선 CSV",
-            command=self._export_fg_curves
-        ).pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
+        ttk.Button(export_btn_frame, text="μ CSV", command=self._export_mu_visc_results, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Button(export_btn_frame, text="f,g CSV", command=self._export_fg_curves, width=10).pack(side=tk.LEFT, padx=1)
 
         # ============== Right Panel: Plots ==============
 
-        plot_frame = ttk.LabelFrame(right_panel, text="그래프", padding=10)
+        right_panel = ttk.Frame(main_container)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        plot_frame = ttk.LabelFrame(right_panel, text="그래프", padding=5)
         plot_frame.pack(fill=tk.BOTH, expand=True)
 
         # Create figure with 2x2 subplots
-        self.fig_mu_visc = Figure(figsize=(10, 8), dpi=100)
+        self.fig_mu_visc = Figure(figsize=(9, 7), dpi=100)
 
         # Top-left: f,g curves
         self.ax_fg_curves = self.fig_mu_visc.add_subplot(221)
@@ -2137,11 +2075,11 @@ $\begin{array}{lcc}
         self.ax_mu_v.set_xscale('log')
         self.ax_mu_v.grid(True, alpha=0.3)
 
-        # Bottom-left: Cumulative mu contribution
+        # Bottom-left: Integrand components
         self.ax_mu_cumulative = self.fig_mu_visc.add_subplot(223)
-        self.ax_mu_cumulative.set_title('파수별 μ 기여도', fontweight='bold')
+        self.ax_mu_cumulative.set_title('피적분함수 (Integrand)', fontweight='bold')
         self.ax_mu_cumulative.set_xlabel('파수 q (1/m)')
-        self.ax_mu_cumulative.set_ylabel('누적 μ_visc')
+        self.ax_mu_cumulative.set_ylabel('값')
         self.ax_mu_cumulative.set_xscale('log')
         self.ax_mu_cumulative.grid(True, alpha=0.3)
 
@@ -2804,25 +2742,44 @@ $\begin{array}{lcc}
                 if self.g_interpolator is None:
                     self.mu_result_text.insert(tk.END, "  ※ f,g 곡선이 없음\n")
 
+            # Helper for smart formatting
+            def smart_fmt(val, threshold=0.001):
+                if abs(val) < threshold and val != 0:
+                    return f'{val:.2e}'
+                return f'{val:.4f}'
+
             self.mu_result_text.insert(tk.END, "\n[결과]\n")
-            self.mu_result_text.insert(tk.END, f"  속도 범위: {v[0]:.2e} ~ {v[-1]:.2e} m/s\n")
-            self.mu_result_text.insert(tk.END, f"  μ_visc 범위: {np.min(mu_array):.4f} ~ {np.max(mu_array):.4f}\n")
+            self.mu_result_text.insert(tk.END, f"  속도: {v[0]:.2e} ~ {v[-1]:.2e} m/s\n")
+            mu_min, mu_max = np.min(mu_array), np.max(mu_array)
+            self.mu_result_text.insert(tk.END, f"  μ_visc: {smart_fmt(mu_min)} ~ {smart_fmt(mu_max)}\n")
 
             # Find peak
             peak_idx = np.argmax(mu_array)
-            self.mu_result_text.insert(tk.END, f"  최대값: μ={mu_array[peak_idx]:.4f} @ v={v[peak_idx]:.4f} m/s\n")
+            peak_mu = mu_array[peak_idx]
+            self.mu_result_text.insert(tk.END, f"  최대: μ={smart_fmt(peak_mu)} @ v={v[peak_idx]:.4f} m/s\n")
+
+            # Show diagnostic info from integrand
+            if details and 'details' in details and len(details['details']) > 0:
+                mid_detail = details['details'][len(details['details']) // 2]
+                if 'angle_integral' in mid_detail:
+                    angle_int = mid_detail['angle_integral']
+                    self.mu_result_text.insert(tk.END, f"\n[진단 정보]\n")
+                    self.mu_result_text.insert(tk.END, f"  각도적분 범위: {np.min(angle_int):.2e} ~ {np.max(angle_int):.2e}\n")
+                if 'integrand' in mid_detail:
+                    integ = mid_detail['integrand']
+                    self.mu_result_text.insert(tk.END, f"  피적분함수 합: {np.sum(integ):.2e}\n")
 
             self.mu_result_text.insert(tk.END, "\n[속도별 μ_visc]\n")
-            step = max(1, len(v) // 10)
+            step = max(1, len(v) // 8)
             for i in range(0, len(v), step):
-                self.mu_result_text.insert(tk.END, f"  v={v[i]:.4e} m/s: μ={mu_array[i]:.5f}\n")
+                self.mu_result_text.insert(tk.END, f"  v={v[i]:.2e}: μ={smart_fmt(mu_array[i])}\n")
 
             self.status_var.set("μ_visc 계산 완료")
             self.mu_calc_button.config(state='normal')
 
             messagebox.showinfo("성공", f"μ_visc 계산 완료\n"
-                               f"범위: {np.min(mu_array):.4f} ~ {np.max(mu_array):.4f}\n"
-                               f"최대값: μ={mu_array[peak_idx]:.4f} @ v={v[peak_idx]:.4f} m/s")
+                               f"범위: {smart_fmt(mu_min)} ~ {smart_fmt(mu_max)}\n"
+                               f"최대: μ={smart_fmt(peak_mu)} @ v={v[peak_idx]:.4f} m/s")
 
         except Exception as e:
             self.mu_calc_button.config(state='normal')
@@ -2835,7 +2792,19 @@ $\begin{array}{lcc}
         # Clear all subplots
         self.ax_mu_v.clear()
         self.ax_mu_cumulative.clear()
+
+        # Remove any existing twin axes from ax_ps
+        for ax in self.fig_mu_visc.axes:
+            if ax is not self.ax_fg_curves and ax is not self.ax_mu_v and \
+               ax is not self.ax_mu_cumulative and ax is not self.ax_ps:
+                ax.remove()
         self.ax_ps.clear()
+
+        # Helper function for smart formatting
+        def smart_format(val, threshold=0.001):
+            if abs(val) < threshold and val != 0:
+                return f'{val:.2e}'
+            return f'{val:.4f}'
 
         # Plot 1: mu_visc vs velocity
         self.ax_mu_v.semilogx(v, mu_array, 'b-', linewidth=2.5, marker='o', markersize=4)
@@ -2846,32 +2815,51 @@ $\begin{array}{lcc}
 
         # Find peak
         peak_idx = np.argmax(mu_array)
-        self.ax_mu_v.plot(v[peak_idx], mu_array[peak_idx], 'r*', markersize=15,
-                         label=f'최대값: μ={mu_array[peak_idx]:.4f} @ v={v[peak_idx]:.4f} m/s')
-        self.ax_mu_v.legend(loc='upper left')
+        peak_mu = mu_array[peak_idx]
+        peak_v = v[peak_idx]
+        self.ax_mu_v.plot(peak_v, peak_mu, 'r*', markersize=15,
+                         label=f'최대값: μ={smart_format(peak_mu)} @ v={peak_v:.4f} m/s')
+        self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
-        # Plot 2: Cumulative mu contribution (for middle velocity)
+        # Plot 2: Integrand components (for middle velocity)
         mid_idx = len(details['details']) // 2
         detail = details['details'][mid_idx]
         q = detail['q']
-        cumulative = detail['cumulative_mu']
 
-        self.ax_mu_cumulative.semilogx(q, cumulative, 'g-', linewidth=2)
-        self.ax_mu_cumulative.set_title(f'파수별 μ 기여도 (v={v[mid_idx]:.4f} m/s)', fontweight='bold')
+        # Show the integrand and angle integral on log scale
+        integrand = detail.get('integrand', np.zeros_like(q))
+        angle_int = detail.get('angle_integral', np.zeros_like(q))
+
+        # Only plot positive values on log scale
+        integrand_pos = np.where(integrand > 0, integrand, np.nan)
+        angle_int_pos = np.where(angle_int > 0, angle_int, np.nan)
+
+        self.ax_mu_cumulative.loglog(q, integrand_pos, 'b-', linewidth=1.5, label='피적분함수')
+        self.ax_mu_cumulative.loglog(q, angle_int_pos, 'r--', linewidth=1, alpha=0.7, label='각도적분')
+        self.ax_mu_cumulative.set_title(f'피적분함수 (v={v[mid_idx]:.2e} m/s)', fontweight='bold', fontsize=9)
         self.ax_mu_cumulative.set_xlabel('파수 q (1/m)')
-        self.ax_mu_cumulative.set_ylabel('누적 μ_visc')
+        self.ax_mu_cumulative.set_ylabel('값')
+        self.ax_mu_cumulative.legend(loc='best', fontsize=7)
         self.ax_mu_cumulative.grid(True, alpha=0.3)
 
-        # Plot 3: P(q) and S(q)
+        # Plot 3: P(q), S(q) and cumulative mu
         P = detail['P']
         S = detail['S']
+        cumulative = detail.get('cumulative_mu', np.zeros_like(q))
 
-        self.ax_ps.semilogx(q, P, 'b-', linewidth=2, label='P(q) 접촉 면적')
-        self.ax_ps.semilogx(q, S, 'r--', linewidth=2, label='S(q) 보정 계수')
-        self.ax_ps.set_title('P(q), S(q) 분포', fontweight='bold')
+        # Use twin axis for cumulative
+        ax_twin = self.ax_ps.twinx()
+
+        self.ax_ps.semilogx(q, P, 'b-', linewidth=1.5, label='P(q)')
+        self.ax_ps.semilogx(q, S, 'r--', linewidth=1.5, label='S(q)')
+        ax_twin.semilogx(q, cumulative, 'g-', linewidth=1.5, alpha=0.7, label='누적μ')
+
+        self.ax_ps.set_title('P(q), S(q) / 누적 μ', fontweight='bold', fontsize=9)
         self.ax_ps.set_xlabel('파수 q (1/m)')
-        self.ax_ps.set_ylabel('P(q), S(q)')
-        self.ax_ps.legend(loc='upper right')
+        self.ax_ps.set_ylabel('P(q), S(q)', color='blue')
+        ax_twin.set_ylabel('누적 μ', color='green')
+        self.ax_ps.legend(loc='upper left', fontsize=7)
+        ax_twin.legend(loc='upper right', fontsize=7)
         self.ax_ps.grid(True, alpha=0.3)
         self.ax_ps.set_ylim(0, 1.1)
 
