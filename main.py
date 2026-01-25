@@ -3709,7 +3709,7 @@ $\begin{array}{lcc}
             n_angle = int(self.integrand_nangle_var.get())
 
             # Get parameters
-            sigma_0 = float(self.sigma0_var.get())
+            sigma_0 = float(self.sigma_0_var.get()) * 1e6  # MPa to Pa
             poisson_ratio = float(self.poisson_var.get())
             prefactor = 1.0 / ((1 - poisson_ratio**2) * sigma_0)
 
