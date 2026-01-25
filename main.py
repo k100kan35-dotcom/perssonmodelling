@@ -58,7 +58,18 @@ from persson_model.utils.data_loader import (
     load_dma_from_file,
     create_material_from_dma,
     create_psd_from_data,
-    smooth_dma_data
+    smooth_dma_data,
+    load_strain_sweep_file,
+    load_fg_curve_file,
+    compute_fg_from_strain_sweep,
+    create_fg_interpolator,
+    average_fg_curves,
+    create_strain_grid
+)
+from persson_model.core.friction import (
+    FrictionCalculator,
+    calculate_mu_visc_simple,
+    apply_nonlinear_strain_correction
 )
 
 # Configure matplotlib for better Korean font support
@@ -111,6 +122,14 @@ class PerssonModelGUI_V2:
         self.g_calculator = None
         self.results = {}
         self.raw_dma_data = None  # Store raw DMA data for plotting
+
+        # Strain/mu_visc related variables
+        self.strain_data = None  # Strain sweep raw data by temperature
+        self.fg_by_T = None  # f,g curves by temperature
+        self.fg_averaged = None  # Averaged f,g curves
+        self.f_interpolator = None  # f(strain) function
+        self.g_interpolator = None  # g(strain) function
+        self.mu_visc_results = None  # mu_visc calculation results
 
         # Create UI
         self._create_menu()
@@ -230,14 +249,19 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_results, text="3. G(q,v) 결과")
         self._create_results_tab(self.tab_results)
 
-        # Tab 4: Friction Coefficient
-        self.tab_friction = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_friction, text="4. 마찰 분석")
-        self._create_friction_tab(self.tab_friction)
+        # Tab 4: Nonlinear (f,g curves) - Piecewise temperature averaging
+        self.tab_nonlinear = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_nonlinear, text="4. Nonlinear (f,g 곡선)")
+        self._create_nonlinear_tab(self.tab_nonlinear)
 
-        # Tab 5: Equations
+        # Tab 5: mu_visc Calculation
+        self.tab_mu_visc = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_mu_visc, text="5. μ_visc 계산")
+        self._create_mu_visc_tab(self.tab_mu_visc)
+
+        # Tab 6: Equations (moved to end)
         self.tab_equations = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_equations, text="5. 수식 정리")
+        self.notebook.add(self.tab_equations, text="6. 수식 정리")
         self._create_equations_tab(self.tab_equations)
 
     def _create_verification_tab(self, parent):
@@ -554,29 +578,6 @@ class PerssonModelGUI_V2:
             text="결과 그래프 저장",
             command=lambda: self._save_plot(self.fig_results, "results_plot")
         ).pack(side=tk.LEFT, padx=5)
-
-    def _create_friction_tab(self, parent):
-        """Create friction coefficient analysis tab."""
-        # Instruction
-        instruction = ttk.LabelFrame(parent, text="탭 설명", padding=10)
-        instruction.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Label(instruction, text=
-            "마찰 계수 μ(v) 및 접촉 면적 분석.\n"
-            "속도 의존성 마찰과 실제 접촉 면적 비율을 표시합니다.",
-            font=('Arial', 10)
-        ).pack()
-
-        # Results text
-        text_frame = ttk.Frame(parent)
-        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        self.results_text = tk.Text(text_frame, font=("Courier", 10))
-        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        scrollbar = ttk.Scrollbar(text_frame, command=self.results_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.results_text.config(yscrollcommand=scrollbar.set)
 
     def _create_status_bar(self):
         """Create status bar."""
@@ -1782,6 +1783,1001 @@ $\begin{array}{lcc}
         # Pack scrollbar
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+    def _create_nonlinear_tab(self, parent):
+        """Create Nonlinear (f,g curves) tab with piecewise temperature averaging."""
+
+        # Create main container with 2 columns
+        main_container = ttk.Frame(parent)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Left panel (scrollable) for controls
+        left_frame = ttk.Frame(main_container)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Create scrollable canvas for left panel
+        left_canvas = tk.Canvas(left_frame, width=450, borderwidth=0, highlightthickness=0)
+        left_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=left_canvas.yview)
+        left_inner = ttk.Frame(left_canvas)
+
+        left_inner.bind("<Configure>", lambda e: left_canvas.configure(scrollregion=left_canvas.bbox("all")))
+        left_canvas.create_window((0, 0), window=left_inner, anchor="nw")
+        left_canvas.configure(yscrollcommand=left_scrollbar.set)
+
+        left_canvas.pack(side="left", fill="both", expand=True)
+        left_scrollbar.pack(side="right", fill="y")
+
+        # Bind mousewheel to scrollable canvas
+        def _on_mousewheel(event):
+            left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        left_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Right panel for plots
+        right_panel = ttk.Frame(main_container)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        pad = {"padx": 8, "pady": 4}
+
+        # ============== 1) Strain Sweep File Loading ==============
+        lf1 = ttk.LabelFrame(left_inner, text="1) Strain Sweep 파일 (T, f, strain, ReE, ImE)")
+        lf1.pack(fill="x", **pad)
+
+        ttk.Button(lf1, text="파일 로드", command=self._nl_load_strain_file).pack(side="left", padx=8, pady=6)
+        self.nl_file_label = ttk.Label(lf1, text="(파일 없음)")
+        self.nl_file_label.pack(side="left", padx=8)
+
+        # ============== 2) Frequency Selection ==============
+        lf2 = ttk.LabelFrame(left_inner, text="2) 주파수 선택")
+        lf2.pack(fill="x", **pad)
+
+        self.nl_target_freq = tk.StringVar(value="1.0")
+        self.nl_freq_tol = tk.StringVar(value="0.01")
+        self.nl_freq_mode = tk.StringVar(value="nearest")
+
+        row = ttk.Frame(lf2)
+        row.pack(fill="x", padx=8, pady=4)
+        ttk.Label(row, text="타겟 주파수 (Hz):").pack(side="left")
+        ttk.Entry(row, textvariable=self.nl_target_freq, width=10).pack(side="left", padx=6)
+        ttk.Label(row, text="허용 오차 (Hz):").pack(side="left", padx=(16, 0))
+        ttk.Entry(row, textvariable=self.nl_freq_tol, width=10).pack(side="left", padx=6)
+
+        row2 = ttk.Frame(lf2)
+        row2.pack(fill="x", padx=8, pady=4)
+        ttk.Label(row2, text="모드:").pack(side="left")
+        ttk.Radiobutton(row2, text="Nearest", variable=self.nl_freq_mode, value="nearest").pack(side="left", padx=8)
+        ttk.Radiobutton(row2, text="Tolerance", variable=self.nl_freq_mode, value="tolerance").pack(side="left", padx=8)
+
+        # ============== 3) Normalization ==============
+        lf3 = ttk.LabelFrame(left_inner, text="3) 정규화 설정")
+        lf3.pack(fill="x", **pad)
+
+        self.nl_strain_is_percent = tk.BooleanVar(value=True)
+        self.nl_e0_points = tk.StringVar(value="5")
+        self.nl_clip_leq_1 = tk.BooleanVar(value=True)
+
+        ttk.Checkbutton(lf3, text="Strain 값이 % 단위임", variable=self.nl_strain_is_percent).pack(anchor="w", padx=8, pady=2)
+
+        row3 = ttk.Frame(lf3)
+        row3.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row3, text="E0 평균점 (lowest strain):").pack(side="left")
+        ttk.Entry(row3, textvariable=self.nl_e0_points, width=8).pack(side="left", padx=6)
+
+        ttk.Checkbutton(lf3, text="f,g ≤ 1 클리핑 (Persson-like)", variable=self.nl_clip_leq_1).pack(anchor="w", padx=8, pady=2)
+
+        # ============== 4) Interpolation / Missing / Average ==============
+        lf4 = ttk.LabelFrame(left_inner, text="4) 보간 / Missing / 평균 설정")
+        lf4.pack(fill="x", **pad)
+
+        self.nl_interp_kind = tk.StringVar(value="loglog_linear")
+        self.nl_extrap_mode = tk.StringVar(value="hold")
+        self.nl_avg_mode = tk.StringVar(value="mean")
+        self.nl_missing_policy = tk.StringVar(value="ignore")
+        self.nl_n_min = tk.StringVar(value="3")
+
+        row = ttk.Frame(lf4)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="보간:").pack(side="left")
+        ttk.Radiobutton(row, text="Linear", variable=self.nl_interp_kind, value="linear").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Log-Log Lin", variable=self.nl_interp_kind, value="loglog_linear").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Log-Log Cubic", variable=self.nl_interp_kind, value="loglog_cubic").pack(side="left", padx=4)
+
+        row = ttk.Frame(lf4)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="Missing policy:").pack(side="left")
+        ttk.Radiobutton(row, text="Ignore", variable=self.nl_missing_policy, value="ignore").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Hold", variable=self.nl_missing_policy, value="hold").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Extrap", variable=self.nl_missing_policy, value="extrap").pack(side="left", padx=4)
+
+        row = ttk.Frame(lf4)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="Extrap mode:").pack(side="left")
+        ttk.Radiobutton(row, text="Hold", variable=self.nl_extrap_mode, value="hold").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Linear", variable=self.nl_extrap_mode, value="linear").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="None", variable=self.nl_extrap_mode, value="none").pack(side="left", padx=4)
+
+        row = ttk.Frame(lf4)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="평균:").pack(side="left")
+        ttk.Radiobutton(row, text="Mean", variable=self.nl_avg_mode, value="mean").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Median", variable=self.nl_avg_mode, value="median").pack(side="left", padx=4)
+        ttk.Radiobutton(row, text="Max", variable=self.nl_avg_mode, value="max").pack(side="left", padx=4)
+
+        row = ttk.Frame(lf4)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="N_min (최소 온도 수, else tail-hold):").pack(side="left")
+        ttk.Entry(row, textvariable=self.nl_n_min, width=6).pack(side="left", padx=6)
+
+        # ============== 5) Grid / Extend ==============
+        lf5 = ttk.LabelFrame(left_inner, text="5) Grid / Extend 설정")
+        lf5.pack(fill="x", **pad)
+
+        self.nl_grid_points = tk.StringVar(value="20")
+        self.nl_use_persson_grid = tk.BooleanVar(value=True)
+        self.nl_extend_to = tk.StringVar(value="40")
+
+        row = ttk.Frame(lf5)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="Grid points:").pack(side="left")
+        ttk.Entry(row, textvariable=self.nl_grid_points, width=8).pack(side="left", padx=6)
+        ttk.Checkbutton(row, text="Persson grid", variable=self.nl_use_persson_grid).pack(side="left", padx=12)
+
+        row = ttk.Frame(lf5)
+        row.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row, text="Extend to strain (%):").pack(side="left")
+        ttk.Entry(row, textvariable=self.nl_extend_to, width=10).pack(side="left", padx=6)
+
+        # ============== 6) Piecewise Temperature Selection ==============
+        lf6 = ttk.LabelFrame(left_inner, text="6) Piecewise 온도 선택 (Strain 범위별)")
+        lf6.pack(fill="x", **pad)
+
+        self.nl_split_strain = tk.StringVar(value="15.0")
+        row = ttk.Frame(lf6)
+        row.pack(fill="x", padx=8, pady=4)
+        ttk.Label(row, text="Split strain at (%):").pack(side="left")
+        ttk.Entry(row, textvariable=self.nl_split_strain, width=10).pack(side="left", padx=6)
+        ttk.Label(row, text="(≤ split: Group A, > split: Group B)").pack(side="left", padx=6)
+
+        # Group A temps (low strain)
+        temp_frame_A = ttk.LabelFrame(lf6, text="Group A 온도 (low strain)")
+        temp_frame_A.pack(fill="x", padx=8, pady=4)
+        self.nl_temp_inner_A = ttk.Frame(temp_frame_A)
+        self.nl_temp_inner_A.pack(fill="x", padx=6, pady=4)
+
+        # Group B temps (high strain)
+        temp_frame_B = ttk.LabelFrame(lf6, text="Group B 온도 (high strain)")
+        temp_frame_B.pack(fill="x", padx=8, pady=4)
+        self.nl_temp_inner_B = ttk.Frame(temp_frame_B)
+        self.nl_temp_inner_B.pack(fill="x", padx=6, pady=4)
+
+        # Temperature checkboxes storage
+        self.nl_temp_vars_A = {}
+        self.nl_temp_vars_B = {}
+
+        # ============== 7) Target Curve Overlay ==============
+        lf7 = ttk.LabelFrame(left_inner, text="7) Target Curve Overlay")
+        lf7.pack(fill="x", **pad)
+
+        ttk.Button(lf7, text="Target 곡선 로드", command=self._nl_load_target_curve).pack(side="left", padx=8, pady=6)
+        self.nl_target_strain_is_percent = tk.BooleanVar(value=False)
+        ttk.Checkbutton(lf7, text="Target strain이 %임", variable=self.nl_target_strain_is_percent).pack(side="left", padx=6)
+        self.nl_target_label = ttk.Label(lf7, text="(no target)")
+        self.nl_target_label.pack(side="left", padx=8)
+
+        row = ttk.Frame(lf7)
+        row.pack(fill="x", padx=8, pady=4)
+        ttk.Button(row, text="Target 삭제", command=self._nl_clear_target).pack(side="left", padx=6)
+
+        # ============== 8) Compute / Export ==============
+        lf8 = ttk.LabelFrame(left_inner, text="8) 계산 / 내보내기")
+        lf8.pack(fill="x", **pad)
+
+        row = ttk.Frame(lf8)
+        row.pack(fill="x", padx=8, pady=6)
+        ttk.Button(row, text="계산 / 새로고침", command=self._nl_compute).pack(side="left", padx=6)
+        ttk.Button(row, text="Snapshot 추가", command=self._nl_add_snapshot).pack(side="left", padx=6)
+
+        # Snapshot listbox
+        self.nl_snapshot_list = tk.Listbox(lf8, height=4)
+        self.nl_snapshot_list.pack(fill="x", padx=8, pady=(0, 6))
+
+        row2 = ttk.Frame(lf8)
+        row2.pack(fill="x", padx=8, pady=4)
+        ttk.Button(row2, text="Snapshot 삭제", command=self._nl_delete_snapshot).pack(side="left", padx=6)
+
+        row3 = ttk.Frame(lf8)
+        row3.pack(fill="x", padx=8, pady=4)
+        ttk.Button(row3, text="Stitched CSV 내보내기", command=self._nl_export_stitched).pack(side="left", padx=6)
+        ttk.Button(row3, text="Snapshot CSV 내보내기", command=self._nl_export_snapshot).pack(side="left", padx=6)
+
+        # Status
+        self.nl_status = ttk.Label(left_inner, text="")
+        self.nl_status.pack(fill="x", padx=10, pady=(4, 10))
+
+        # ============== Right Panel: Plot ==============
+        plot_frame = ttk.LabelFrame(right_panel, text="f(ε), g(ε) 그래프", padding=10)
+        plot_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.fig_nonlinear = Figure(figsize=(8, 6), dpi=100)
+        self.ax_nonlinear = self.fig_nonlinear.add_subplot(111)
+        self.ax_nonlinear.set_title('f(ε), g(ε) vs strain', fontweight='bold')
+        self.ax_nonlinear.set_xlabel('strain ε (fraction)')
+        self.ax_nonlinear.set_ylabel('factor')
+        self.ax_nonlinear.grid(True, alpha=0.4)
+
+        self.canvas_nonlinear = FigureCanvasTkAgg(self.fig_nonlinear, plot_frame)
+        self.canvas_nonlinear.draw()
+        self.canvas_nonlinear.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2Tk(self.canvas_nonlinear, plot_frame)
+        toolbar.update()
+
+        # Initialize nonlinear data storage
+        self.nl_data_by_T = {}
+        self.nl_fg_by_T = {}
+        self.nl_resA = None
+        self.nl_resB = None
+        self.nl_stitched = None
+        self.nl_snapshots = []
+        self.nl_target = None
+
+    def _nl_load_strain_file(self):
+        """Load strain sweep file for nonlinear f,g calculation."""
+        filename = filedialog.askopenfilename(
+            title="Strain Sweep 파일 선택",
+            filetypes=[
+                ("All supported", "*.txt *.csv *.xlsx *.xls *.dat"),
+                ("Text files", "*.txt *.dat"),
+                ("CSV files", "*.csv"),
+                ("Excel files", "*.xlsx *.xls"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filename:
+            return
+
+        try:
+            self.nl_data_by_T = load_strain_sweep_file(filename)
+
+            if not self.nl_data_by_T:
+                messagebox.showerror("오류", "유효한 데이터를 찾을 수 없습니다.")
+                return
+
+            self.nl_file_label.config(text=f"{os.path.basename(filename)} ({len(self.nl_data_by_T)}개 T)")
+
+            # Clear and rebuild temperature checkboxes
+            for w in self.nl_temp_inner_A.winfo_children():
+                w.destroy()
+            for w in self.nl_temp_inner_B.winfo_children():
+                w.destroy()
+
+            self.nl_temp_vars_A = {}
+            self.nl_temp_vars_B = {}
+
+            temps = sorted(self.nl_data_by_T.keys())
+            for i, T in enumerate(temps):
+                varA = tk.BooleanVar(value=True)
+                varB = tk.BooleanVar(value=True)
+                self.nl_temp_vars_A[T] = varA
+                self.nl_temp_vars_B[T] = varB
+
+                cbA = ttk.Checkbutton(self.nl_temp_inner_A, text=f"{T:.2f} °C", variable=varA)
+                cbB = ttk.Checkbutton(self.nl_temp_inner_B, text=f"{T:.2f} °C", variable=varB)
+
+                r = i // 3
+                c = i % 3
+                cbA.grid(row=r, column=c, sticky="w", padx=4, pady=1)
+                cbB.grid(row=r, column=c, sticky="w", padx=4, pady=1)
+
+            self.nl_status.config(text=f"로드 완료: {len(self.nl_data_by_T)}개 온도 블록")
+            self._nl_compute()
+
+        except Exception as e:
+            messagebox.showerror("오류", f"파일 로드 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _nl_load_target_curve(self):
+        """Load target curve file for overlay."""
+        filename = filedialog.askopenfilename(
+            title="Target 곡선 파일 선택",
+            filetypes=[
+                ("Text/CSV files", "*.txt *.csv *.dat"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filename:
+            return
+
+        try:
+            target_data = load_fg_curve_file(
+                filename,
+                strain_is_percent=self.nl_target_strain_is_percent.get()
+            )
+
+            if target_data is None:
+                messagebox.showerror("오류", "Target 데이터 파싱 실패 (최소 2열 필요)")
+                return
+
+            self.nl_target = target_data
+            self.nl_target_label.config(text=os.path.basename(filename))
+            self._nl_redraw_plot()
+
+        except Exception as e:
+            messagebox.showerror("오류", f"Target 로드 실패:\n{str(e)}")
+
+    def _nl_clear_target(self):
+        """Clear target curve overlay."""
+        self.nl_target = None
+        self.nl_target_label.config(text="(no target)")
+        self._nl_redraw_plot()
+
+    def _nl_compute(self):
+        """Compute f,g curves with piecewise temperature averaging."""
+        if not self.nl_data_by_T:
+            return
+
+        try:
+            target_freq = float(self.nl_target_freq.get())
+            tol = float(self.nl_freq_tol.get())
+            freq_mode = self.nl_freq_mode.get()
+            strain_is_percent = self.nl_strain_is_percent.get()
+            e0_n = int(float(self.nl_e0_points.get()))
+            clip = self.nl_clip_leq_1.get()
+
+            # Compute f,g per temperature
+            self.nl_fg_by_T = compute_fg_from_strain_sweep(
+                self.nl_data_by_T,
+                target_freq=target_freq,
+                freq_tolerance=tol,
+                freq_mode=freq_mode,
+                strain_is_percent=strain_is_percent,
+                e0_n_points=e0_n,
+                clip_leq_1=clip
+            )
+
+            if not self.nl_fg_by_T:
+                messagebox.showerror("오류", "f,g 계산 실패: 유효한 데이터 없음")
+                return
+
+            # Grid settings
+            n_grid = int(float(self.nl_grid_points.get()))
+            extend_percent = float(self.nl_extend_to.get())
+            max_strain = extend_percent / 100.0
+            use_persson = self.nl_use_persson_grid.get()
+
+            grid_strain = create_strain_grid(n_grid, max_strain, use_persson_grid=use_persson)
+
+            # Split strain
+            split_percent = float(self.nl_split_strain.get())
+            split = split_percent / 100.0
+
+            # Get selected temperatures for each group
+            TsA = [T for T, v in self.nl_temp_vars_A.items() if v.get()]
+            TsB = [T for T, v in self.nl_temp_vars_B.items() if v.get()]
+
+            if len(TsA) == 0 or len(TsB) == 0:
+                messagebox.showwarning("경고", "Group A와 Group B 모두 최소 1개 온도를 선택하세요.")
+                return
+
+            # Averaging settings
+            interp_kind = self.nl_interp_kind.get()
+            n_min = int(float(self.nl_n_min.get()))
+
+            # Average for Group A
+            self.nl_resA = average_fg_curves(
+                self.nl_fg_by_T, TsA, grid_strain,
+                interp_kind=interp_kind,
+                avg_mode=self.nl_avg_mode.get(),
+                n_min=n_min,
+                clip_leq_1=clip
+            )
+
+            # Average for Group B
+            self.nl_resB = average_fg_curves(
+                self.nl_fg_by_T, TsB, grid_strain,
+                interp_kind=interp_kind,
+                avg_mode=self.nl_avg_mode.get(),
+                n_min=n_min,
+                clip_leq_1=clip
+            )
+
+            if self.nl_resA is None or self.nl_resB is None:
+                messagebox.showerror("오류", "평균화 실패 (데이터 부족)")
+                return
+
+            # Stitch the two ranges
+            self.nl_stitched = self._nl_stitch_ranges(self.nl_resA, self.nl_resB, split)
+
+            if self.nl_stitched is None:
+                messagebox.showerror("오류", "Stitch 실패")
+                return
+
+            # Store final f,g interpolators for mu_visc calculation
+            self.f_interpolator, self.g_interpolator = create_fg_interpolator(
+                self.nl_stitched['strain'],
+                self.nl_stitched['f_avg'],
+                self.nl_stitched['g_avg']
+            )
+
+            # Also store in the main variables for mu_visc tab
+            self.fg_averaged = self.nl_stitched
+
+            self._nl_redraw_plot()
+            self.nl_status.config(
+                text=f"계산 완료: Split={split_percent:.1f}% | A={len(self.nl_resA['Ts_used'])}개 T, B={len(self.nl_resB['Ts_used'])}개 T"
+            )
+
+        except Exception as e:
+            messagebox.showerror("오류", f"계산 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _nl_stitch_ranges(self, resA, resB, split_strain_fraction):
+        """Stitch two strain ranges: use A for low strain, B for high strain."""
+        if resA is None or resB is None:
+            return None
+
+        s = resA['strain']
+        if resB['strain'].shape != s.shape or np.any(resB['strain'] != s):
+            return None
+
+        maskA = s <= split_strain_fraction
+        maskB = ~maskA
+
+        f_avg = np.empty_like(resA['f_avg'])
+        g_avg = np.empty_like(resA['g_avg'])
+
+        f_avg[maskA] = resA['f_avg'][maskA]
+        g_avg[maskA] = resA['g_avg'][maskA]
+        f_avg[maskB] = resB['f_avg'][maskB]
+        g_avg[maskB] = resB['g_avg'][maskB]
+
+        n_eff = np.empty_like(resA['n_eff'])
+        n_eff[maskA] = resA['n_eff'][maskA]
+        n_eff[maskB] = resB['n_eff'][maskB]
+
+        return {
+            'strain': s.copy(),
+            'f_avg': f_avg,
+            'g_avg': g_avg,
+            'n_eff': n_eff,
+            'split': float(split_strain_fraction),
+            'Ts_used': list(resA['Ts_used']) + list(resB['Ts_used'])
+        }
+
+    def _nl_redraw_plot(self):
+        """Redraw the nonlinear f,g plot."""
+        self.ax_nonlinear.clear()
+        self.ax_nonlinear.set_title('f(ε), g(ε) vs strain', fontweight='bold')
+        self.ax_nonlinear.set_xlabel('strain ε (fraction)')
+        self.ax_nonlinear.set_ylabel('factor')
+        self.ax_nonlinear.grid(True, alpha=0.4)
+
+        # Plot individual T curves (thin, transparent)
+        if self.nl_fg_by_T:
+            TsA = set(T for T, v in self.nl_temp_vars_A.items() if v.get())
+            TsB = set(T for T, v in self.nl_temp_vars_B.items() if v.get())
+            Ts_union = TsA | TsB
+
+            for T, d in self.nl_fg_by_T.items():
+                if T not in Ts_union:
+                    continue
+                s = d['strain']
+                f = d['f']
+                g = d['g']
+                self.ax_nonlinear.plot(s, f, 'b-', linewidth=1.0, alpha=0.15)
+                self.ax_nonlinear.plot(s, g, 'r-', linewidth=1.0, alpha=0.15)
+
+        # Plot Group A average
+        if self.nl_resA is not None:
+            s = self.nl_resA['strain']
+            self.ax_nonlinear.plot(s, self.nl_resA['f_avg'], 'b-', linewidth=2.5,
+                                   label='Group A avg f(ε)', alpha=0.7)
+            self.ax_nonlinear.plot(s, self.nl_resA['g_avg'], 'r-', linewidth=2.5,
+                                   label='Group A avg g(ε)', alpha=0.7)
+
+        # Plot Group B average
+        if self.nl_resB is not None:
+            s = self.nl_resB['strain']
+            self.ax_nonlinear.plot(s, self.nl_resB['f_avg'], 'b--', linewidth=2.5,
+                                   label='Group B avg f(ε)', alpha=0.7)
+            self.ax_nonlinear.plot(s, self.nl_resB['g_avg'], 'r--', linewidth=2.5,
+                                   label='Group B avg g(ε)', alpha=0.7)
+
+        # Plot stitched final (thicker)
+        if self.nl_stitched is not None:
+            s = self.nl_stitched['strain']
+            f = self.nl_stitched['f_avg']
+            g = self.nl_stitched['g_avg']
+            split = self.nl_stitched['split']
+
+            self.ax_nonlinear.plot(s, f, 'b-', linewidth=4.0, label='STITCHED f(ε)')
+            self.ax_nonlinear.plot(s, g, 'r-', linewidth=4.0, label='STITCHED g(ε)')
+            self.ax_nonlinear.axvline(split, color='gray', linewidth=1.8, alpha=0.7, linestyle='--')
+
+        # Plot snapshots
+        for snap in self.nl_snapshots:
+            s = snap['strain']
+            self.ax_nonlinear.plot(s, snap['f_avg'], linewidth=2.2, linestyle=':',
+                                   label=f"{snap['label']} f")
+            self.ax_nonlinear.plot(s, snap['g_avg'], linewidth=2.2, linestyle=':',
+                                   label=f"{snap['label']} g")
+
+        # Plot target overlay
+        if self.nl_target is not None:
+            ts = self.nl_target['strain']
+            tf = self.nl_target['f']
+            self.ax_nonlinear.plot(ts, tf, 'g-', linewidth=3.0, label='TARGET f', alpha=0.9)
+            if self.nl_target['g'] is not None:
+                tg = self.nl_target['g']
+                self.ax_nonlinear.plot(ts, tg, 'g--', linewidth=3.0, label='TARGET g', alpha=0.9)
+
+        self.ax_nonlinear.set_xlim(left=0.0)
+        self.ax_nonlinear.set_ylim(0.0, 1.1)
+        self.ax_nonlinear.legend(loc='upper right', fontsize=8, frameon=True)
+        self.canvas_nonlinear.draw_idle()
+
+    def _nl_add_snapshot(self):
+        """Add current stitched result as a snapshot."""
+        if self.nl_stitched is None:
+            return
+
+        idx = len(self.nl_snapshots) + 1
+        label = f"stitch_{idx} (split={self.nl_stitched['split']*100:.1f}%)"
+        snap = {
+            'label': label,
+            'strain': self.nl_stitched['strain'].copy(),
+            'f_avg': self.nl_stitched['f_avg'].copy(),
+            'g_avg': self.nl_stitched['g_avg'].copy(),
+            'n_eff': self.nl_stitched['n_eff'].copy(),
+            'split': float(self.nl_stitched['split'])
+        }
+        self.nl_snapshots.append(snap)
+        self.nl_snapshot_list.insert("end", label)
+        self._nl_redraw_plot()
+
+    def _nl_delete_snapshot(self):
+        """Delete selected snapshot."""
+        sel = self.nl_snapshot_list.curselection()
+        if not sel:
+            return
+        i = int(sel[0])
+        self.nl_snapshot_list.delete(i)
+        del self.nl_snapshots[i]
+        self._nl_redraw_plot()
+
+    def _nl_export_stitched(self):
+        """Export stitched f,g result to CSV."""
+        if self.nl_stitched is None:
+            messagebox.showinfo("내보내기", "Stitched 결과가 없습니다.")
+            return
+
+        split_p = self.nl_stitched['split'] * 100.0
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            initialfile=f"stitched_fg_split_{split_p:.1f}pct.csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import csv
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['strain_fraction', 'f_value', 'g_value', 'n_eff'])
+                s = self.nl_stitched['strain']
+                fval = self.nl_stitched['f_avg']
+                gval = self.nl_stitched['g_avg']
+                n_eff = self.nl_stitched['n_eff']
+                for i in range(len(s)):
+                    writer.writerow([float(s[i]), float(fval[i]), float(gval[i]), float(n_eff[i])])
+
+            messagebox.showinfo("내보내기", f"저장 완료: {filename}")
+        except Exception as e:
+            messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+
+    def _nl_export_snapshot(self):
+        """Export selected snapshot to CSV."""
+        sel = self.nl_snapshot_list.curselection()
+        if not sel:
+            messagebox.showinfo("내보내기", "Snapshot을 선택하세요.")
+            return
+
+        i = int(sel[0])
+        snap = self.nl_snapshots[i]
+
+        safe_label = snap['label'].replace(" ", "_").replace(":", "_")
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            initialfile=f"{safe_label}.csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import csv
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['strain_fraction', 'f_value', 'g_value', 'n_eff'])
+                s = snap['strain']
+                fval = snap['f_avg']
+                gval = snap['g_avg']
+                n_eff = snap['n_eff']
+                for j in range(len(s)):
+                    writer.writerow([float(s[j]), float(fval[j]), float(gval[j]), float(n_eff[j])])
+
+            messagebox.showinfo("내보내기", f"저장 완료: {filename}")
+        except Exception as e:
+            messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+
+    def _create_mu_visc_tab(self, parent):
+        """Create mu_visc calculation tab (simplified - uses f,g from Nonlinear tab)."""
+        # Instruction label
+        instruction = ttk.LabelFrame(parent, text="탭 설명", padding=10)
+        instruction.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(instruction, text=
+            "Persson 이론 기반 점탄성 마찰 계수 μ_visc를 계산합니다.\n"
+            "G(q,v) 계산 결과와 Nonlinear 탭의 f,g 곡선을 사용합니다.",
+            font=('Arial', 10)
+        ).pack()
+
+        # Create main container with 2 columns
+        main_container = ttk.Frame(parent)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Left panel for inputs
+        left_panel = ttk.Frame(main_container)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+
+        # Right panel for plots
+        right_panel = ttk.Frame(main_container)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        # ============== Left Panel: Controls ==============
+
+        # 1. f,g Status from Nonlinear Tab
+        fg_status_frame = ttk.LabelFrame(left_panel, text="1) f,g 곡선 현황", padding=10)
+        fg_status_frame.pack(fill=tk.X, pady=(0, 5))
+
+        self.mu_fg_status_label = ttk.Label(fg_status_frame,
+            text="f,g 곡선: (Nonlinear 탭에서 생성하세요)",
+            foreground='gray')
+        self.mu_fg_status_label.pack(anchor=tk.W, pady=2)
+
+        ttk.Button(
+            fg_status_frame,
+            text="f,g 상태 새로고침",
+            command=self._refresh_fg_status
+        ).pack(fill=tk.X, pady=2)
+
+        # 2. mu_visc Calculation Settings
+        mu_settings_frame = ttk.LabelFrame(left_panel, text="2) μ_visc 계산 설정", padding=10)
+        mu_settings_frame.pack(fill=tk.X, pady=5)
+
+        # Use f,g correction checkbox
+        self.use_fg_correction_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            mu_settings_frame,
+            text="비선형 f,g 보정 사용",
+            variable=self.use_fg_correction_var
+        ).pack(anchor=tk.W, pady=2)
+
+        # Gamma value
+        row3 = ttk.Frame(mu_settings_frame)
+        row3.pack(fill=tk.X, pady=2)
+        ttk.Label(row3, text="γ (접촉 보정 계수):").pack(side=tk.LEFT)
+        self.gamma_var = tk.StringVar(value="0.5")
+        ttk.Entry(row3, textvariable=self.gamma_var, width=10).pack(side=tk.RIGHT)
+
+        # Number of angle points
+        row4 = ttk.Frame(mu_settings_frame)
+        row4.pack(fill=tk.X, pady=2)
+        ttk.Label(row4, text="각도 적분점 개수:").pack(side=tk.LEFT)
+        self.n_phi_var = tk.StringVar(value="72")
+        ttk.Entry(row4, textvariable=self.n_phi_var, width=10).pack(side=tk.RIGHT)
+
+        # Calculate mu_visc button
+        self.mu_calc_button = ttk.Button(
+            mu_settings_frame,
+            text="μ_visc 계산 실행",
+            command=self._calculate_mu_visc
+        )
+        self.mu_calc_button.pack(fill=tk.X, pady=5)
+
+        # Progress bar for mu_visc calculation
+        self.mu_progress_var = tk.IntVar()
+        self.mu_progress_bar = ttk.Progressbar(
+            mu_settings_frame,
+            variable=self.mu_progress_var,
+            maximum=100
+        )
+        self.mu_progress_bar.pack(fill=tk.X, pady=2)
+
+        # 3. Results Display
+        results_frame = ttk.LabelFrame(left_panel, text="3) 계산 결과", padding=10)
+        results_frame.pack(fill=tk.X, pady=5)
+
+        self.mu_result_text = tk.Text(results_frame, height=10, font=("Courier", 9))
+        self.mu_result_text.pack(fill=tk.X)
+
+        # Export button
+        ttk.Button(
+            results_frame,
+            text="결과 CSV 내보내기",
+            command=self._export_mu_visc_results
+        ).pack(fill=tk.X, pady=5)
+
+        # ============== Right Panel: Plots ==============
+
+        plot_frame = ttk.LabelFrame(right_panel, text="그래프", padding=10)
+        plot_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create figure with 2x2 subplots
+        self.fig_mu_visc = Figure(figsize=(10, 8), dpi=100)
+
+        # Top-left: f,g curves from Nonlinear tab
+        self.ax_fg_curves = self.fig_mu_visc.add_subplot(221)
+        self.ax_fg_curves.set_title('f(ε), g(ε) 곡선 (Nonlinear 탭)', fontweight='bold')
+        self.ax_fg_curves.set_xlabel('변형률 ε (fraction)')
+        self.ax_fg_curves.set_ylabel('보정 계수')
+        self.ax_fg_curves.grid(True, alpha=0.3)
+
+        # Top-right: mu_visc vs velocity
+        self.ax_mu_v = self.fig_mu_visc.add_subplot(222)
+        self.ax_mu_v.set_title('μ_visc(v) 곡선', fontweight='bold')
+        self.ax_mu_v.set_xlabel('속도 v (m/s)')
+        self.ax_mu_v.set_ylabel('마찰 계수 μ_visc')
+        self.ax_mu_v.set_xscale('log')
+        self.ax_mu_v.grid(True, alpha=0.3)
+
+        # Bottom-left: Cumulative mu contribution
+        self.ax_mu_cumulative = self.fig_mu_visc.add_subplot(223)
+        self.ax_mu_cumulative.set_title('파수별 μ 기여도', fontweight='bold')
+        self.ax_mu_cumulative.set_xlabel('파수 q (1/m)')
+        self.ax_mu_cumulative.set_ylabel('누적 μ_visc')
+        self.ax_mu_cumulative.set_xscale('log')
+        self.ax_mu_cumulative.grid(True, alpha=0.3)
+
+        # Bottom-right: P(q) and S(q)
+        self.ax_ps = self.fig_mu_visc.add_subplot(224)
+        self.ax_ps.set_title('P(q), S(q) 분포', fontweight='bold')
+        self.ax_ps.set_xlabel('파수 q (1/m)')
+        self.ax_ps.set_ylabel('P(q), S(q)')
+        self.ax_ps.set_xscale('log')
+        self.ax_ps.grid(True, alpha=0.3)
+
+        self.fig_mu_visc.tight_layout()
+
+        self.canvas_mu_visc = FigureCanvasTkAgg(self.fig_mu_visc, plot_frame)
+        self.canvas_mu_visc.draw()
+        self.canvas_mu_visc.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2Tk(self.canvas_mu_visc, plot_frame)
+        toolbar.update()
+
+    def _refresh_fg_status(self):
+        """Refresh f,g curve status from Nonlinear tab."""
+        if self.fg_averaged is not None and 'strain' in self.fg_averaged:
+            n_points = len(self.fg_averaged['strain'])
+            self.mu_fg_status_label.config(
+                text=f"f,g 곡선: {n_points}개 점 (준비됨)",
+                foreground='green'
+            )
+            # Update f,g plot
+            self._update_fg_plot_in_mu_tab()
+        else:
+            self.mu_fg_status_label.config(
+                text="f,g 곡선: (Nonlinear 탭에서 생성하세요)",
+                foreground='gray'
+            )
+
+    def _update_fg_plot_in_mu_tab(self):
+        """Update f,g curves plot in mu_visc tab."""
+        self.ax_fg_curves.clear()
+        self.ax_fg_curves.set_title('f(ε), g(ε) 곡선 (Nonlinear 탭)', fontweight='bold')
+        self.ax_fg_curves.set_xlabel('변형률 ε (fraction)')
+        self.ax_fg_curves.set_ylabel('보정 계수')
+        self.ax_fg_curves.grid(True, alpha=0.3)
+
+        if self.fg_averaged is not None:
+            s = self.fg_averaged['strain']
+            f = self.fg_averaged['f_avg']
+            g = self.fg_averaged['g_avg']
+            self.ax_fg_curves.plot(s, f, 'b-', linewidth=2.5, label='f(ε)')
+            self.ax_fg_curves.plot(s, g, 'r-', linewidth=2.5, label='g(ε)')
+            self.ax_fg_curves.legend(loc='upper right')
+            self.ax_fg_curves.set_xlim(left=0)
+            self.ax_fg_curves.set_ylim(0, 1.1)
+
+        self.canvas_mu_visc.draw_idle()
+
+    def _calculate_mu_visc(self):
+        """Calculate viscoelastic friction coefficient mu_visc."""
+        if self.material is None or self.psd_model is None:
+            messagebox.showwarning("경고", "먼저 재료(DMA)와 PSD 데이터를 로드하세요.")
+            return
+
+        if not self.results or '2d_results' not in self.results:
+            messagebox.showwarning("경고", "먼저 G(q,v) 계산을 실행하세요 (탭 2).")
+            return
+
+        try:
+            self.status_var.set("μ_visc 계산 중...")
+            self.mu_calc_button.config(state='disabled')
+            self.root.update()
+
+            # Get parameters
+            sigma_0 = float(self.sigma_0_var.get()) * 1e6  # MPa to Pa
+            temperature = float(self.temperature_var.get())
+            poisson = float(self.poisson_var.get())
+            gamma = float(self.gamma_var.get())
+            n_phi = int(self.n_phi_var.get())
+            use_fg = self.use_fg_correction_var.get()
+
+            # Get G(q,v) results
+            results_2d = self.results['2d_results']
+            q = results_2d['q']
+            v = results_2d['v']
+            G_matrix = results_2d['G_matrix']
+
+            # Get PSD values
+            C_q = self.psd_model(q)
+
+            # Create loss modulus function
+            def loss_modulus_func(omega, T):
+                # Apply nonlinear correction if enabled and f,g available
+                E_loss = self.material.get_loss_modulus(omega, temperature=T)
+
+                if use_fg and self.g_interpolator is not None:
+                    # Estimate local strain (simplified)
+                    # This is a rough approximation - could be improved
+                    strain_estimate = 0.01  # 1% as default estimate
+                    g_val = self.g_interpolator(strain_estimate)
+                    E_loss = E_loss * g_val
+
+                return E_loss
+
+            # Create friction calculator
+            friction_calc = FrictionCalculator(
+                psd_func=self.psd_model,
+                loss_modulus_func=loss_modulus_func,
+                sigma_0=sigma_0,
+                velocity=v[0],
+                temperature=temperature,
+                poisson_ratio=poisson,
+                gamma=gamma,
+                n_angle_points=n_phi
+            )
+
+            # Calculate mu_visc for all velocities
+            def progress_callback(percent):
+                self.mu_progress_var.set(percent)
+                self.root.update()
+
+            mu_array, details = friction_calc.calculate_mu_visc_multi_velocity(
+                q, G_matrix, v, C_q, progress_callback
+            )
+
+            # Store results
+            self.mu_visc_results = {
+                'v': v,
+                'mu': mu_array,
+                'details': details
+            }
+
+            # Update plots
+            self._update_mu_visc_plots(v, mu_array, details)
+
+            # Update result text
+            self.mu_result_text.delete(1.0, tk.END)
+            self.mu_result_text.insert(tk.END, "=" * 40 + "\n")
+            self.mu_result_text.insert(tk.END, "μ_visc 계산 결과\n")
+            self.mu_result_text.insert(tk.END, "=" * 40 + "\n\n")
+            self.mu_result_text.insert(tk.END, f"속도 범위: {v[0]:.2e} ~ {v[-1]:.2e} m/s\n")
+            self.mu_result_text.insert(tk.END, f"μ_visc 범위: {np.min(mu_array):.4f} ~ {np.max(mu_array):.4f}\n\n")
+            self.mu_result_text.insert(tk.END, "속도별 μ_visc:\n")
+            for i in range(0, len(v), max(1, len(v)//8)):
+                self.mu_result_text.insert(tk.END, f"  v={v[i]:.4f} m/s: μ={mu_array[i]:.4f}\n")
+
+            self.status_var.set("μ_visc 계산 완료")
+            self.mu_calc_button.config(state='normal')
+
+            messagebox.showinfo("성공", f"μ_visc 계산 완료\n범위: {np.min(mu_array):.4f} ~ {np.max(mu_array):.4f}")
+
+        except Exception as e:
+            self.mu_calc_button.config(state='normal')
+            messagebox.showerror("오류", f"μ_visc 계산 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _update_mu_visc_plots(self, v, mu_array, details):
+        """Update mu_visc plots."""
+        # Clear all subplots
+        self.ax_mu_v.clear()
+        self.ax_mu_cumulative.clear()
+        self.ax_ps.clear()
+
+        # Plot 1: mu_visc vs velocity
+        self.ax_mu_v.semilogx(v, mu_array, 'b-', linewidth=2.5, marker='o', markersize=4)
+        self.ax_mu_v.set_title('μ_visc(v) 곡선', fontweight='bold')
+        self.ax_mu_v.set_xlabel('속도 v (m/s)')
+        self.ax_mu_v.set_ylabel('마찰 계수 μ_visc')
+        self.ax_mu_v.grid(True, alpha=0.3)
+
+        # Find peak
+        peak_idx = np.argmax(mu_array)
+        self.ax_mu_v.plot(v[peak_idx], mu_array[peak_idx], 'r*', markersize=15,
+                         label=f'최대값: μ={mu_array[peak_idx]:.4f} @ v={v[peak_idx]:.4f} m/s')
+        self.ax_mu_v.legend(loc='upper left')
+
+        # Plot 2: Cumulative mu contribution (for middle velocity)
+        mid_idx = len(details['details']) // 2
+        detail = details['details'][mid_idx]
+        q = detail['q']
+        cumulative = detail['cumulative_mu']
+
+        self.ax_mu_cumulative.semilogx(q, cumulative, 'g-', linewidth=2)
+        self.ax_mu_cumulative.set_title(f'파수별 μ 기여도 (v={v[mid_idx]:.4f} m/s)', fontweight='bold')
+        self.ax_mu_cumulative.set_xlabel('파수 q (1/m)')
+        self.ax_mu_cumulative.set_ylabel('누적 μ_visc')
+        self.ax_mu_cumulative.grid(True, alpha=0.3)
+
+        # Plot 3: P(q) and S(q)
+        P = detail['P']
+        S = detail['S']
+
+        self.ax_ps.semilogx(q, P, 'b-', linewidth=2, label='P(q) 접촉 면적')
+        self.ax_ps.semilogx(q, S, 'r--', linewidth=2, label='S(q) 보정 계수')
+        self.ax_ps.set_title('P(q), S(q) 분포', fontweight='bold')
+        self.ax_ps.set_xlabel('파수 q (1/m)')
+        self.ax_ps.set_ylabel('P(q), S(q)')
+        self.ax_ps.legend(loc='upper right')
+        self.ax_ps.grid(True, alpha=0.3)
+        self.ax_ps.set_ylim(0, 1.1)
+
+        self.fig_mu_visc.tight_layout()
+        self.canvas_mu_visc.draw()
+
+    def _export_mu_visc_results(self):
+        """Export mu_visc results to CSV file."""
+        if self.mu_visc_results is None:
+            messagebox.showwarning("경고", "먼저 μ_visc를 계산하세요.")
+            return
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            initialfile="mu_visc_results.csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import csv
+
+            v = self.mu_visc_results['v']
+            mu = self.mu_visc_results['mu']
+
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['# μ_visc 계산 결과'])
+                writer.writerow(['# 속도 (m/s)', 'μ_visc'])
+                for vi, mui in zip(v, mu):
+                    writer.writerow([f'{vi:.6e}', f'{mui:.6f}'])
+
+            messagebox.showinfo("성공", f"결과 저장 완료:\n{filename}")
+            self.status_var.set(f"결과 저장: {filename}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
 
 
 def main():
