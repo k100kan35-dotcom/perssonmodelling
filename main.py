@@ -1990,7 +1990,7 @@ $\begin{array}{lcc}
         try:
             self.rms_calc_btn.config(state='disabled')
             self.rms_progress_var.set(10)
-            self.update_idletasks()
+            self.root.update_idletasks()
 
             # Get PSD data
             q_array = self.psd_model.q
@@ -2024,7 +2024,7 @@ $\begin{array}{lcc}
                 return
 
             self.rms_progress_var.set(30)
-            self.update_idletasks()
+            self.root.update_idletasks()
 
             # Create RMS slope calculator
             self.rms_slope_calculator = RMSSlopeCalculator(
@@ -2032,7 +2032,7 @@ $\begin{array}{lcc}
             )
 
             self.rms_progress_var.set(60)
-            self.update_idletasks()
+            self.root.update_idletasks()
 
             # Store profiles
             self.rms_slope_profiles = self.rms_slope_calculator.get_profiles()
@@ -2042,7 +2042,7 @@ $\begin{array}{lcc}
             self._update_rms_slope_plots()
 
             self.rms_progress_var.set(80)
-            self.update_idletasks()
+            self.root.update_idletasks()
 
             # Update result text
             self._update_rms_result_text()
