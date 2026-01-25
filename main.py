@@ -3177,6 +3177,57 @@ $\begin{array}{lcc}
                 else:
                     return np.full(n, fixed_strain)
 
+            # Apply nonlinear correction to G(q) if enabled
+            # G(q) ∝ |E*|² = E'² + E''²
+            # G_nonlinear = G_linear × [(E'×f(ε))² + (E''×g(ε))²] / [E'² + E''²]
+            G_matrix_corrected = G_matrix.copy()
+
+            if use_fg and self.f_interpolator is not None and self.g_interpolator is not None:
+                self.status_var.set("비선형 G(q) 보정 적용 중...")
+                self.root.update()
+
+                # Get strain array for nonlinear correction
+                if strain_est_method == 'rms_slope' and rms_strain_interp is not None:
+                    strain_for_G = np.zeros(len(q))
+                    for i, qi in enumerate(q):
+                        try:
+                            strain_for_G[i] = 10 ** rms_strain_interp(np.log10(qi))
+                        except:
+                            strain_for_G[i] = fixed_strain
+                    strain_for_G = np.clip(strain_for_G, 0.0, 1.0)
+                else:
+                    strain_for_G = np.full(len(q), fixed_strain)
+
+                # For each velocity, calculate modulus correction ratio
+                for j, v_j in enumerate(v):
+                    for i, q_i in enumerate(q):
+                        omega_i = q_i * v_j  # Representative frequency
+                        omega_i = max(omega_i, 1e-10)
+
+                        # Get linear modulus
+                        E_prime_lin = self.material.get_storage_modulus(omega_i, temperature=temperature)
+                        E_loss_lin = self.material.get_loss_modulus(omega_i, temperature=temperature)
+                        E_star_lin_sq = E_prime_lin**2 + E_loss_lin**2
+
+                        # Get nonlinear correction factors
+                        eps_i = strain_for_G[i]
+                        f_val = np.clip(self.f_interpolator(eps_i), 0.0, 1.0)
+                        g_val = np.clip(self.g_interpolator(eps_i), 0.0, 1.0)
+
+                        # Calculate corrected modulus
+                        E_prime_eff = E_prime_lin * f_val
+                        E_loss_eff = E_loss_lin * g_val
+                        E_star_eff_sq = E_prime_eff**2 + E_loss_eff**2
+
+                        # Apply correction ratio to G
+                        # G ∝ |E*|² so G_eff/G_lin = |E*_eff|²/|E*_lin|²
+                        if E_star_lin_sq > 0:
+                            correction_ratio = E_star_eff_sq / E_star_lin_sq
+                            G_matrix_corrected[i, j] = G_matrix[i, j] * correction_ratio
+
+                self.status_var.set("비선형 G(q) 보정 완료 - μ_visc 계산 중...")
+                self.root.update()
+
             # Create friction calculator with g_interpolator
             friction_calc = FrictionCalculator(
                 psd_func=self.psd_model,
@@ -3199,8 +3250,9 @@ $\begin{array}{lcc}
             # Use strain_estimator if nonlinear correction is enabled
             strain_est = strain_estimator_func if use_fg else None
 
+            # Use corrected G_matrix (will be same as original if nonlinear not applied)
             mu_array_raw, details = friction_calc.calculate_mu_visc_multi_velocity(
-                q, G_matrix, v, C_q, progress_callback, strain_estimator=strain_est
+                q, G_matrix_corrected, v, C_q, progress_callback, strain_estimator=strain_est
             )
 
             # Apply smoothing if enabled
@@ -3252,7 +3304,7 @@ $\begin{array}{lcc}
 
             # f,g correction info - more prominent
             self.mu_result_text.insert(tk.END, "\n[비선형 보정]\n")
-            if use_fg and self.g_interpolator is not None:
+            if use_fg and self.f_interpolator is not None and self.g_interpolator is not None:
                 self.mu_result_text.insert(tk.END, f"  상태: *** 적용됨 ***\n")
                 self.mu_result_text.insert(tk.END, f"  Strain 추정: {strain_est_method}\n")
                 if strain_est_method == 'fixed':
@@ -3260,17 +3312,20 @@ $\begin{array}{lcc}
                 if self.piecewise_result is not None:
                     split = self.piecewise_result['split']
                     self.mu_result_text.insert(tk.END, f"  Piecewise Split: {split*100:.1f}%\n")
+                self.mu_result_text.insert(tk.END, "\n  [보정 적용 항목]\n")
+                self.mu_result_text.insert(tk.END, "  • E'(ω) → E'(ω) × f(ε)  (저장탄성률)\n")
+                self.mu_result_text.insert(tk.END, "  • E''(ω) → E''(ω) × g(ε) (손실탄성률)\n")
+                self.mu_result_text.insert(tk.END, "  • |E*|² → (E'×f)² + (E''×g)²\n")
+                self.mu_result_text.insert(tk.END, "  • G(q) → G(q) × |E*_eff|²/|E*_lin|²\n")
+                self.mu_result_text.insert(tk.END, "  • P(q) = erf(1/(2√G_eff)) : 비선형 G(q) 기반\n")
+                self.mu_result_text.insert(tk.END, "  • S(q) = γ + (1-γ)P(q)² : 비선형 P(q) 기반\n")
+            elif use_fg and self.g_interpolator is not None:
+                self.mu_result_text.insert(tk.END, f"  상태: *** 부분 적용 (g만) ***\n")
+                self.mu_result_text.insert(tk.END, "  ※ f 곡선이 없어 손실탄성률만 보정됨\n")
             else:
                 self.mu_result_text.insert(tk.END, "  상태: 미적용 (선형 계산)\n")
                 if self.g_interpolator is None:
                     self.mu_result_text.insert(tk.END, "  ※ f,g 곡선이 없음\n")
-
-            # Note about P(q) calculation
-            self.mu_result_text.insert(tk.END, "\n[접촉 면적 P(q) 계산]\n")
-            self.mu_result_text.insert(tk.END, "  P(q) = erf(1/(2√G(q))) : 선형 G(q) 기반\n")
-            if use_fg:
-                self.mu_result_text.insert(tk.END, "  ※ 비선형 보정: 손실탄성률 Im[E]×g(ε)에만 적용\n")
-                self.mu_result_text.insert(tk.END, "  ※ G(q), P(q), S(q)는 선형 계산 결과 사용\n")
 
             # Helper for smart formatting
             def smart_fmt(val, threshold=0.001):
@@ -3395,12 +3450,17 @@ $\begin{array}{lcc}
             else:
                 P_avg_array[i] = np.mean(P)
 
-        # Note: P(q) is always from linear G(q), even when nonlinear correction is used
-        label_str = 'P(q) from 선형 G(q)'
-        color = 'b'
+        # P(q) is from nonlinear G(q) when nonlinear correction is applied
+        if use_nonlinear:
+            label_str = 'P(q) from 비선형 G(q)'
+            color = 'r'
+            title_suffix = ' (f,g 보정 적용)'
+        else:
+            label_str = 'P(q) from 선형 G(q)'
+            color = 'b'
+            title_suffix = ''
         self.ax_mu_cumulative.semilogx(v, P_avg_array, f'{color}-', linewidth=2,
                                         marker='s', markersize=4, label=label_str)
-        title_suffix = ' (Im[E]×g(ε) 적용)' if use_nonlinear else ''
         self.ax_mu_cumulative.set_title(f'실접촉 면적비율 P(v){title_suffix}', fontweight='bold', fontsize=8)
         self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
         self.ax_mu_cumulative.set_ylabel('평균 P(q)')
@@ -3544,7 +3604,11 @@ $\begin{array}{lcc}
 │                                                                              │
 │       = (π/2) × (|E(q·v)|/(σ₀(1-ν²)))² × ∫[q₀→q] k³ C(k) dk                 │
 │                                                                              │
-│  ※ 현재 구현: G(q)는 선형 탄성률로 계산됨 (비선형 미적용)                    │
+│                                                                              │
+│  [비선형 보정 적용 시]                                                       │
+│  E'_eff = E' × f(ε),  E''_eff = E'' × g(ε)                                  │
+│  |E*_eff|² = (E'×f)² + (E''×g)²                                             │
+│  G_eff(q) = G_linear(q) × |E*_eff|²/|E*_linear|²                            │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -3557,7 +3621,7 @@ $\begin{array}{lcc}
 │  │ G → ∞  : P → 0.0 (접촉 없음)                              │              │
 │  └───────────────────────────────────────────────────────────┘              │
 │                                                                              │
-│  ※ P(q)는 G(q)에서 직접 유도됨 → G가 비선형이면 P도 비선형                   │
+│  ※ 비선형 모드: G_eff 사용 → P도 비선형 보정됨                               │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -3588,7 +3652,10 @@ $\begin{array}{lcc}
 │                                                                              │
 │  ┌───────────────────────────────────────────────────────────────┐          │
 │  │ 비선형 보정 적용 시:                                          │          │
-│  │   Im[E_eff] = Im[E_linear] × g(ε)                             │          │
+│  │   E'_eff = E' × f(ε)                                          │          │
+│  │   E''_eff = E'' × g(ε)                                        │          │
+│  │   G_eff = G_linear × |E*_eff|²/|E*_linear|²                   │          │
+│  │   P(q), S(q) ← G_eff 기반으로 재계산                          │          │
 │  │   여기서 ε는 Tab 4에서 계산된 local strain                    │          │
 │  └───────────────────────────────────────────────────────────────┘          │
 │                                                                              │
@@ -3618,12 +3685,11 @@ $\begin{array}{lcc}
                  ▼                                │
   ┌──────────────────────────────┐                │
   │  Tab 3: G(q,v) 계산          │                │
-  │  - G(q) = f(E*, C(q), σ₀)    │◄───────────────┤
+  │  - G(q) = f(|E*|, C(q), σ₀)  │◄───────────────┤
   │  - P(q) = erf(1/(2√G))       │                │
   │  - 다중 속도 G_matrix 생성   │                │
   │                              │                │
-  │  ※ 현재: 선형 계산           │                │
-  │  ※ TODO: 비선형 G(q) 지원    │                │
+  │  ※ 선형 |E*| 기반 계산       │                │
   └──────────────┬───────────────┘                │
                  ▼                                │
   ┌──────────────────────────────┐                │
@@ -3636,39 +3702,43 @@ $\begin{array}{lcc}
   │  Tab 5: μ_visc 계산                              │
   │  ┌─────────────────────────────────────────────┐ │
   │  │ 선형 모드:                                  │ │
-  │  │   P(q), S(q) ← Tab 3의 G(q) 기반            │ │
+  │  │   G(q), P(q), S(q) ← Tab 3 기반 (선형)      │ │
   │  │   Im[E] = Im[E_linear]                      │ │
   │  └─────────────────────────────────────────────┘ │
   │  ┌─────────────────────────────────────────────┐ │
   │  │ 비선형 모드:                                │ │
-  │  │   P(q), S(q) ← Tab 3의 G(q) 기반 (선형)     │ │
-  │  │   Im[E_eff] = Im[E_linear] × g(ε(q))        │ │
   │  │   ε(q) ← Tab 4의 RMS slope 기반             │ │
+  │  │   E'_eff = E' × f(ε), E''_eff = E'' × g(ε)  │ │
+  │  │   G_eff = G × |E*_eff|²/|E*_lin|²           │ │
+  │  │   P(q), S(q) ← G_eff 기반 (비선형)          │ │
+  │  │   Im[E_eff] = Im[E_linear] × g(ε)           │ │
   │  └─────────────────────────────────────────────┘ │
   │                                                  │
-  │  ※ 주의: P(q)는 선형 G(q)에서 유도됨            │
-  │          비선형 보정은 손실 탄성률에만 적용됨   │
+  │  ※ 비선형 모드: G(q), P(q), S(q) 모두 보정됨   │
   └──────────────────────────────────────────────────┘
 
-【6. 비선형 보정 적용 위치 (현재 vs 이상적)】
+【6. 비선형 보정 적용 (현재 구현)】
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  [현재 구현]
+  [선형 모드]
   ───────────
-  • G(q) 계산: 선형 탄성률 사용
-  • P(q) = erf(1/(2√G_linear))  ← 선형
-  • S(q) = γ + (1-γ)P²          ← 선형
-  • μ_visc 적분: Im[E] × g(ε) 만 비선형 보정
+  • Tab 3에서 계산된 G(q), P(q), S(q) 그대로 사용
+  • Im[E] = Im[E_linear]
 
-  [이상적 구현 (TODO)]
-  ───────────────────
-  • G(q) 계산: 비선형 탄성률 사용 → |E| × f(ε)
-  • P(q) = erf(1/(2√G_nonlinear)) ← 비선형
-  • S(q) = γ + (1-γ)P²             ← 비선형
-  • μ_visc 적분: Im[E] × g(ε) 비선형 보정
+  [비선형 모드]
+  ───────────
+  • Tab 4에서 계산된 ε(q) = factor × ξ(q) 사용
+  • E'_eff = E' × f(ε)     (저장 탄성률 보정)
+  • E''_eff = E'' × g(ε)    (손실 탄성률 보정)
+  • |E*_eff|² = (E'×f)² + (E''×g)²
+  • G_eff = G_linear × |E*_eff|²/|E*_linear|²
+  • P(q) = erf(1/(2√G_eff))  ← 비선형
+  • S(q) = γ + (1-γ)P²       ← 비선형
+  • Im[E_eff] = Im[E_linear] × g(ε)  ← 적분에 사용
 
-  ※ 비선형 보정이 G(q)에 미치는 영향:
-     f(ε) < 1 이면 |E|가 감소 → G가 감소 → P가 증가 → 접촉 면적 증가
+  ※ 비선형 보정의 물리적 의미:
+     f(ε), g(ε) < 1 이면 |E*|가 감소 → G가 감소 → P가 증가 → 접촉 면적 증가
+     → Payne 효과: 높은 변형에서 재료가 부드러워짐
 
 【7. 단위 정리】
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
