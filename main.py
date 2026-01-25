@@ -1997,48 +1997,82 @@ $\begin{array}{lcc}
         mu_settings_frame = ttk.LabelFrame(left_panel, text="4) μ_visc 계산 설정", padding=8)
         mu_settings_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        # Use f,g correction checkbox
-        self.use_fg_correction_var = tk.BooleanVar(value=True)
+        # Nonlinear correction frame - more prominent
+        nonlinear_frame = ttk.LabelFrame(mu_settings_frame, text="비선형 보정 (f,g)", padding=5)
+        nonlinear_frame.pack(fill=tk.X, pady=3)
+
+        self.use_fg_correction_var = tk.BooleanVar(value=False)  # Default OFF
         ttk.Checkbutton(
-            mu_settings_frame,
-            text="비선형 f,g 보정 사용",
+            nonlinear_frame,
+            text="비선형 f,g 보정 적용",
             variable=self.use_fg_correction_var
         ).pack(anchor=tk.W, pady=2)
 
+        ttk.Label(nonlinear_frame, text="※ f,g 곡선이 계산되어 있어야 함",
+                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
+
         # Strain estimation method
-        strain_est_frame = ttk.Frame(mu_settings_frame)
+        strain_est_frame = ttk.Frame(nonlinear_frame)
         strain_est_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(strain_est_frame, text="Strain 추정 방법:").pack(side=tk.LEFT)
-        self.strain_est_method_var = tk.StringVar(value="persson")
+        ttk.Label(strain_est_frame, text="Strain 추정:").pack(side=tk.LEFT)
+        self.strain_est_method_var = tk.StringVar(value="fixed")
         strain_est_combo = ttk.Combobox(
             strain_est_frame,
             textvariable=self.strain_est_method_var,
-            values=["persson", "simple", "fixed"],
+            values=["fixed", "persson", "simple"],
             width=10,
             state="readonly"
         )
         strain_est_combo.pack(side=tk.RIGHT)
 
-        # Fixed strain value (used when method="fixed")
-        fixed_strain_frame = ttk.Frame(mu_settings_frame)
+        # Fixed strain value
+        fixed_strain_frame = ttk.Frame(nonlinear_frame)
         fixed_strain_frame.pack(fill=tk.X, pady=2)
         ttk.Label(fixed_strain_frame, text="고정 Strain (%):").pack(side=tk.LEFT)
         self.fixed_strain_var = tk.StringVar(value="1.0")
         ttk.Entry(fixed_strain_frame, textvariable=self.fixed_strain_var, width=10).pack(side=tk.RIGHT)
 
+        # Integration settings frame
+        integ_frame = ttk.LabelFrame(mu_settings_frame, text="적분 설정", padding=5)
+        integ_frame.pack(fill=tk.X, pady=3)
+
         # Gamma value
-        row3 = ttk.Frame(mu_settings_frame)
+        row3 = ttk.Frame(integ_frame)
         row3.pack(fill=tk.X, pady=2)
-        ttk.Label(row3, text="γ (접촉 보정 계수):").pack(side=tk.LEFT)
+        ttk.Label(row3, text="γ (접촉 보정):").pack(side=tk.LEFT)
         self.gamma_var = tk.StringVar(value="0.5")
         ttk.Entry(row3, textvariable=self.gamma_var, width=10).pack(side=tk.RIGHT)
 
         # Number of angle points
-        row4 = ttk.Frame(mu_settings_frame)
+        row4 = ttk.Frame(integ_frame)
         row4.pack(fill=tk.X, pady=2)
-        ttk.Label(row4, text="각도 적분점 개수:").pack(side=tk.LEFT)
-        self.n_phi_var = tk.StringVar(value="72")
+        ttk.Label(row4, text="각도 적분점:").pack(side=tk.LEFT)
+        self.n_phi_var = tk.StringVar(value="144")  # Increased default for smoother curves
         ttk.Entry(row4, textvariable=self.n_phi_var, width=10).pack(side=tk.RIGHT)
+
+        # Output smoothing frame
+        smooth_frame = ttk.LabelFrame(mu_settings_frame, text="결과 스무딩", padding=5)
+        smooth_frame.pack(fill=tk.X, pady=3)
+
+        self.smooth_mu_var = tk.BooleanVar(value=True)  # Default ON for smoother curves
+        ttk.Checkbutton(
+            smooth_frame,
+            text="μ_visc 곡선 스무딩 적용",
+            variable=self.smooth_mu_var
+        ).pack(anchor=tk.W, pady=2)
+
+        smooth_window_frame = ttk.Frame(smooth_frame)
+        smooth_window_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(smooth_window_frame, text="스무딩 윈도우:").pack(side=tk.LEFT)
+        self.smooth_window_var = tk.StringVar(value="5")
+        smooth_combo = ttk.Combobox(
+            smooth_window_frame,
+            textvariable=self.smooth_window_var,
+            values=["3", "5", "7", "9", "11"],
+            width=10,
+            state="readonly"
+        )
+        smooth_combo.pack(side=tk.RIGHT)
 
         # Calculate mu_visc button
         self.mu_calc_button = ttk.Button(
@@ -2704,15 +2738,32 @@ $\begin{array}{lcc}
                 self.mu_progress_var.set(percent)
                 self.root.update()
 
-            mu_array, details = friction_calc.calculate_mu_visc_multi_velocity(
+            mu_array_raw, details = friction_calc.calculate_mu_visc_multi_velocity(
                 q, G_matrix, v, C_q, progress_callback
             )
 
-            # Store results
+            # Apply smoothing if enabled
+            smooth_mu = self.smooth_mu_var.get()
+            if smooth_mu and len(mu_array_raw) >= 5:
+                window = int(self.smooth_window_var.get())
+                # Ensure window is odd and not larger than array
+                window = min(window, len(mu_array_raw))
+                if window % 2 == 0:
+                    window -= 1
+                window = max(3, window)
+
+                # Apply Savitzky-Golay filter for smoothing
+                mu_array = savgol_filter(mu_array_raw, window, 2)
+            else:
+                mu_array = mu_array_raw
+
+            # Store results (both raw and smoothed)
             self.mu_visc_results = {
                 'v': v,
                 'mu': mu_array,
-                'details': details
+                'mu_raw': mu_array_raw,
+                'details': details,
+                'smoothed': smooth_mu
             }
 
             # Update plots
@@ -2732,14 +2783,26 @@ $\begin{array}{lcc}
             self.mu_result_text.insert(tk.END, f"  γ (접촉 보정): {gamma:.2f}\n")
             self.mu_result_text.insert(tk.END, f"  각도 적분점: {n_phi}\n")
 
-            # f,g correction info
+            # Smoothing info
+            if smooth_mu:
+                self.mu_result_text.insert(tk.END, f"  결과 스무딩: 적용 (윈도우={self.smooth_window_var.get()})\n")
+            else:
+                self.mu_result_text.insert(tk.END, "  결과 스무딩: 미적용\n")
+
+            # f,g correction info - more prominent
+            self.mu_result_text.insert(tk.END, "\n[비선형 보정]\n")
             if use_fg and self.g_interpolator is not None:
-                self.mu_result_text.insert(tk.END, f"  f,g 보정: 적용 ({strain_est_method})\n")
+                self.mu_result_text.insert(tk.END, f"  상태: *** 적용됨 ***\n")
+                self.mu_result_text.insert(tk.END, f"  Strain 추정: {strain_est_method}\n")
+                if strain_est_method == 'fixed':
+                    self.mu_result_text.insert(tk.END, f"  고정 Strain: {fixed_strain*100:.2f}%\n")
                 if self.piecewise_result is not None:
                     split = self.piecewise_result['split']
-                    self.mu_result_text.insert(tk.END, f"  Split Strain: {split*100:.1f}%\n")
+                    self.mu_result_text.insert(tk.END, f"  Piecewise Split: {split*100:.1f}%\n")
             else:
-                self.mu_result_text.insert(tk.END, "  f,g 보정: 미적용\n")
+                self.mu_result_text.insert(tk.END, "  상태: 미적용 (선형 계산)\n")
+                if self.g_interpolator is None:
+                    self.mu_result_text.insert(tk.END, "  ※ f,g 곡선이 없음\n")
 
             self.mu_result_text.insert(tk.END, "\n[결과]\n")
             self.mu_result_text.insert(tk.END, f"  속도 범위: {v[0]:.2e} ~ {v[-1]:.2e} m/s\n")
