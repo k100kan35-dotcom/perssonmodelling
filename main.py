@@ -1992,9 +1992,17 @@ $\begin{array}{lcc}
             self.rms_progress_var.set(10)
             self.root.update_idletasks()
 
-            # Get PSD data
-            q_array = self.psd_model.q
-            C_q_array = self.psd_model.C_iso
+            # Get PSD data - MeasuredPSD uses q_data and C_data attributes
+            if hasattr(self.psd_model, 'q_data'):
+                q_array = self.psd_model.q_data
+                C_q_array = self.psd_model.C_data
+            elif hasattr(self.psd_model, 'q'):
+                q_array = self.psd_model.q
+                C_q_array = self.psd_model.C_iso if hasattr(self.psd_model, 'C_iso') else self.psd_model(self.psd_model.q)
+            else:
+                # Generate q array and call PSD model
+                q_array = np.logspace(2, 8, 200)  # Default range
+                C_q_array = self.psd_model(q_array)
 
             # Get strain factor
             strain_factor = float(self.strain_factor_var.get())
