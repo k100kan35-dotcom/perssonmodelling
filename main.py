@@ -258,25 +258,25 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_results, text="3. G(q,v) 결과")
         self._create_results_tab(self.tab_results)
 
-        # Tab 4: Friction Coefficient
-        self.tab_friction = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_friction, text="4. 마찰 분석")
-        self._create_friction_tab(self.tab_friction)
-
-        # Tab 5: Equations
-        self.tab_equations = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_equations, text="5. 수식 정리")
-        self._create_equations_tab(self.tab_equations)
-
-        # Tab 6: RMS Slope / Local Strain
+        # Tab 4: RMS Slope / Local Strain
         self.tab_rms_slope = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_rms_slope, text="6. RMS Slope/Local Strain")
+        self.notebook.add(self.tab_rms_slope, text="4. RMS Slope/Local Strain")
         self._create_rms_slope_tab(self.tab_rms_slope)
 
-        # Tab 7: Strain/mu_visc Calculation
+        # Tab 5: mu_visc Calculation
         self.tab_mu_visc = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_mu_visc, text="7. μ_visc 계산")
+        self.notebook.add(self.tab_mu_visc, text="5. μ_visc 계산")
         self._create_mu_visc_tab(self.tab_mu_visc)
+
+        # Tab 6: Equations Summary
+        self.tab_equations = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_equations, text="6. 수식 정리")
+        self._create_equations_tab(self.tab_equations)
+
+        # Tab 7: Variable Relationship (NEW)
+        self.tab_variables = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_variables, text="7. 변수 관계")
+        self._create_variables_tab(self.tab_variables)
 
     def _create_verification_tab(self, parent):
         """Create input data verification tab."""
@@ -592,29 +592,6 @@ class PerssonModelGUI_V2:
             text="결과 그래프 저장",
             command=lambda: self._save_plot(self.fig_results, "results_plot")
         ).pack(side=tk.LEFT, padx=5)
-
-    def _create_friction_tab(self, parent):
-        """Create friction coefficient analysis tab."""
-        # Instruction
-        instruction = ttk.LabelFrame(parent, text="탭 설명", padding=10)
-        instruction.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Label(instruction, text=
-            "마찰 계수 μ(v) 및 접촉 면적 분석.\n"
-            "속도 의존성 마찰과 실제 접촉 면적 비율을 표시합니다.",
-            font=('Arial', 10)
-        ).pack()
-
-        # Results text
-        text_frame = ttk.Frame(parent)
-        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        self.results_text = tk.Text(text_frame, font=("Courier", 10))
-        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        scrollbar = ttk.Scrollbar(text_frame, command=self.results_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.results_text.config(yscrollcommand=scrollbar.set)
 
     def _create_status_bar(self):
         """Create status bar."""
@@ -3200,6 +3177,57 @@ $\begin{array}{lcc}
                 else:
                     return np.full(n, fixed_strain)
 
+            # Apply nonlinear correction to G(q) if enabled
+            # G(q) ∝ |E*|² = E'² + E''²
+            # G_nonlinear = G_linear × [(E'×f(ε))² + (E''×g(ε))²] / [E'² + E''²]
+            G_matrix_corrected = G_matrix.copy()
+
+            if use_fg and self.f_interpolator is not None and self.g_interpolator is not None:
+                self.status_var.set("비선형 G(q) 보정 적용 중...")
+                self.root.update()
+
+                # Get strain array for nonlinear correction
+                if strain_est_method == 'rms_slope' and rms_strain_interp is not None:
+                    strain_for_G = np.zeros(len(q))
+                    for i, qi in enumerate(q):
+                        try:
+                            strain_for_G[i] = 10 ** rms_strain_interp(np.log10(qi))
+                        except:
+                            strain_for_G[i] = fixed_strain
+                    strain_for_G = np.clip(strain_for_G, 0.0, 1.0)
+                else:
+                    strain_for_G = np.full(len(q), fixed_strain)
+
+                # For each velocity, calculate modulus correction ratio
+                for j, v_j in enumerate(v):
+                    for i, q_i in enumerate(q):
+                        omega_i = q_i * v_j  # Representative frequency
+                        omega_i = max(omega_i, 1e-10)
+
+                        # Get linear modulus
+                        E_prime_lin = self.material.get_storage_modulus(omega_i, temperature=temperature)
+                        E_loss_lin = self.material.get_loss_modulus(omega_i, temperature=temperature)
+                        E_star_lin_sq = E_prime_lin**2 + E_loss_lin**2
+
+                        # Get nonlinear correction factors
+                        eps_i = strain_for_G[i]
+                        f_val = np.clip(self.f_interpolator(eps_i), 0.0, 1.0)
+                        g_val = np.clip(self.g_interpolator(eps_i), 0.0, 1.0)
+
+                        # Calculate corrected modulus
+                        E_prime_eff = E_prime_lin * f_val
+                        E_loss_eff = E_loss_lin * g_val
+                        E_star_eff_sq = E_prime_eff**2 + E_loss_eff**2
+
+                        # Apply correction ratio to G
+                        # G ∝ |E*|² so G_eff/G_lin = |E*_eff|²/|E*_lin|²
+                        if E_star_lin_sq > 0:
+                            correction_ratio = E_star_eff_sq / E_star_lin_sq
+                            G_matrix_corrected[i, j] = G_matrix[i, j] * correction_ratio
+
+                self.status_var.set("비선형 G(q) 보정 완료 - μ_visc 계산 중...")
+                self.root.update()
+
             # Create friction calculator with g_interpolator
             friction_calc = FrictionCalculator(
                 psd_func=self.psd_model,
@@ -3222,8 +3250,9 @@ $\begin{array}{lcc}
             # Use strain_estimator if nonlinear correction is enabled
             strain_est = strain_estimator_func if use_fg else None
 
+            # Use corrected G_matrix (will be same as original if nonlinear not applied)
             mu_array_raw, details = friction_calc.calculate_mu_visc_multi_velocity(
-                q, G_matrix, v, C_q, progress_callback, strain_estimator=strain_est
+                q, G_matrix_corrected, v, C_q, progress_callback, strain_estimator=strain_est
             )
 
             # Apply smoothing if enabled
@@ -3275,7 +3304,7 @@ $\begin{array}{lcc}
 
             # f,g correction info - more prominent
             self.mu_result_text.insert(tk.END, "\n[비선형 보정]\n")
-            if use_fg and self.g_interpolator is not None:
+            if use_fg and self.f_interpolator is not None and self.g_interpolator is not None:
                 self.mu_result_text.insert(tk.END, f"  상태: *** 적용됨 ***\n")
                 self.mu_result_text.insert(tk.END, f"  Strain 추정: {strain_est_method}\n")
                 if strain_est_method == 'fixed':
@@ -3283,6 +3312,16 @@ $\begin{array}{lcc}
                 if self.piecewise_result is not None:
                     split = self.piecewise_result['split']
                     self.mu_result_text.insert(tk.END, f"  Piecewise Split: {split*100:.1f}%\n")
+                self.mu_result_text.insert(tk.END, "\n  [보정 적용 항목]\n")
+                self.mu_result_text.insert(tk.END, "  • E'(ω) → E'(ω) × f(ε)  (저장탄성률)\n")
+                self.mu_result_text.insert(tk.END, "  • E''(ω) → E''(ω) × g(ε) (손실탄성률)\n")
+                self.mu_result_text.insert(tk.END, "  • |E*|² → (E'×f)² + (E''×g)²\n")
+                self.mu_result_text.insert(tk.END, "  • G(q) → G(q) × |E*_eff|²/|E*_lin|²\n")
+                self.mu_result_text.insert(tk.END, "  • P(q) = erf(1/(2√G_eff)) : 비선형 G(q) 기반\n")
+                self.mu_result_text.insert(tk.END, "  • S(q) = γ + (1-γ)P(q)² : 비선형 P(q) 기반\n")
+            elif use_fg and self.g_interpolator is not None:
+                self.mu_result_text.insert(tk.END, f"  상태: *** 부분 적용 (g만) ***\n")
+                self.mu_result_text.insert(tk.END, "  ※ f 곡선이 없어 손실탄성률만 보정됨\n")
             else:
                 self.mu_result_text.insert(tk.END, "  상태: 미적용 (선형 계산)\n")
                 if self.g_interpolator is None:
@@ -3411,11 +3450,18 @@ $\begin{array}{lcc}
             else:
                 P_avg_array[i] = np.mean(P)
 
-        label_str = '비선형 적용' if use_nonlinear else '선형 (미적용)'
-        color = 'r' if use_nonlinear else 'b'
+        # P(q) is from nonlinear G(q) when nonlinear correction is applied
+        if use_nonlinear:
+            label_str = 'P(q) from 비선형 G(q)'
+            color = 'r'
+            title_suffix = ' (f,g 보정 적용)'
+        else:
+            label_str = 'P(q) from 선형 G(q)'
+            color = 'b'
+            title_suffix = ''
         self.ax_mu_cumulative.semilogx(v, P_avg_array, f'{color}-', linewidth=2,
                                         marker='s', markersize=4, label=label_str)
-        self.ax_mu_cumulative.set_title('실접촉 면적비율 P(v)', fontweight='bold', fontsize=9)
+        self.ax_mu_cumulative.set_title(f'실접촉 면적비율 P(v){title_suffix}', fontweight='bold', fontsize=8)
         self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
         self.ax_mu_cumulative.set_ylabel('평균 P(q)')
         self.ax_mu_cumulative.legend(loc='best', fontsize=8)
@@ -3482,6 +3528,243 @@ $\begin{array}{lcc}
 
         except Exception as e:
             messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+
+    def _create_variables_tab(self, parent):
+        """Create variable relationship explanation tab."""
+        # Main scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Mouse wheel scroll
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Title
+        title_frame = ttk.LabelFrame(scrollable_frame, text="Persson 마찰 이론 - 변수 관계 및 데이터 흐름", padding=15)
+        title_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        # Content text with variable relationships
+        content = """
+════════════════════════════════════════════════════════════════════════════════
+                     PERSSON 마찰 이론 변수 관계도
+════════════════════════════════════════════════════════════════════════════════
+
+【1. 입력 데이터】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  DMA 데이터 (재료 물성)                                                      │
+│  ├─ ω (각진동수, rad/s)                                                      │
+│  ├─ E'(ω) : 저장 탄성률 [Pa]                                                 │
+│  ├─ E''(ω) : 손실 탄성률 [Pa]                                                │
+│  └─ tan(δ) = E''/E' : 손실 탄젠트                                            │
+│                                                                              │
+│  PSD 데이터 (표면 거칠기)                                                    │
+│  ├─ q (파수, 1/m)                                                            │
+│  └─ C(q) : 파워 스펙트럼 밀도 [m⁴]                                           │
+│                                                                              │
+│  Strain Sweep 데이터 (비선형 보정용, 선택)                                   │
+│  ├─ γ (strain, %)                                                            │
+│  ├─ f(γ) = E'(γ)/E'(0) : 저장 탄성률 감소율                                  │
+│  └─ g(γ) = E''(γ)/E''(0) : 손실 탄성률 감소율 (Payne 효과)                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+【2. 계산 파라미터】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  σ₀  : 공칭 접촉 압력 [Pa]
+  v   : 슬라이딩 속도 [m/s]
+  T   : 온도 [°C]
+  ν   : 푸아송 비 (일반적으로 0.5)
+  γ   : 접촉 보정 인자 (일반적으로 0.5)
+
+  q₀ ~ q₁ : PSD 적분 범위 (파수)
+
+【3. 중간 계산 변수】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─ G(q) 계산 ──────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│  복소 탄성률:  E*(ω) = E'(ω) + i·E''(ω)                                      │
+│                                                                              │
+│  진동수:       ω = q · v · cos(φ)   (슬라이딩에 의한 진동)                   │
+│                                                                              │
+│  G(q) = (π/4) × (E*/(σ₀(1-ν²)))² × ∫[q₀→q] k³ C(k) ∫[0→2π] cos²φ dφ dk     │
+│                                                                              │
+│       = (π/2) × (|E(q·v)|/(σ₀(1-ν²)))² × ∫[q₀→q] k³ C(k) dk                 │
+│                                                                              │
+│                                                                              │
+│  [비선형 보정 적용 시]                                                       │
+│  E'_eff = E' × f(ε),  E''_eff = E'' × g(ε)                                  │
+│  |E*_eff|² = (E'×f)² + (E''×g)²                                             │
+│  G_eff(q) = G_linear(q) × |E*_eff|²/|E*_linear|²                            │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ P(q) 실접촉 면적비율 ───────────────────────────────────────────────────────┐
+│                                                                              │
+│  P(q) = erf(1 / (2√G(q)))                                                    │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────┐              │
+│  │ G → 0  : P → 1.0 (완전 접촉)                              │              │
+│  │ G → ∞  : P → 0.0 (접촉 없음)                              │              │
+│  └───────────────────────────────────────────────────────────┘              │
+│                                                                              │
+│  ※ 비선형 모드: G_eff 사용 → P도 비선형 보정됨                               │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ S(q) 접촉 보정 인자 ────────────────────────────────────────────────────────┐
+│                                                                              │
+│  S(q) = γ + (1-γ) × P(q)²                                                    │
+│                                                                              │
+│  ※ S(q)는 P(q)에서 유도됨 → P가 비선형이면 S도 비선형                        │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ RMS Slope & Local Strain (Tab 4) ───────────────────────────────────────────┐
+│                                                                              │
+│  RMS 경사:    ξ²(q) = 2π ∫[q₀→q] k³ C(k) dk                                  │
+│  로컬 변형률: ε(q) = factor × ξ(q)    (factor ≈ 0.5, Persson 권장)           │
+│                                                                              │
+│  ※ 이 ε(q)는 비선형 보정 g(ε)에 사용됨                                       │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+【4. 최종 출력: μ_visc 계산】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─ μ_visc 공식 ────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│  μ_visc = (1/2) × ∫[q₀→q₁] q³ C(q) P(q) S(q)                                │
+│                   × ∫[0→2π] cosφ × Im[E(qv·cosφ)] / ((1-ν²)σ₀) dφ dq        │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────┐          │
+│  │ 비선형 보정 적용 시:                                          │          │
+│  │   E'_eff = E' × f(ε)                                          │          │
+│  │   E''_eff = E'' × g(ε)                                        │          │
+│  │   G_eff = G_linear × |E*_eff|²/|E*_linear|²                   │          │
+│  │   P(q), S(q) ← G_eff 기반으로 재계산                          │          │
+│  │   여기서 ε는 Tab 4에서 계산된 local strain                    │          │
+│  └───────────────────────────────────────────────────────────────┘          │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+【5. 데이터 흐름도】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌────────────┐     ┌────────────┐     ┌──────────────────┐
+  │ DMA 데이터 │     │ PSD 데이터 │     │ Strain Sweep     │
+  │ E'(ω),E''(ω)│     │ C(q)       │     │ f(γ), g(γ)       │
+  └─────┬──────┘     └─────┬──────┘     └────────┬─────────┘
+        │                  │                      │
+        └────────┬─────────┘                      │
+                 ▼                                │
+  ┌──────────────────────────────┐                │
+  │  Tab 1: 입력 데이터 검증     │                │
+  │  - Master Curve 확인         │                │
+  │  - PSD 확인                  │                │
+  └──────────────┬───────────────┘                │
+                 ▼                                │
+  ┌──────────────────────────────┐                │
+  │  Tab 2: 계산 설정            │                │
+  │  - σ₀, v, T, ν 설정          │                │
+  │  - q 범위 설정               │                │
+  └──────────────┬───────────────┘                │
+                 ▼                                │
+  ┌──────────────────────────────┐                │
+  │  Tab 3: G(q,v) 계산          │                │
+  │  - G(q) = f(|E*|, C(q), σ₀)  │◄───────────────┤
+  │  - P(q) = erf(1/(2√G))       │                │
+  │  - 다중 속도 G_matrix 생성   │                │
+  │                              │                │
+  │  ※ 선형 |E*| 기반 계산       │                │
+  └──────────────┬───────────────┘                │
+                 ▼                                │
+  ┌──────────────────────────────┐                │
+  │  Tab 4: RMS Slope 계산       │                │
+  │  - ξ(q) from PSD             │                │
+  │  - ε(q) = factor × ξ(q)      │────────────────┤
+  └──────────────┬───────────────┘                │
+                 ▼                                ▼
+  ┌──────────────────────────────────────────────────┐
+  │  Tab 5: μ_visc 계산                              │
+  │  ┌─────────────────────────────────────────────┐ │
+  │  │ 선형 모드:                                  │ │
+  │  │   G(q), P(q), S(q) ← Tab 3 기반 (선형)      │ │
+  │  │   Im[E] = Im[E_linear]                      │ │
+  │  └─────────────────────────────────────────────┘ │
+  │  ┌─────────────────────────────────────────────┐ │
+  │  │ 비선형 모드:                                │ │
+  │  │   ε(q) ← Tab 4의 RMS slope 기반             │ │
+  │  │   E'_eff = E' × f(ε), E''_eff = E'' × g(ε)  │ │
+  │  │   G_eff = G × |E*_eff|²/|E*_lin|²           │ │
+  │  │   P(q), S(q) ← G_eff 기반 (비선형)          │ │
+  │  │   Im[E_eff] = Im[E_linear] × g(ε)           │ │
+  │  └─────────────────────────────────────────────┘ │
+  │                                                  │
+  │  ※ 비선형 모드: G(q), P(q), S(q) 모두 보정됨   │
+  └──────────────────────────────────────────────────┘
+
+【6. 비선형 보정 적용 (현재 구현)】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [선형 모드]
+  ───────────
+  • Tab 3에서 계산된 G(q), P(q), S(q) 그대로 사용
+  • Im[E] = Im[E_linear]
+
+  [비선형 모드]
+  ───────────
+  • Tab 4에서 계산된 ε(q) = factor × ξ(q) 사용
+  • E'_eff = E' × f(ε)     (저장 탄성률 보정)
+  • E''_eff = E'' × g(ε)    (손실 탄성률 보정)
+  • |E*_eff|² = (E'×f)² + (E''×g)²
+  • G_eff = G_linear × |E*_eff|²/|E*_linear|²
+  • P(q) = erf(1/(2√G_eff))  ← 비선형
+  • S(q) = γ + (1-γ)P²       ← 비선형
+  • Im[E_eff] = Im[E_linear] × g(ε)  ← 적분에 사용
+
+  ※ 비선형 보정의 물리적 의미:
+     f(ε), g(ε) < 1 이면 |E*|가 감소 → G가 감소 → P가 증가 → 접촉 면적 증가
+     → Payne 효과: 높은 변형에서 재료가 부드러워짐
+
+【7. 단위 정리】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  변수              단위              설명
+  ────────────────────────────────────────────────────────────
+  q                 1/m              파수 (wavenumber)
+  C(q)              m⁴               2D 등방성 PSD
+  E', E''           Pa               탄성률
+  σ₀                Pa               공칭 압력
+  v                 m/s              슬라이딩 속도
+  ω = q·v           rad/s            각진동수
+  G(q)              무차원           면적 함수
+  P(q)              무차원 (0~1)     접촉 면적 비율
+  S(q)              무차원           접촉 보정 인자
+  ξ(q)              무차원           RMS 경사
+  ε(q)              무차원 (0~1)     로컬 변형률
+  μ_visc            무차원           점탄성 마찰 계수
+
+════════════════════════════════════════════════════════════════════════════════
+"""
+
+        text_widget = tk.Text(title_frame, wrap=tk.WORD, font=('Courier New', 9), height=50, width=90)
+        text_widget.insert(tk.END, content)
+        text_widget.config(state='disabled')  # Read-only
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
 
 def main():
