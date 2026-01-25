@@ -7,13 +7,20 @@ based on Persson's contact mechanics theory.
 
 Mathematical Definition:
     mu_visc = (1/2) * integral[q0->q1] dq * q^3 * C(q) * P(q) * S(q)
-              * integral[0->2pi] dphi * cos(phi) * Im[E(q*v*cos(phi)) / ((1-nu^2)*sigma0)]
+              * integral[0->2pi] dphi * cos(phi) * Im[E(q*v*cos(phi))] / ((1-nu^2)*sigma0)
 
 where:
     - P(q) = erf(1 / (2*sqrt(G(q)))) : contact area ratio
     - S(q) = gamma + (1-gamma) * P(q)^2 : contact correction factor (gamma ~ 0.5)
     - Im[E(omega)] : loss modulus
     - omega = q * v * cos(phi) : excitation frequency
+
+Key Implementation Notes:
+    1. The angle integral uses symmetry: integrate [0, pi/2] and multiply by 4
+       because cos(phi) and |qv*cos(phi)| are symmetric
+    2. The prefactor 1/((1-nu^2)*sigma0) is applied to the angle integral result
+    3. Temperature correction via shift factor is applied inside get_loss_modulus
+    4. Nonlinear correction (Payne effect) is optionally applied via f,g curves
 
 References:
     - RubberFriction Manual [Source 70, 936]
@@ -23,8 +30,64 @@ References:
 
 import numpy as np
 from scipy.special import erf
-from typing import Callable, Optional, Tuple, Union
+from scipy.integrate import simpson
+from typing import Callable, Optional, Tuple, Union, Dict
 import warnings
+
+
+def get_effective_modulus(
+    omega: float,
+    temperature: float,
+    loss_modulus_func: Callable[[float, float], float],
+    strain: Optional[float] = None,
+    g_interpolator: Optional[Callable[[float], float]] = None
+) -> float:
+    """
+    Get effective loss modulus with optional strain-dependent correction.
+
+    This function implements the modulus acquisition step from the work instruction:
+    1. Get linear loss modulus at the given frequency and temperature
+    2. If nonlinear correction is enabled, apply g(strain) correction
+
+    Parameters
+    ----------
+    omega : float
+        Angular frequency (rad/s)
+    temperature : float
+        Temperature (Celsius)
+    loss_modulus_func : callable
+        Function that returns linear loss modulus Im[E(omega, T)]
+    strain : float, optional
+        Local strain amplitude (fraction, not %). If None, no correction applied.
+    g_interpolator : callable, optional
+        Function g(strain) for loss modulus correction. If None, no correction.
+
+    Returns
+    -------
+    float
+        Effective loss modulus (Pa)
+
+    Notes
+    -----
+    The effective modulus is: ImE_eff = ImE_linear(omega, T) * g(strain)
+    where g(strain) <= 1 accounts for the Payne effect (strain softening).
+    """
+    # Ensure omega is positive
+    omega = max(abs(omega), 1e-10)
+
+    # Get linear loss modulus
+    ImE_linear = loss_modulus_func(omega, temperature)
+
+    # Apply nonlinear correction if available
+    if strain is not None and g_interpolator is not None:
+        strain = np.clip(strain, 0.0, 1.0)  # Limit to 0-100%
+        g_val = g_interpolator(strain)
+        g_val = np.clip(g_val, 0.0, 1.0)  # g should be in [0, 1]
+        ImE_eff = ImE_linear * g_val
+    else:
+        ImE_eff = ImE_linear
+
+    return ImE_eff
 
 
 class FrictionCalculator:
@@ -32,8 +95,13 @@ class FrictionCalculator:
     Calculator for viscoelastic friction coefficient (mu_visc).
 
     This class handles the double integral calculation for friction:
-    - Inner integral: integration over angle phi from 0 to 2*pi
+    - Inner integral: integration over angle phi from 0 to 2*pi (using symmetry)
     - Outer integral: integration over wavenumber q from q0 to q1
+
+    The calculation follows the work instruction:
+    1. For each wavenumber q, calculate the angle integral
+    2. Compute the integrand: q^3 * C(q) * P(q) * S(q) * angle_integral
+    3. Integrate over q and multiply by 1/2
     """
 
     def __init__(
@@ -45,7 +113,9 @@ class FrictionCalculator:
         temperature: float = 20.0,
         poisson_ratio: float = 0.5,
         gamma: float = 0.5,
-        n_angle_points: int = 72
+        n_angle_points: int = 72,
+        g_interpolator: Optional[Callable[[float], float]] = None,
+        strain_estimate: float = 0.01
     ):
         """
         Initialize friction calculator.
@@ -69,6 +139,10 @@ class FrictionCalculator:
             Contact correction factor (default: 0.5)
         n_angle_points : int, optional
             Number of points for angle integration (default: 72)
+        g_interpolator : callable, optional
+            Function g(strain) for nonlinear correction
+        strain_estimate : float, optional
+            Default strain estimate for nonlinear correction (default: 0.01 = 1%)
         """
         self.psd_func = psd_func
         self.loss_modulus_func = loss_modulus_func
@@ -78,8 +152,10 @@ class FrictionCalculator:
         self.poisson_ratio = poisson_ratio
         self.gamma = gamma
         self.n_angle_points = n_angle_points
+        self.g_interpolator = g_interpolator
+        self.strain_estimate = strain_estimate
 
-        # Precompute constant factor
+        # Precompute constant factor: 1 / ((1 - nu^2) * sigma0)
         self.prefactor = 1.0 / ((1 - poisson_ratio**2) * sigma_0)
 
     def calculate_P_from_G(self, G: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
@@ -135,52 +211,94 @@ class FrictionCalculator:
         P = np.asarray(P)
         return self.gamma + (1 - self.gamma) * P**2
 
-    def _angle_integral_friction(self, q: float) -> float:
+    def _angle_integral_friction(
+        self,
+        q: float,
+        strain: Optional[float] = None,
+        return_details: bool = False
+    ) -> Union[float, Tuple[float, Dict]]:
         """
         Compute inner integral over angle phi for friction.
 
-        Integrates: integral[0->2pi] dphi * cos(phi) * Im[E(q*v*cos(phi)) / ((1-nu^2)*sigma0)]
+        Integrates: integral[0->2pi] dphi * cos(phi) * Im[E(q*v*cos(phi))] / ((1-nu^2)*sigma0)
 
-        Due to the cos(phi) symmetry, we can use:
-        integral[0->2pi] = 4 * integral[0->pi/2] for cos(phi) > 0 portion
+        Due to symmetry:
+        - For phi in [0, pi/2]: cos(phi) > 0, omega > 0, contribution positive
+        - For phi in [pi/2, pi]: cos(phi) < 0, omega < 0, Im[E] also changes sign
+          due to causality (Im[E(-w)] = -Im[E(w)]), so (-cos) * (-Im) = positive
+        - We use symmetry: integrate 0 to pi/2 and multiply by 4
 
         Parameters
         ----------
         q : float
             Wavenumber (1/m)
+        strain : float, optional
+            Local strain for nonlinear correction
+        return_details : bool, optional
+            If True, return detailed calculation info
 
         Returns
         -------
-        float
-            Result of angle integration
+        float or (float, dict)
+            Result of angle integration, optionally with details
         """
-        # Create angle array
-        phi = np.linspace(0, 2 * np.pi, self.n_angle_points)
+        # Use symmetry: integrate over [0, pi/2] and multiply by 4
+        # This avoids numerical cancellation issues
+        phi = np.linspace(0, np.pi / 2, self.n_angle_points)
+        dphi = phi[1] - phi[0] if len(phi) > 1 else np.pi / 2
 
         # Calculate frequencies for each angle
-        # omega = q * v * cos(phi)
-        omega = q * self.velocity * np.cos(phi)
+        # omega = q * v * cos(phi), always positive in [0, pi/2]
+        omega_arr = q * self.velocity * np.cos(phi)
 
-        # Get cos(phi) values
+        # Get cos(phi) values (always positive in [0, pi/2])
         cos_phi = np.cos(phi)
 
         # Calculate integrand: cos(phi) * Im[E(omega)] / ((1-nu^2)*sigma0)
         integrand = np.zeros_like(phi)
+        ImE_values = np.zeros_like(phi)
 
-        for i, (w, c) in enumerate(zip(omega, cos_phi)):
-            # Handle zero and negative frequencies
-            omega_abs = np.abs(w)
-            if omega_abs < 1e-10:
-                omega_abs = 1e-10
+        # Use strain estimate if not provided
+        if strain is None:
+            strain = self.strain_estimate
 
-            # Get loss modulus at this frequency
-            ImE = self.loss_modulus_func(omega_abs, self.temperature)
+        for i, (w, c) in enumerate(zip(omega_arr, cos_phi)):
+            # Handle very small frequencies
+            omega_val = max(w, 1e-10)
 
-            # Calculate integrand term
+            # Get effective loss modulus (with optional nonlinear correction)
+            ImE = get_effective_modulus(
+                omega_val,
+                self.temperature,
+                self.loss_modulus_func,
+                strain=strain if self.g_interpolator else None,
+                g_interpolator=self.g_interpolator
+            )
+            ImE_values[i] = ImE
+
+            # Calculate integrand term: cos(phi) * Im[E] * prefactor
             integrand[i] = c * ImE * self.prefactor
 
-        # Numerical integration using trapezoidal rule
-        result = np.trapezoid(integrand, phi)
+        # Numerical integration using Simpson's rule (more accurate than trapezoidal)
+        # Multiply by 4 due to symmetry (0 to pi/2 -> 0 to 2pi)
+        if len(phi) >= 3:
+            result = 4.0 * simpson(integrand, x=phi)
+        else:
+            result = 4.0 * np.trapezoid(integrand, phi)
+
+        if return_details:
+            details = {
+                'phi': phi,
+                'omega': omega_arr,
+                'cos_phi': cos_phi,
+                'ImE': ImE_values,
+                'integrand': integrand,
+                'integral_value': result,
+                'q': q,
+                'velocity': self.velocity,
+                'prefactor': self.prefactor
+            }
+            return result, details
 
         return result
 
@@ -189,12 +307,20 @@ class FrictionCalculator:
         q_array: np.ndarray,
         G_array: np.ndarray,
         C_q_array: Optional[np.ndarray] = None,
-        progress_callback: Optional[Callable[[int], None]] = None
+        progress_callback: Optional[Callable[[int], None]] = None,
+        strain_array: Optional[np.ndarray] = None
     ) -> Tuple[float, dict]:
         """
         Calculate viscoelastic friction coefficient mu_visc.
 
         mu_visc = (1/2) * integral[q0->q1] dq * q^3 * C(q) * P(q) * S(q) * (angle_integral)
+
+        This follows the work instruction:
+        1. For each q, compute P(q) = erf(1/(2*sqrt(G(q))))
+        2. Compute S(q) = gamma + (1-gamma)*P(q)^2
+        3. Compute angle integral with optional strain correction
+        4. Form integrand: q^3 * C(q) * P(q) * S(q) * angle_integral
+        5. Integrate over q and multiply by 1/2
 
         Parameters
         ----------
@@ -206,20 +332,15 @@ class FrictionCalculator:
             Array of PSD values C(q). If None, uses self.psd_func
         progress_callback : callable, optional
             Function to call with progress updates (0-100)
+        strain_array : np.ndarray, optional
+            Array of strain values for each q (for nonlinear correction)
 
         Returns
         -------
         mu_visc : float
             Viscoelastic friction coefficient
         details : dict
-            Dictionary containing intermediate values:
-            - 'q': wavenumber array
-            - 'P': contact area ratio P(q)
-            - 'S': contact correction factor S(q)
-            - 'C_q': PSD values
-            - 'angle_integral': angle integration results
-            - 'integrand': full integrand values
-            - 'cumulative_mu': cumulative friction contribution
+            Dictionary containing intermediate values for debugging
         """
         q_array = np.asarray(q_array)
         G_array = np.asarray(G_array)
@@ -231,49 +352,78 @@ class FrictionCalculator:
         else:
             C_q_array = np.asarray(C_q_array)
 
-        # Calculate P(q) from G(q)
+        # Prepare strain array if not provided
+        if strain_array is None:
+            strain_array = np.full(n, self.strain_estimate)
+        else:
+            strain_array = np.asarray(strain_array)
+
+        # Calculate P(q) from G(q): P = erf(1 / (2*sqrt(G)))
         P_array = self.calculate_P_from_G(G_array)
 
-        # Calculate S(q) from P(q)
+        # Calculate S(q) from P(q): S = gamma + (1-gamma)*P^2
         S_array = self.calculate_S_from_P(P_array)
 
         # Calculate angle integral for each q
         angle_integral_array = np.zeros(n)
         integrand_array = np.zeros(n)
 
+        # Store intermediate values for debugging
+        q3_values = np.zeros(n)
+        qCPS_values = np.zeros(n)
+
         for i, q in enumerate(q_array):
-            # Calculate angle integral
-            angle_integral_array[i] = self._angle_integral_friction(q)
+            # Calculate angle integral with strain-dependent correction
+            strain_i = strain_array[i] if i < len(strain_array) else self.strain_estimate
+            angle_integral_array[i] = self._angle_integral_friction(q, strain=strain_i)
+
+            # Calculate components for debugging
+            q3_values[i] = q**3
+            qCPS_values[i] = q**3 * C_q_array[i] * P_array[i] * S_array[i]
 
             # Calculate full integrand: q^3 * C(q) * P(q) * S(q) * angle_integral
-            integrand_array[i] = (
-                q**3 * C_q_array[i] * P_array[i] * S_array[i] * angle_integral_array[i]
-            )
+            integrand_array[i] = qCPS_values[i] * angle_integral_array[i]
 
             # Progress callback
             if progress_callback and i % max(1, n // 20) == 0:
                 progress_callback(int((i + 1) / n * 100))
 
-        # Numerical integration over q
-        integral = np.trapezoid(integrand_array, q_array)
+        # Numerical integration over q using Simpson's rule
+        if n >= 3:
+            integral = simpson(integrand_array, x=q_array)
+        else:
+            integral = np.trapezoid(integrand_array, q_array)
 
         # Apply prefactor 1/2
         mu_visc = 0.5 * integral
 
         # Calculate cumulative friction contribution
         cumulative_mu = np.zeros(n)
+        cumsum = 0.0
         for i in range(1, n):
             delta = 0.5 * (integrand_array[i-1] + integrand_array[i]) * (q_array[i] - q_array[i-1])
-            cumulative_mu[i] = cumulative_mu[i-1] + 0.5 * delta
+            cumsum += 0.5 * delta
+            cumulative_mu[i] = cumsum
 
         details = {
             'q': q_array,
+            'G': G_array,
             'P': P_array,
             'S': S_array,
             'C_q': C_q_array,
+            'q3': q3_values,
+            'q3CPS': qCPS_values,
             'angle_integral': angle_integral_array,
             'integrand': integrand_array,
-            'cumulative_mu': cumulative_mu
+            'cumulative_mu': cumulative_mu,
+            'velocity': self.velocity,
+            'sigma0': self.sigma_0,
+            'temperature': self.temperature,
+            'gamma': self.gamma,
+            'prefactor': self.prefactor,
+            'strain_estimate': self.strain_estimate,
+            'total_integral': integral,
+            'mu_visc': mu_visc
         }
 
         return mu_visc, details
@@ -284,7 +434,8 @@ class FrictionCalculator:
         G_matrix: np.ndarray,
         v_array: np.ndarray,
         C_q_array: Optional[np.ndarray] = None,
-        progress_callback: Optional[Callable[[int], None]] = None
+        progress_callback: Optional[Callable[[int], None]] = None,
+        strain_estimator: Optional[Callable[[np.ndarray, np.ndarray, float], np.ndarray]] = None
     ) -> Tuple[np.ndarray, dict]:
         """
         Calculate mu_visc for multiple velocities.
@@ -301,6 +452,8 @@ class FrictionCalculator:
             Array of PSD values C(q)
         progress_callback : callable, optional
             Function to call with progress updates (0-100)
+        strain_estimator : callable, optional
+            Function to estimate local strain: strain_estimator(q_array, G_array, velocity)
 
         Returns
         -------
@@ -324,9 +477,15 @@ class FrictionCalculator:
             # Get G(q) for this velocity
             G_q = G_matrix[:, j]
 
+            # Estimate strain if estimator provided
+            if strain_estimator is not None:
+                strain_array = strain_estimator(q_array, G_q, v)
+            else:
+                strain_array = None
+
             # Calculate mu_visc
             mu_visc, details = self.calculate_mu_visc(
-                q_array, G_q, C_q_array
+                q_array, G_q, C_q_array, strain_array=strain_array
             )
 
             mu_array[j] = mu_visc
@@ -340,7 +499,19 @@ class FrictionCalculator:
         # Restore original velocity
         self.velocity = original_velocity
 
-        return mu_array, {'velocities': v_array, 'details': all_details}
+        # Add summary stats
+        summary = {
+            'velocities': v_array,
+            'mu_min': np.min(mu_array),
+            'mu_max': np.max(mu_array),
+            'mu_mean': np.mean(mu_array),
+            'peak_idx': np.argmax(mu_array),
+            'peak_velocity': v_array[np.argmax(mu_array)],
+            'peak_mu': np.max(mu_array),
+            'details': all_details
+        }
+
+        return mu_array, summary
 
     def update_parameters(
         self,
@@ -394,7 +565,9 @@ def calculate_mu_visc_simple(
     temperature: float = 20.0,
     nu: float = 0.5,
     gamma: float = 0.5,
-    n_phi: int = 72
+    n_phi: int = 72,
+    g_interpolator: Optional[Callable[[float], float]] = None,
+    strain: float = 0.01
 ) -> Tuple[float, dict]:
     """
     Simplified function to calculate mu_visc without class instantiation.
@@ -409,14 +582,12 @@ def calculate_mu_visc_simple(
         Array of PSD values C(q) at each wavenumber
     G_array : np.ndarray
         Array of G(q) values (dimensionless, already divided by sigma0^2)
-        Note: G_array should be pre-computed G values for contact area calculation
     v : float
         Sliding velocity (m/s)
     sigma0 : float
         Nominal contact pressure (Pa)
     func_ImE : callable
         Function that returns loss modulus Im[E(omega, T)]
-        Signature: func_ImE(omega, temperature) -> float
     temperature : float, optional
         Temperature (Celsius), default 20.0
     nu : float, optional
@@ -425,6 +596,10 @@ def calculate_mu_visc_simple(
         Contact correction factor, default 0.5
     n_phi : int, optional
         Number of angle integration points, default 72
+    g_interpolator : callable, optional
+        Function g(strain) for nonlinear correction
+    strain : float, optional
+        Strain estimate for nonlinear correction (default: 0.01 = 1%)
 
     Returns
     -------
@@ -432,37 +607,17 @@ def calculate_mu_visc_simple(
         Viscoelastic friction coefficient
     details : dict
         Dictionary with intermediate calculation values
-
-    Example
-    -------
-    >>> def loss_modulus(omega, T):
-    ...     # Simple example loss modulus function
-    ...     return 1e7 * omega**0.2
-    >>>
-    >>> q = np.logspace(2, 6, 100)  # 100 to 1e6 1/m
-    >>> C_q = 1e-14 * q**(-3.6)  # Fractal PSD with H=0.8
-    >>> G = np.logspace(-4, 0, 100)  # Example G values
-    >>>
-    >>> mu, details = calculate_mu_visc_simple(
-    ...     q_array=q,
-    ...     C_q_array=C_q,
-    ...     G_array=G,
-    ...     v=0.01,
-    ...     sigma0=0.3e6,
-    ...     func_ImE=loss_modulus
-    ... )
-    >>> print(f"mu_visc = {mu:.4f}")
     """
     q_array = np.asarray(q_array)
     C_q_array = np.asarray(C_q_array)
     G_array = np.asarray(G_array)
     n = len(q_array)
 
-    # Prefactor
+    # Prefactor: 1 / ((1 - nu^2) * sigma0)
     prefactor = 1.0 / ((1 - nu**2) * sigma0)
 
-    # Calculate P(q) from G(q)
-    P_array = np.zeros_like(G_array)
+    # Calculate P(q) from G(q): P = erf(1 / (2*sqrt(G)))
+    P_array = np.zeros_like(G_array, dtype=float)
     small_G_mask = G_array < 1e-10
     P_array[small_G_mask] = 1.0
     valid_mask = ~small_G_mask
@@ -471,45 +626,62 @@ def calculate_mu_visc_simple(
         arg = np.minimum(1.0 / (2.0 * sqrt_G), 10.0)
         P_array[valid_mask] = erf(arg)
 
-    # Calculate S(q) from P(q)
+    # Calculate S(q) from P(q): S = gamma + (1-gamma)*P^2
     S_array = gamma + (1 - gamma) * P_array**2
 
-    # Angle array
-    phi = np.linspace(0, 2 * np.pi, n_phi)
+    # Angle array - use symmetry: integrate 0 to pi/2 and multiply by 4
+    phi = np.linspace(0, np.pi / 2, n_phi)
 
     # Calculate angle integral and full integrand for each q
     angle_integral_array = np.zeros(n)
     integrand_array = np.zeros(n)
+    q3CPS_array = np.zeros(n)
 
     for i, q in enumerate(q_array):
-        # Calculate omega = q * v * cos(phi)
+        # Calculate omega = q * v * cos(phi), always positive in [0, pi/2]
         omega = q * v * np.cos(phi)
         cos_phi = np.cos(phi)
 
         # Calculate integrand: cos(phi) * Im[E(omega)] * prefactor
         integrand_phi = np.zeros_like(phi)
         for j, (w, c) in enumerate(zip(omega, cos_phi)):
-            omega_abs = max(np.abs(w), 1e-10)
-            ImE = func_ImE(omega_abs, temperature)
+            omega_val = max(w, 1e-10)
+
+            # Get effective modulus with optional nonlinear correction
+            ImE = get_effective_modulus(
+                omega_val, temperature, func_ImE,
+                strain=strain if g_interpolator else None,
+                g_interpolator=g_interpolator
+            )
             integrand_phi[j] = c * ImE * prefactor
 
-        # Angle integral
-        angle_integral_array[i] = np.trapezoid(integrand_phi, phi)
+        # Angle integral (multiply by 4 due to symmetry), use Simpson's rule
+        if n_phi >= 3:
+            angle_integral_array[i] = 4.0 * simpson(integrand_phi, x=phi)
+        else:
+            angle_integral_array[i] = 4.0 * np.trapezoid(integrand_phi, phi)
+
+        # Precompute q^3 * C * P * S for debugging
+        q3CPS_array[i] = q**3 * C_q_array[i] * P_array[i] * S_array[i]
 
         # Full integrand: q^3 * C(q) * P(q) * S(q) * angle_integral
-        integrand_array[i] = (
-            q**3 * C_q_array[i] * P_array[i] * S_array[i] * angle_integral_array[i]
-        )
+        integrand_array[i] = q3CPS_array[i] * angle_integral_array[i]
 
-    # Numerical integration over q
-    integral = np.trapezoid(integrand_array, q_array)
+    # Numerical integration over q using Simpson's rule
+    if n >= 3:
+        integral = simpson(integrand_array, x=q_array)
+    else:
+        integral = np.trapezoid(integrand_array, q_array)
+
     mu_visc = 0.5 * integral
 
     # Cumulative friction
     cumulative_mu = np.zeros(n)
+    cumsum = 0.0
     for i in range(1, n):
         delta = 0.5 * (integrand_array[i-1] + integrand_array[i]) * (q_array[i] - q_array[i-1])
-        cumulative_mu[i] = cumulative_mu[i-1] + 0.5 * delta
+        cumsum += 0.5 * delta
+        cumulative_mu[i] = cumsum
 
     details = {
         'q': q_array,
@@ -517,12 +689,17 @@ def calculate_mu_visc_simple(
         'S': S_array,
         'C_q': C_q_array,
         'G': G_array,
+        'q3CPS': q3CPS_array,
         'angle_integral': angle_integral_array,
         'integrand': integrand_array,
         'cumulative_mu': cumulative_mu,
         'velocity': v,
         'sigma0': sigma0,
-        'temperature': temperature
+        'temperature': temperature,
+        'gamma': gamma,
+        'prefactor': prefactor,
+        'total_integral': integral,
+        'mu_visc': mu_visc
     }
 
     return mu_visc, details
