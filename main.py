@@ -268,14 +268,19 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_mu_visc, text="5. μ_visc 계산")
         self._create_mu_visc_tab(self.tab_mu_visc)
 
-        # Tab 6: Equations Summary
+        # Tab 6: Integrand Visualization (NEW)
+        self.tab_integrand = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_integrand, text="6. 피적분함수 분석")
+        self._create_integrand_tab(self.tab_integrand)
+
+        # Tab 7: Equations Summary
         self.tab_equations = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_equations, text="6. 수식 정리")
+        self.notebook.add(self.tab_equations, text="7. 수식 정리")
         self._create_equations_tab(self.tab_equations)
 
-        # Tab 7: Variable Relationship (NEW)
+        # Tab 8: Variable Relationship
         self.tab_variables = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_variables, text="7. 변수 관계")
+        self.notebook.add(self.tab_variables, text="8. 변수 관계")
         self._create_variables_tab(self.tab_variables)
 
     def _create_verification_tab(self, parent):
@@ -3532,6 +3537,411 @@ $\begin{array}{lcc}
 
         except Exception as e:
             messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+
+    def _create_integrand_tab(self, parent):
+        """Create Integrand visualization tab for G(q) and μ_visc analysis."""
+        # Main container
+        main_container = ttk.Frame(parent)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Left panel for controls
+        left_frame = ttk.Frame(main_container, width=320)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        left_frame.pack_propagate(False)
+
+        # ============== Left Panel: Controls ==============
+
+        # 1. Description
+        desc_frame = ttk.LabelFrame(left_frame, text="설명", padding=5)
+        desc_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        desc_text = (
+            "G(q) 및 μ_visc 계산의 피적분함수를\n"
+            "시각화합니다.\n\n"
+            "1. G 각도 적분: |E(qv cosφ)|² vs φ\n"
+            "2. G(q) 피적분: q³C(q)×(각도적분) vs q\n"
+            "3. μ_visc 각도 적분 vs 속도"
+        )
+        ttk.Label(desc_frame, text=desc_text, font=('Arial', 9), justify=tk.LEFT).pack(anchor=tk.W)
+
+        # 2. Calculation Settings
+        settings_frame = ttk.LabelFrame(left_frame, text="계산 설정", padding=5)
+        settings_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        # q value selection for angle integrand
+        row1 = ttk.Frame(settings_frame)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="q 값 (1/m):", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.integrand_q_var = tk.StringVar(value="1e4, 1e5, 1e6")
+        ttk.Entry(row1, textvariable=self.integrand_q_var, width=15).pack(side=tk.RIGHT)
+
+        ttk.Label(settings_frame, text="(쉼표로 구분, 예: 1e4, 1e5, 1e6)",
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        # Velocity selection
+        row2 = ttk.Frame(settings_frame)
+        row2.pack(fill=tk.X, pady=2)
+        ttk.Label(row2, text="속도 v (m/s):", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.integrand_v_var = tk.StringVar(value="0.01")
+        ttk.Entry(row2, textvariable=self.integrand_v_var, width=15).pack(side=tk.RIGHT)
+
+        # Number of angle points
+        row3 = ttk.Frame(settings_frame)
+        row3.pack(fill=tk.X, pady=2)
+        ttk.Label(row3, text="각도 분할 수:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.integrand_nangle_var = tk.StringVar(value="72")
+        ttk.Entry(row3, textvariable=self.integrand_nangle_var, width=8).pack(side=tk.RIGHT)
+
+        # Apply nonlinear correction checkbox
+        self.integrand_use_fg_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            settings_frame,
+            text="비선형 보정 f(ε), g(ε) 적용",
+            variable=self.integrand_use_fg_var
+        ).pack(anchor=tk.W, pady=2)
+
+        # Calculate button
+        calc_frame = ttk.Frame(settings_frame)
+        calc_frame.pack(fill=tk.X, pady=5)
+
+        self.integrand_calc_btn = ttk.Button(
+            calc_frame,
+            text="피적분함수 계산",
+            command=self._calculate_integrand_visualization
+        )
+        self.integrand_calc_btn.pack(fill=tk.X)
+
+        # Progress bar
+        self.integrand_progress_var = tk.IntVar()
+        self.integrand_progress_bar = ttk.Progressbar(
+            calc_frame,
+            variable=self.integrand_progress_var,
+            maximum=100
+        )
+        self.integrand_progress_bar.pack(fill=tk.X, pady=2)
+
+        # 3. Results Summary
+        results_frame = ttk.LabelFrame(left_frame, text="결과 요약", padding=5)
+        results_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        self.integrand_result_text = tk.Text(results_frame, height=16, font=("Courier", 8), wrap=tk.WORD)
+        self.integrand_result_text.pack(fill=tk.X)
+
+        # 4. Frequency range info
+        freq_frame = ttk.LabelFrame(left_frame, text="주파수 범위 (ω = qv cosφ)", padding=5)
+        freq_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        self.freq_range_text = tk.Text(freq_frame, height=6, font=("Courier", 8), wrap=tk.WORD)
+        self.freq_range_text.pack(fill=tk.X)
+
+        # ============== Right Panel: Plots ==============
+
+        right_panel = ttk.Frame(main_container)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        plot_frame = ttk.LabelFrame(right_panel, text="피적분함수 그래프", padding=5)
+        plot_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create figure with 2x2 subplots
+        self.fig_integrand = Figure(figsize=(10, 8), dpi=100)
+
+        # Top-left: Angle integrand |E(qv cosφ)|² vs φ
+        self.ax_angle_integrand = self.fig_integrand.add_subplot(221)
+        self.ax_angle_integrand.set_title('G 각도 피적분함수: |E(qv cosφ)|² vs φ', fontweight='bold')
+        self.ax_angle_integrand.set_xlabel('φ (rad)')
+        self.ax_angle_integrand.set_ylabel('|E(ω)/((1-ν²)σ₀)|²')
+        self.ax_angle_integrand.grid(True, alpha=0.3)
+
+        # Top-right: G(q) integrand vs q
+        self.ax_q_integrand = self.fig_integrand.add_subplot(222)
+        self.ax_q_integrand.set_title('G(q) 피적분함수: q³C(q)×(각도적분) vs q', fontweight='bold')
+        self.ax_q_integrand.set_xlabel('q (1/m)')
+        self.ax_q_integrand.set_ylabel('q³C(q)×∫|E|²dφ')
+        self.ax_q_integrand.set_xscale('log')
+        self.ax_q_integrand.set_yscale('log')
+        self.ax_q_integrand.grid(True, alpha=0.3)
+
+        # Bottom-left: μ_visc integrand vs φ (Im[E] × cosφ)
+        self.ax_mu_integrand = self.fig_integrand.add_subplot(223)
+        self.ax_mu_integrand.set_title('μ_visc 각도 피적분함수: cosφ × Im[E] vs φ', fontweight='bold')
+        self.ax_mu_integrand.set_xlabel('φ (rad)')
+        self.ax_mu_integrand.set_ylabel('cosφ × E\'\'/((1-ν²)σ₀)')
+        self.ax_mu_integrand.grid(True, alpha=0.3)
+
+        # Bottom-right: Frequency range vs velocity
+        self.ax_freq_range = self.fig_integrand.add_subplot(224)
+        self.ax_freq_range.set_title('속도별 주파수 스캔 범위', fontweight='bold')
+        self.ax_freq_range.set_xlabel('속도 v (m/s)')
+        self.ax_freq_range.set_ylabel('주파수 ω (rad/s)')
+        self.ax_freq_range.set_xscale('log')
+        self.ax_freq_range.set_yscale('log')
+        self.ax_freq_range.grid(True, alpha=0.3)
+
+        self.fig_integrand.tight_layout()
+
+        self.canvas_integrand = FigureCanvasTkAgg(self.fig_integrand, plot_frame)
+        self.canvas_integrand.draw()
+        self.canvas_integrand.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2Tk(self.canvas_integrand, plot_frame)
+        toolbar.update()
+
+    def _calculate_integrand_visualization(self):
+        """Calculate and visualize integrands for G(q) and μ_visc."""
+        # Check if data is available
+        if self.psd_model is None or self.dma_model is None:
+            messagebox.showwarning("경고", "먼저 PSD와 DMA 데이터를 로드하세요.")
+            return
+
+        try:
+            self.integrand_calc_btn.config(state='disabled')
+            self.integrand_progress_var.set(10)
+            self.root.update_idletasks()
+
+            # Parse q values
+            q_str = self.integrand_q_var.get().strip()
+            q_values = [float(x.strip()) for x in q_str.split(',')]
+
+            # Get velocity
+            v = float(self.integrand_v_var.get())
+
+            # Get number of angle points
+            n_angle = int(self.integrand_nangle_var.get())
+
+            # Get parameters
+            sigma_0 = float(self.sigma0_var.get())
+            poisson_ratio = float(self.poisson_var.get())
+            prefactor = 1.0 / ((1 - poisson_ratio**2) * sigma_0)
+
+            # Check for nonlinear correction
+            use_fg = self.integrand_use_fg_var.get()
+
+            # Clear previous results
+            self.integrand_result_text.delete('1.0', tk.END)
+            self.freq_range_text.delete('1.0', tk.END)
+
+            # Clear axes
+            self.ax_angle_integrand.clear()
+            self.ax_q_integrand.clear()
+            self.ax_mu_integrand.clear()
+            self.ax_freq_range.clear()
+
+            # Set up axes labels and titles again
+            self.ax_angle_integrand.set_title('G 각도 피적분함수: |E(qv cosφ)|² vs φ', fontweight='bold')
+            self.ax_angle_integrand.set_xlabel('φ (rad)')
+            self.ax_angle_integrand.set_ylabel('|E(ω)/((1-ν²)σ₀)|²')
+            self.ax_angle_integrand.grid(True, alpha=0.3)
+
+            self.ax_q_integrand.set_title('G(q) 피적분함수: q³C(q)×(각도적분) vs q', fontweight='bold')
+            self.ax_q_integrand.set_xlabel('q (1/m)')
+            self.ax_q_integrand.set_ylabel('q³C(q)×∫|E|²dφ')
+            self.ax_q_integrand.set_xscale('log')
+            self.ax_q_integrand.set_yscale('log')
+            self.ax_q_integrand.grid(True, alpha=0.3)
+
+            self.ax_mu_integrand.set_title('μ_visc 각도 피적분함수: cosφ × Im[E] vs φ', fontweight='bold')
+            self.ax_mu_integrand.set_xlabel('φ (rad)')
+            self.ax_mu_integrand.set_ylabel('cosφ × E\'\'/((1-ν²)σ₀)')
+            self.ax_mu_integrand.grid(True, alpha=0.3)
+
+            self.ax_freq_range.set_title('속도별 주파수 스캔 범위', fontweight='bold')
+            self.ax_freq_range.set_xlabel('속도 v (m/s)')
+            self.ax_freq_range.set_ylabel('주파수 ω (rad/s)')
+            self.ax_freq_range.set_xscale('log')
+            self.ax_freq_range.set_yscale('log')
+            self.ax_freq_range.grid(True, alpha=0.3)
+
+            self.integrand_progress_var.set(20)
+            self.root.update_idletasks()
+
+            # Get f, g interpolators if using nonlinear correction
+            f_interp = None
+            g_interp = None
+            if use_fg and hasattr(self, 'f_interpolator') and self.f_interpolator is not None:
+                f_interp = self.f_interpolator
+                g_interp = self.g_interpolator
+
+            # Create angle array
+            phi = np.linspace(0, 2 * np.pi, n_angle)
+
+            colors = plt.cm.viridis(np.linspace(0, 0.9, len(q_values)))
+
+            self.integrand_result_text.insert(tk.END, "=== G 각도 피적분함수 분석 ===\n\n")
+
+            # Calculate angle integrand for each q value
+            for idx, q in enumerate(q_values):
+                # Calculate frequencies: ω = q * v * cos(φ)
+                omega = q * v * np.cos(phi)
+                omega_eval = np.abs(omega)
+                omega_eval[omega_eval < 1e-10] = 1e-10
+
+                # Get strain for nonlinear correction (if available)
+                strain_at_q = 0.01  # default
+                if use_fg and hasattr(self, 'local_strain_array') and self.local_strain_array is not None:
+                    try:
+                        from scipy.interpolate import interp1d
+                        if hasattr(self, 'rms_q_array') and self.rms_q_array is not None:
+                            log_q = np.log10(self.rms_q_array)
+                            log_strain = np.log10(np.maximum(self.local_strain_array, 1e-10))
+                            interp_func = interp1d(log_q, log_strain, kind='linear',
+                                                   bounds_error=False, fill_value='extrapolate')
+                            strain_at_q = 10 ** interp_func(np.log10(q))
+                            strain_at_q = np.clip(strain_at_q, 0.0, 1.0)
+                    except:
+                        pass
+
+                # Calculate |E|² integrand for G
+                integrand_G = np.zeros_like(phi)
+                integrand_mu = np.zeros_like(phi)
+
+                for i, w in enumerate(omega_eval):
+                    E_prime = self.dma_model.storage_modulus(w)
+                    E_loss = self.dma_model.loss_modulus(w)
+
+                    if use_fg and f_interp is not None and g_interp is not None:
+                        f_val = np.clip(f_interp(strain_at_q), 0.0, 1.0)
+                        g_val = np.clip(g_interp(strain_at_q), 0.0, 1.0)
+                        E_prime_eff = E_prime * f_val
+                        E_loss_eff = E_loss * g_val
+                    else:
+                        E_prime_eff = E_prime
+                        E_loss_eff = E_loss
+
+                    # |E_eff|² for G integrand
+                    E_star_sq = E_prime_eff**2 + E_loss_eff**2
+                    integrand_G[i] = E_star_sq * prefactor**2
+
+                    # cosφ × E'' for μ_visc integrand
+                    integrand_mu[i] = np.cos(phi[i]) * E_loss_eff * prefactor
+
+                # Plot G angle integrand
+                self.ax_angle_integrand.plot(phi, integrand_G, '-', color=colors[idx],
+                                             label=f'q = {q:.1e} 1/m', linewidth=1.5)
+
+                # Plot μ_visc angle integrand
+                self.ax_mu_integrand.plot(phi, integrand_mu, '-', color=colors[idx],
+                                          label=f'q = {q:.1e} 1/m', linewidth=1.5)
+
+                # Calculate angle integral result
+                angle_integral_G = np.trapz(integrand_G, phi)
+                angle_integral_mu = np.trapz(integrand_mu, phi)
+
+                # Summary text
+                self.integrand_result_text.insert(tk.END, f"q = {q:.2e} 1/m:\n")
+                self.integrand_result_text.insert(tk.END, f"  ω_max = qv = {q*v:.2e} rad/s\n")
+                self.integrand_result_text.insert(tk.END, f"  ∫|E|²dφ = {angle_integral_G:.4e}\n")
+                self.integrand_result_text.insert(tk.END, f"  ∫cosφ×E\'\'dφ = {angle_integral_mu:.4e}\n")
+                if use_fg:
+                    self.integrand_result_text.insert(tk.END, f"  ε(q) = {strain_at_q:.4f}\n")
+                self.integrand_result_text.insert(tk.END, "\n")
+
+            self.ax_angle_integrand.legend(fontsize=8)
+            self.ax_mu_integrand.legend(fontsize=8)
+
+            self.integrand_progress_var.set(50)
+            self.root.update_idletasks()
+
+            # === G(q) integrand plot ===
+            # Get PSD q range
+            if hasattr(self.psd_model, 'q_data'):
+                q_array = self.psd_model.q_data
+            elif hasattr(self.psd_model, 'q'):
+                q_array = self.psd_model.q
+            else:
+                q_array = np.logspace(2, 8, 200)
+
+            # Calculate G(q) integrand for each q
+            q_plot = np.logspace(np.log10(q_array.min()), np.log10(q_array.max()), 100)
+            G_integrand_values = np.zeros_like(q_plot)
+
+            for i, q in enumerate(q_plot):
+                # Get PSD value
+                C_q = self.psd_model(np.array([q]))[0]
+
+                # Calculate angle integral
+                omega = q * v * np.cos(phi)
+                omega_eval = np.abs(omega)
+                omega_eval[omega_eval < 1e-10] = 1e-10
+
+                integrand = np.zeros_like(phi)
+                for j, w in enumerate(omega_eval):
+                    E_prime = self.dma_model.storage_modulus(w)
+                    E_loss = self.dma_model.loss_modulus(w)
+
+                    if use_fg and f_interp is not None and g_interp is not None:
+                        strain_q = 0.01  # simplified
+                        f_val = np.clip(f_interp(strain_q), 0.0, 1.0)
+                        g_val = np.clip(g_interp(strain_q), 0.0, 1.0)
+                        E_prime_eff = E_prime * f_val
+                        E_loss_eff = E_loss * g_val
+                    else:
+                        E_prime_eff = E_prime
+                        E_loss_eff = E_loss
+
+                    E_star_sq = E_prime_eff**2 + E_loss_eff**2
+                    integrand[j] = E_star_sq * prefactor**2
+
+                angle_int = np.trapz(integrand, phi)
+                G_integrand_values[i] = q**3 * C_q * angle_int
+
+            # Plot G(q) integrand
+            self.ax_q_integrand.plot(q_plot, G_integrand_values, 'b-', linewidth=1.5,
+                                     label=f'v = {v:.2e} m/s')
+
+            # Mark the selected q values
+            for q in q_values:
+                if q >= q_plot.min() and q <= q_plot.max():
+                    idx = np.abs(q_plot - q).argmin()
+                    self.ax_q_integrand.axvline(q, color='r', linestyle='--', alpha=0.5)
+                    self.ax_q_integrand.plot(q, G_integrand_values[idx], 'ro', markersize=8)
+
+            self.ax_q_integrand.legend(fontsize=8)
+
+            self.integrand_progress_var.set(70)
+            self.root.update_idletasks()
+
+            # === Frequency range vs velocity plot ===
+            v_range = np.logspace(-4, 1, 50)  # 0.0001 to 10 m/s
+            q_ref = float(q_values[0])  # Use first q value as reference
+
+            # ω_min = 0 (at cosφ = 0), ω_max = q*v (at cosφ = 1)
+            omega_max = q_ref * v_range
+            omega_min = 1e-10 * np.ones_like(v_range)  # small but not zero
+
+            # Plot frequency range
+            self.ax_freq_range.fill_between(v_range, omega_min, omega_max, alpha=0.3, label=f'q = {q_ref:.1e} 1/m')
+            self.ax_freq_range.plot(v_range, omega_max, 'b-', linewidth=1.5, label='ω_max = qv')
+
+            # Show DMA frequency range
+            if hasattr(self.dma_model, 'omega'):
+                omega_dma_min = self.dma_model.omega.min()
+                omega_dma_max = self.dma_model.omega.max()
+                self.ax_freq_range.axhline(omega_dma_min, color='r', linestyle='--', alpha=0.7, label=f'DMA ω_min = {omega_dma_min:.1e}')
+                self.ax_freq_range.axhline(omega_dma_max, color='r', linestyle='--', alpha=0.7, label=f'DMA ω_max = {omega_dma_max:.1e}')
+
+            # Mark current velocity
+            self.ax_freq_range.axvline(v, color='g', linestyle='-', linewidth=2, alpha=0.7, label=f'현재 v = {v:.2e}')
+
+            self.ax_freq_range.legend(fontsize=7, loc='lower right')
+
+            # Frequency range info text
+            self.freq_range_text.insert(tk.END, f"선택 q = {q_ref:.2e} 1/m, v = {v:.2e} m/s\n")
+            self.freq_range_text.insert(tk.END, f"ω 범위: 0 ~ {q_ref * v:.2e} rad/s\n\n")
+            if hasattr(self.dma_model, 'omega'):
+                self.freq_range_text.insert(tk.END, f"DMA 데이터 범위:\n")
+                self.freq_range_text.insert(tk.END, f"  {omega_dma_min:.2e} ~ {omega_dma_max:.2e} rad/s\n")
+
+            self.integrand_progress_var.set(100)
+            self.fig_integrand.tight_layout()
+            self.canvas_integrand.draw()
+
+            self.status_var.set("피적분함수 계산 완료")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"계산 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+        finally:
+            self.integrand_calc_btn.config(state='normal')
 
     def _create_variables_tab(self, parent):
         """Create variable relationship explanation tab."""
