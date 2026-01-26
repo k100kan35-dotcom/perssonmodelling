@@ -146,18 +146,21 @@ class MasterCurveGenerator:
             Mean squared error in overlap region
         """
         if use_bT:
-            log_aT, bT = params
+            log_aT_rel, bT = params
         else:
-            log_aT = params[0]
+            log_aT_rel = params[0]
             bT = self.calculate_theoretical_bT(T2)
 
-        aT = 10**log_aT
+        # Relative shift factor (multiplied by neighbor's accumulated shift)
+        aT_rel = 10**log_aT_rel
 
-        # Get data
+        # Get data from neighbor (T1) - already shifted
         f1 = self.raw_data[T1]['f'] * self.aT[T1]
         E1 = self.raw_data[T1]['E_storage'] / self.bT[T1]
 
-        f2 = self.raw_data[T2]['f'] * aT
+        # Get data from current temp (T2) - apply total shift (relative * neighbor's accumulated)
+        aT_total = aT_rel * self.aT[T1]
+        f2 = self.raw_data[T2]['f'] * aT_total
         E2 = self.raw_data[T2]['E_storage'] / bT
 
         # Find overlap region
@@ -172,16 +175,19 @@ class MasterCurveGenerator:
         f_overlap = np.logspace(np.log10(f_min_overlap), np.log10(f_max_overlap), n_points)
 
         # Log-log interpolation
-        interp1 = interpolate.interp1d(np.log10(f1), np.log10(E1),
-                                        kind='linear', fill_value='extrapolate')
-        interp2 = interpolate.interp1d(np.log10(f2), np.log10(E2),
-                                        kind='linear', fill_value='extrapolate')
+        try:
+            interp1 = interpolate.interp1d(np.log10(f1), np.log10(E1),
+                                            kind='linear', fill_value='extrapolate')
+            interp2 = interpolate.interp1d(np.log10(f2), np.log10(E2),
+                                            kind='linear', fill_value='extrapolate')
 
-        log_E1_interp = interp1(np.log10(f_overlap))
-        log_E2_interp = interp2(np.log10(f_overlap))
+            log_E1_interp = interp1(np.log10(f_overlap))
+            log_E2_interp = interp2(np.log10(f_overlap))
 
-        # MSE in log space
-        mse = np.mean((log_E1_interp - log_E2_interp)**2)
+            # MSE in log space
+            mse = np.mean((log_E1_interp - log_E2_interp)**2)
+        except:
+            mse = 1e10
 
         return mse
 
@@ -221,13 +227,15 @@ class MasterCurveGenerator:
         if verbose:
             print(f"Reference temperature: {T_ref_actual}°C")
 
-        # Shift temperatures below reference (working downward)
+        # Shift temperatures below reference (working downward - colder temps)
+        # For colder temperatures, aT > 1 (positive log_aT)
         for i in range(ref_idx - 1, -1, -1):
             T_current = temps_sorted[i]
             T_neighbor = temps_sorted[i + 1]
 
-            # Initial guess
-            log_aT_init = 0.0
+            # WLF-based initial guess (typical C1=17.44, C2=51.6)
+            dT = T_current - T_ref_actual
+            log_aT_init = 17.44 * (-dT) / (51.6 + abs(dT)) if abs(dT) < 51.6 else 1.0
             bT_init = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
 
             if use_bT and bT_mode == 'optimize':
@@ -236,11 +244,11 @@ class MasterCurveGenerator:
                     self._overlap_error,
                     x0=[log_aT_init, bT_init],
                     args=(T_neighbor, T_current, True),
-                    method='Nelder-Mead',
-                    options={'maxiter': 500}
+                    method='Powell',
+                    options={'maxiter': 1000}
                 )
                 self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
-                self.bT[T_current] = result.x[1]
+                self.bT[T_current] = max(0.5, min(2.0, result.x[1]))  # Bound bT
             else:
                 # Optimize only aT
                 self.bT[T_current] = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
@@ -248,21 +256,23 @@ class MasterCurveGenerator:
                     self._overlap_error,
                     x0=[log_aT_init],
                     args=(T_neighbor, T_current, False),
-                    method='Nelder-Mead',
-                    options={'maxiter': 500}
+                    method='Powell',
+                    options={'maxiter': 1000}
                 )
                 self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
 
             if verbose:
                 print(f"T={T_current}°C: aT={self.aT[T_current]:.4e}, bT={self.bT[T_current]:.4f}")
 
-        # Shift temperatures above reference (working upward)
+        # Shift temperatures above reference (working upward - hotter temps)
+        # For hotter temperatures, aT < 1 (negative log_aT)
         for i in range(ref_idx + 1, len(temps_sorted)):
             T_current = temps_sorted[i]
             T_neighbor = temps_sorted[i - 1]
 
-            # Initial guess
-            log_aT_init = 0.0
+            # WLF-based initial guess
+            dT = T_current - T_ref_actual
+            log_aT_init = -17.44 * dT / (51.6 + abs(dT)) if abs(dT) < 51.6 else -1.0
             bT_init = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
 
             if use_bT and bT_mode == 'optimize':
@@ -270,19 +280,19 @@ class MasterCurveGenerator:
                     self._overlap_error,
                     x0=[log_aT_init, bT_init],
                     args=(T_neighbor, T_current, True),
-                    method='Nelder-Mead',
-                    options={'maxiter': 500}
+                    method='Powell',
+                    options={'maxiter': 1000}
                 )
                 self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
-                self.bT[T_current] = result.x[1]
+                self.bT[T_current] = max(0.5, min(2.0, result.x[1]))
             else:
                 self.bT[T_current] = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
                 result = optimize.minimize(
                     self._overlap_error,
                     x0=[log_aT_init],
                     args=(T_neighbor, T_current, False),
-                    method='Nelder-Mead',
-                    options={'maxiter': 500}
+                    method='Powell',
+                    options={'maxiter': 1000}
                 )
                 self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
 
