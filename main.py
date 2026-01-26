@@ -1092,14 +1092,15 @@ class PerssonModelGUI_V2:
             omega = 2 * np.pi * self.master_curve_gen.master_f
             E_storage = self.master_curve_gen.master_E_storage * 1e6  # MPa to Pa
             E_loss = self.master_curve_gen.master_E_loss * 1e6  # MPa to Pa
+            T_ref = self.master_curve_gen.T_ref
 
             # Create material from master curve
             self.material = create_material_from_dma(
                 omega=omega,
                 E_storage=E_storage,
                 E_loss=E_loss,
-                material_name=f"Master Curve (Tref={self.master_curve_gen.T_ref}°C)",
-                reference_temp=self.master_curve_gen.T_ref
+                material_name=f"Master Curve (Tref={T_ref}°C)",
+                reference_temp=T_ref
             )
 
             # Store raw data for plotting (in omega units)
@@ -1113,19 +1114,18 @@ class PerssonModelGUI_V2:
             self.master_curve_shift_factors = {
                 'aT': self.master_curve_gen.aT.copy(),
                 'bT': self.master_curve_gen.bT.copy(),
-                'T_ref': self.master_curve_gen.T_ref,
+                'T_ref': T_ref,
                 'C1': self.master_curve_gen.C1,
                 'C2': self.master_curve_gen.C2,
                 'temperatures': list(self.master_curve_gen.temperatures)
             }
 
             # Update temperature entry with reference temperature
-            self.temperature_var.set(str(self.master_curve_gen.T_ref))
+            self.temperature_var.set(str(T_ref))
 
             # Update status label in Tab 1
             f_min = self.master_curve_gen.master_f.min()
             f_max = self.master_curve_gen.master_f.max()
-            T_ref = self.master_curve_gen.T_ref
             self.dma_import_status_var.set(f"Master Curve (Tref={T_ref}°C, {f_min:.1e}~{f_max:.1e} Hz)")
 
             # Update verification plots
@@ -1613,7 +1613,7 @@ class PerssonModelGUI_V2:
             self._update_material_display()
             self._update_verification_plots()
 
-            self.status_var.set(f"마스터 커브 가져오기 완료 (Tref={T_ref}°C)")
+            self.status_var.set(f"마스터 커브 가져오기 완료")
 
         except Exception as e:
             messagebox.showerror("Error", f"스무딩 적용 실패:\n{str(e)}")
