@@ -294,6 +294,14 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_variables, text="9. 변수 관계")
         self._create_variables_tab(self.tab_variables)
 
+        # Tab 10: Debug Log (NEW)
+        self.tab_debug = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_debug, text="10. 디버그 로그")
+        self._create_debug_tab(self.tab_debug)
+
+        # Initialize debug log storage
+        self.debug_log_messages = []
+
     def _create_verification_tab(self, parent):
         """Create input data verification tab."""
         # Instruction label
@@ -5339,6 +5347,426 @@ $\begin{array}{lcc}
         text_widget.insert(tk.END, content)
         text_widget.config(state='disabled')  # Read-only
         text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    def _create_debug_tab(self, parent):
+        """Create debug log tab for monitoring calculation values."""
+        # Instruction label
+        instruction = ttk.LabelFrame(parent, text="디버그 로그 탭 설명", padding=10)
+        instruction.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(instruction, text=
+            "이 탭에서는 μ_visc 계산 과정의 모든 중간 변수 값을 확인할 수 있습니다.\n"
+            "문제 진단 및 계산 검증에 사용하세요. '진단 실행' 버튼으로 상세 분석을 수행합니다.",
+            font=('Arial', 10)
+        ).pack()
+
+        # Control buttons
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(
+            btn_frame,
+            text="진단 실행",
+            command=self._run_debug_diagnostic,
+            width=20
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            btn_frame,
+            text="로그 지우기",
+            command=self._clear_debug_log,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            btn_frame,
+            text="로그 저장",
+            command=self._save_debug_log,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Debug log text area with scrollbar
+        log_frame = ttk.LabelFrame(parent, text="계산 로그", padding=5)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create text widget with scrollbar
+        log_scroll = ttk.Scrollbar(log_frame)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.debug_log_text = tk.Text(
+            log_frame,
+            wrap=tk.WORD,
+            font=('Courier New', 9),
+            yscrollcommand=log_scroll.set
+        )
+        self.debug_log_text.pack(fill=tk.BOTH, expand=True)
+        log_scroll.config(command=self.debug_log_text.yview)
+
+        # Initialize with welcome message
+        self.debug_log_text.insert(tk.END, "=" * 70 + "\n")
+        self.debug_log_text.insert(tk.END, "  디버그 로그 탭 - μ_visc 계산 진단 도구\n")
+        self.debug_log_text.insert(tk.END, "=" * 70 + "\n\n")
+        self.debug_log_text.insert(tk.END, "  '진단 실행' 버튼을 클릭하여 계산 상세 분석을 시작하세요.\n")
+        self.debug_log_text.insert(tk.END, "  이 탭에서는 다음 값들을 확인할 수 있습니다:\n\n")
+        self.debug_log_text.insert(tk.END, "  • 마스터 커브 데이터 (E', E'', 주파수 범위)\n")
+        self.debug_log_text.insert(tk.END, "  • PSD 데이터 (C(q), q 범위)\n")
+        self.debug_log_text.insert(tk.END, "  • G(q) 계산 중간값\n")
+        self.debug_log_text.insert(tk.END, "  • P(q), S(q) 값\n")
+        self.debug_log_text.insert(tk.END, "  • 각도 적분값 (angle integral)\n")
+        self.debug_log_text.insert(tk.END, "  • 피적분함수 (integrand)\n")
+        self.debug_log_text.insert(tk.END, "  • μ_visc 최종값 및 진단 결과\n")
+
+    def _log_debug(self, message: str):
+        """Add a message to the debug log."""
+        if hasattr(self, 'debug_log_text'):
+            self.debug_log_text.insert(tk.END, message + "\n")
+            self.debug_log_text.see(tk.END)
+            self.root.update()
+
+    def _clear_debug_log(self):
+        """Clear the debug log."""
+        if hasattr(self, 'debug_log_text'):
+            self.debug_log_text.delete(1.0, tk.END)
+            self._log_debug("로그가 지워졌습니다.\n")
+
+    def _save_debug_log(self):
+        """Save debug log to file."""
+        if hasattr(self, 'debug_log_text'):
+            from tkinter import filedialog
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                title="디버그 로그 저장"
+            )
+            if filepath:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(self.debug_log_text.get(1.0, tk.END))
+                messagebox.showinfo("저장 완료", f"로그가 저장되었습니다:\n{filepath}")
+
+    def _run_debug_diagnostic(self):
+        """Run comprehensive debug diagnostic for mu_visc calculation."""
+        self._clear_debug_log()
+        self._log_debug("=" * 70)
+        self._log_debug("  μ_visc 계산 진단 시작")
+        self._log_debug("=" * 70 + "\n")
+
+        # 1. Check Material (DMA) data
+        self._log_debug("[1] 재료 데이터 (DMA) 검사")
+        self._log_debug("-" * 50)
+
+        if self.material is None:
+            self._log_debug("  ❌ 오류: 재료 데이터가 없습니다!")
+            self._log_debug("     → Tab 0에서 마스터 커브를 생성하고 Tab 1에서 가져오세요.\n")
+            return
+        else:
+            self._log_debug("  ✓ 재료 데이터 로드됨")
+
+            # Check material attributes
+            if hasattr(self.material, '_omega') and self.material._omega is not None:
+                omega = self.material._omega
+                self._log_debug(f"  • 주파수 범위: {omega[0]:.2e} ~ {omega[-1]:.2e} rad/s")
+                self._log_debug(f"  • 데이터 점 수: {len(omega)}")
+
+            # Sample E' and E'' at various frequencies
+            test_freqs = [1e-4, 1e-2, 1, 1e2, 1e4, 1e6]
+            self._log_debug("\n  주파수별 E', E'' 샘플:")
+            self._log_debug("  " + "-" * 45)
+            self._log_debug("  {:<12} {:<15} {:<15}".format("w (rad/s)", "E' (Pa)", "E'' (Pa)"))
+            self._log_debug("  " + "-" * 45)
+
+            temperature = float(self.temperature_var.get()) if hasattr(self, 'temperature_var') else 20.0
+            any_zero_E = False
+            any_nan_E = False
+
+            for freq in test_freqs:
+                try:
+                    E_prime = self.material.get_storage_modulus(freq, temperature=temperature)
+                    E_loss = self.material.get_loss_modulus(freq, temperature=temperature)
+
+                    if not np.isfinite(E_prime) or not np.isfinite(E_loss):
+                        any_nan_E = True
+                        self._log_debug(f"  {freq:<12.2e} {'NaN!':<15} {'NaN!':<15} ⚠️")
+                    elif E_prime < 1e3 or E_loss < 1e2:
+                        any_zero_E = True
+                        self._log_debug(f"  {freq:<12.2e} {E_prime:<15.2e} {E_loss:<15.2e} ⚠️ 너무 작음")
+                    else:
+                        self._log_debug(f"  {freq:<12.2e} {E_prime:<15.2e} {E_loss:<15.2e}")
+                except Exception as e:
+                    self._log_debug(f"  {freq:<12.2e} {'오류!':<15} {str(e)[:15]:<15}")
+
+            if any_nan_E:
+                self._log_debug("\n  ❌ 경고: 일부 주파수에서 E' 또는 E''가 NaN입니다!")
+            if any_zero_E:
+                self._log_debug("\n  ⚠️ 경고: 일부 주파수에서 E' 또는 E''가 너무 작습니다!")
+
+        # 2. Check PSD data
+        self._log_debug("\n\n[2] PSD 데이터 검사")
+        self._log_debug("-" * 50)
+
+        if self.psd_model is None:
+            self._log_debug("  ❌ 오류: PSD 데이터가 없습니다!")
+            self._log_debug("     → Tab 1에서 PSD 데이터를 로드하세요.\n")
+            return
+        else:
+            self._log_debug("  ✓ PSD 데이터 로드됨")
+
+            # Sample C(q) at various wavenumbers
+            test_qs = [1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
+            self._log_debug("\n  파수별 C(q) 샘플:")
+            self._log_debug("  " + "-" * 35)
+            self._log_debug(f"  {'q (1/m)':<12} {'C(q) (m^4)':<15}")
+            self._log_debug("  " + "-" * 35)
+
+            for q in test_qs:
+                try:
+                    C_q = self.psd_model(np.array([q]))[0]
+                    if np.isfinite(C_q) and C_q > 0:
+                        self._log_debug(f"  {q:<12.2e} {C_q:<15.2e}")
+                    else:
+                        self._log_debug(f"  {q:<12.2e} {'무효!':<15} ⚠️")
+                except Exception as e:
+                    self._log_debug(f"  {q:<12.2e} {'오류!':<15}")
+
+        # 3. Check G(q,v) results
+        self._log_debug("\n\n[3] G(q,v) 계산 결과 검사")
+        self._log_debug("-" * 50)
+
+        if not hasattr(self, 'results') or self.results is None or '2d_results' not in self.results:
+            self._log_debug("  ❌ 오류: G(q,v) 계산 결과가 없습니다!")
+            self._log_debug("     → Tab 2에서 G(q,v) 계산을 먼저 실행하세요.\n")
+            return
+        else:
+            results_2d = self.results['2d_results']
+            q = results_2d['q']
+            v = results_2d['v']
+            G_matrix = results_2d['G_matrix']
+
+            self._log_debug("  ✓ G(q,v) 계산 결과 있음")
+            self._log_debug(f"  • q 범위: {q[0]:.2e} ~ {q[-1]:.2e} (1/m), {len(q)}점")
+            self._log_debug(f"  • v 범위: {v[0]:.2e} ~ {v[-1]:.2e} (m/s), {len(v)}점")
+            self._log_debug(f"  • G 행렬 크기: {G_matrix.shape}")
+
+            # G statistics
+            G_min = np.nanmin(G_matrix)
+            G_max = np.nanmax(G_matrix)
+            G_mean = np.nanmean(G_matrix)
+
+            self._log_debug(f"\n  G(q,v) 통계:")
+            self._log_debug(f"  • 최소값: {G_min:.4e}")
+            self._log_debug(f"  • 최대값: {G_max:.4e}")
+            self._log_debug(f"  • 평균값: {G_mean:.4e}")
+
+            # Check for NaN values
+            nan_count = np.sum(~np.isfinite(G_matrix))
+            if nan_count > 0:
+                self._log_debug(f"  ⚠️ 경고: G 행렬에 {nan_count}개의 NaN/Inf 값이 있습니다!")
+
+            # Calculate P(q) from G
+            self._log_debug("\n  G(q) → P(q) 변환 (중간 속도):")
+            mid_v_idx = len(v) // 2
+            G_mid = G_matrix[:, mid_v_idx]
+            from scipy.special import erf
+
+            # Safe P calculation
+            P_mid = np.zeros_like(G_mid)
+            valid_G = np.isfinite(G_mid) & (G_mid > 0)
+            P_mid[~valid_G] = 1.0  # Full contact for invalid G
+            if np.any(valid_G):
+                sqrt_G = np.sqrt(G_mid[valid_G])
+                arg = 1.0 / (2.0 * np.minimum(sqrt_G, 1e5))
+                P_mid[valid_G] = erf(np.minimum(arg, 10.0))
+
+            P_min = np.min(P_mid)
+            P_max = np.max(P_mid)
+            P_mean = np.mean(P_mid)
+
+            self._log_debug(f"  • P(q) 최소값: {P_min:.6f}")
+            self._log_debug(f"  • P(q) 최대값: {P_max:.6f}")
+            self._log_debug(f"  • P(q) 평균값: {P_mean:.6f}")
+
+            if P_max < 0.001:
+                self._log_debug("  ❌ 심각: P(q)가 거의 0! G(q)가 너무 큽니다.")
+                self._log_debug("     → σ₀ (공칭 압력)를 높이거나 PSD를 확인하세요.")
+
+        # 4. Check calculation parameters
+        self._log_debug("\n\n[4] 계산 파라미터 검사")
+        self._log_debug("-" * 50)
+
+        sigma_0 = float(self.sigma_0_var.get()) * 1e6 if hasattr(self, 'sigma_0_var') else 0.3e6
+        temperature = float(self.temperature_var.get()) if hasattr(self, 'temperature_var') else 20.0
+        poisson = float(self.poisson_var.get()) if hasattr(self, 'poisson_var') else 0.5
+        gamma = float(self.gamma_var.get()) if hasattr(self, 'gamma_var') else 0.5
+        n_phi = int(self.n_phi_var.get()) if hasattr(self, 'n_phi_var') else 72
+
+        self._log_debug(f"  • σ₀ (공칭 압력): {sigma_0/1e6:.3f} MPa = {sigma_0:.2e} Pa")
+        self._log_debug(f"  • T (온도): {temperature:.1f} °C")
+        self._log_debug(f"  • ν (푸아송비): {poisson:.2f}")
+        self._log_debug(f"  • γ (접촉 보정): {gamma:.2f}")
+        self._log_debug(f"  • n_φ (각도 적분점): {n_phi}")
+
+        prefactor = 1.0 / ((1 - poisson**2) * sigma_0)
+        self._log_debug(f"  • prefactor = 1/((1-ν²)σ₀) = {prefactor:.4e}")
+
+        # 5. Test single point calculation
+        self._log_debug("\n\n[5] 단일점 계산 테스트")
+        self._log_debug("-" * 50)
+
+        # Pick a middle q and v
+        mid_q_idx = len(q) // 2
+        mid_v_idx = len(v) // 2
+        test_q = q[mid_q_idx]
+        test_v = v[mid_v_idx]
+
+        self._log_debug(f"  테스트 지점:")
+        self._log_debug(f"  • q = {test_q:.2e} (1/m)")
+        self._log_debug(f"  • v = {test_v:.4f} (m/s)")
+
+        # Calculate omega range for this q and v
+        omega_max = test_q * test_v  # φ = 0
+        omega_min = test_q * test_v * np.cos(np.pi/2 - 0.001)  # near φ = π/2
+
+        self._log_debug(f"  • ω 범위: {omega_min:.2e} ~ {omega_max:.2e} rad/s")
+
+        # Get E' and E'' at omega_max
+        try:
+            E_prime_test = self.material.get_storage_modulus(omega_max, temperature=temperature)
+            E_loss_test = self.material.get_loss_modulus(omega_max, temperature=temperature)
+            self._log_debug(f"\n  ω={omega_max:.2e} 에서:")
+            self._log_debug(f"  • E' = {E_prime_test:.4e} Pa")
+            self._log_debug(f"  • E'' = {E_loss_test:.4e} Pa")
+
+            if E_loss_test < 1:
+                self._log_debug("  ❌ 심각: E''가 거의 0! 마스터 커브를 확인하세요.")
+            elif E_loss_test < 1e4:
+                self._log_debug(f"  ⚠️ 경고: E''가 작음 ({E_loss_test:.2e})")
+        except Exception as e:
+            self._log_debug(f"  ❌ 오류: {e}")
+
+        # Calculate angle integral contribution
+        self._log_debug("\n  각도 적분 테스트:")
+        phi_test = np.linspace(0, np.pi/2, n_phi)
+        omega_test = test_q * test_v * np.cos(phi_test)
+        cos_phi_test = np.cos(phi_test)
+
+        integrand_test = np.zeros(n_phi)
+        ImE_test = np.zeros(n_phi)
+
+        for i, (w, c) in enumerate(zip(omega_test, cos_phi_test)):
+            w = max(w, 1e-10)
+            try:
+                E_loss = self.material.get_loss_modulus(w, temperature=temperature)
+                ImE_test[i] = E_loss
+                integrand_test[i] = c * E_loss * prefactor
+            except:
+                ImE_test[i] = 0
+                integrand_test[i] = 0
+
+        # Show some sample values
+        self._log_debug(f"\n  φ별 샘플 (5개):")
+        self._log_debug("  {:<10} {:<10} {:<12} {:<12} {:<12}".format("phi (rad)", "cos(phi)", "w (rad/s)", "E'' (Pa)", "integrand"))
+        for i in [0, n_phi//4, n_phi//2, 3*n_phi//4, n_phi-1]:
+            self._log_debug(f"  {phi_test[i]:<10.4f} {cos_phi_test[i]:<10.4f} {omega_test[i]:<12.2e} {ImE_test[i]:<12.2e} {integrand_test[i]:<12.4e}")
+
+        # Calculate angle integral
+        from scipy.integrate import simpson
+        angle_integral = 4.0 * simpson(integrand_test, x=phi_test)
+        self._log_debug(f"\n  각도 적분 결과: {angle_integral:.6e}")
+
+        if abs(angle_integral) < 1e-10:
+            self._log_debug("  ❌ 심각: 각도 적분이 0! E''가 문제입니다.")
+
+        # 6. Calculate full integrand for this q
+        self._log_debug("\n\n[6] 전체 피적분함수 테스트")
+        self._log_debug("-" * 50)
+
+        C_q_test = self.psd_model(np.array([test_q]))[0]
+        G_test = G_matrix[mid_q_idx, mid_v_idx]
+
+        # Calculate P and S
+        if G_test > 0 and np.isfinite(G_test):
+            P_test = erf(1.0 / (2.0 * np.sqrt(G_test)))
+        else:
+            P_test = 1.0
+        S_test = gamma + (1 - gamma) * P_test**2
+
+        q3_test = test_q**3
+        qCPS_test = q3_test * C_q_test * P_test * S_test
+        full_integrand = qCPS_test * angle_integral
+
+        self._log_debug(f"  q = {test_q:.2e}")
+        self._log_debug(f"  C(q) = {C_q_test:.4e}")
+        self._log_debug(f"  G(q) = {G_test:.4e}")
+        self._log_debug(f"  P(q) = erf(1/(2√G)) = {P_test:.6f}")
+        self._log_debug(f"  S(q) = γ + (1-γ)P² = {S_test:.6f}")
+        self._log_debug(f"  q³ = {q3_test:.4e}")
+        self._log_debug(f"  q³·C·P·S = {qCPS_test:.4e}")
+        self._log_debug(f"  angle_integral = {angle_integral:.4e}")
+        self._log_debug(f"  피적분함수 = q³·C·P·S × angle_int = {full_integrand:.6e}")
+
+        if abs(full_integrand) < 1e-15:
+            self._log_debug("\n  ❌ 피적분함수가 거의 0!")
+            if P_test < 0.01:
+                self._log_debug("     → P(q)가 너무 작음 (G가 너무 큼)")
+            if abs(angle_integral) < 1e-10:
+                self._log_debug("     → 각도 적분이 0 (E''가 문제)")
+
+        # 7. Existing mu_visc results
+        self._log_debug("\n\n[7] μ_visc 결과 확인")
+        self._log_debug("-" * 50)
+
+        if hasattr(self, 'mu_visc_results') and self.mu_visc_results is not None:
+            mu_array = self.mu_visc_results.get('mu', [])
+            v_array = self.mu_visc_results.get('v', [])
+
+            if len(mu_array) > 0:
+                mu_min = np.min(mu_array)
+                mu_max = np.max(mu_array)
+                mu_mean = np.mean(mu_array)
+
+                self._log_debug(f"  ✓ μ_visc 결과 있음")
+                self._log_debug(f"  • μ_visc 범위: {mu_min:.6f} ~ {mu_max:.6f}")
+                self._log_debug(f"  • μ_visc 평균: {mu_mean:.6f}")
+
+                if mu_max < 1e-6:
+                    self._log_debug("\n  ❌ 심각: μ_visc가 거의 0!")
+                    self._log_debug("     가능한 원인:")
+                    self._log_debug("     1. E''(손실탄성률)가 너무 작음")
+                    self._log_debug("     2. P(q)(접촉면적비)가 너무 작음 → G(q)가 너무 큼")
+                    self._log_debug("     3. 각도 적분이 0")
+                    self._log_debug("     4. 마스터 커브 주파수 범위가 맞지 않음")
+        else:
+            self._log_debug("  ℹ️ μ_visc 계산 결과가 아직 없습니다.")
+            self._log_debug("     → Tab 5에서 μ_visc 계산을 실행하세요.")
+
+        # 8. Summary and recommendations
+        self._log_debug("\n\n" + "=" * 70)
+        self._log_debug("  진단 요약 및 권장 사항")
+        self._log_debug("=" * 70)
+
+        issues_found = False
+
+        # Check for common issues
+        if P_max < 0.01:
+            issues_found = True
+            self._log_debug("\n  ⚠️ P(q)가 매우 작음 (< 0.01)")
+            self._log_debug("     권장: σ₀ (공칭 압력)를 높이거나 표면 거칠기 확인")
+
+        if abs(angle_integral) < 1e-10:
+            issues_found = True
+            self._log_debug("\n  ⚠️ 각도 적분이 0에 가까움")
+            self._log_debug("     권장: 마스터 커브 데이터 (특히 E'') 확인")
+            self._log_debug("     → ω 범위가 qv 범위를 포함하는지 확인")
+
+        if any_nan_E:
+            issues_found = True
+            self._log_debug("\n  ⚠️ E' 또는 E''에 NaN 값 존재")
+            self._log_debug("     권장: 마스터 커브 생성 과정 확인")
+
+        if not issues_found:
+            self._log_debug("\n  ✓ 주요 문제가 발견되지 않았습니다.")
+            self._log_debug("    계산이 정상적으로 진행되어야 합니다.")
+
+        self._log_debug("\n\n진단 완료.\n")
 
 
 def main():
