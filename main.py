@@ -351,7 +351,7 @@ class PerssonModelGUI_V2:
         dma_load_row = ttk.Frame(dma_frame)
         dma_load_row.pack(fill=tk.X, pady=(0, 3))
         ttk.Button(dma_load_row, text="Load DMA", command=self._load_material, width=10).pack(side=tk.LEFT)
-        ttk.Button(dma_load_row, text="Load PSD", command=self._load_psd, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(dma_load_row, text="Load PSD", command=self._load_psd_data, width=10).pack(side=tk.LEFT, padx=(5, 0))
 
         # Smoothing row
         smooth_row = ttk.Frame(dma_frame)
@@ -1929,8 +1929,11 @@ class PerssonModelGUI_V2:
 
                 return 10 ** log_C_out
 
-            # Store the PSD model
+            # Store the PSD model with q_data and C_data attributes for RMS slope calculation
             self.psd_model = psd_model
+            # Add attributes to function object so RMS slope calculation uses correct q range
+            self.psd_model.q_data = q_array.copy()
+            self.psd_model.C_data = C_array.copy()
 
             # Store q range for calculations
             self.q_min_var.set(str(q0))
