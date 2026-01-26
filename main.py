@@ -605,9 +605,16 @@ class PerssonModelGUI_V2:
             # Standardize column names based on number of columns
             n_cols = len(self.mc_raw_df.columns)
 
-            if n_cols >= 6:
+            if n_cols >= 7:
+                # Full format with |E*|: f, T, f_reduced, Amplitude, E', E'', |E*|
+                col_names = ['f', 'T', 'f_reduced', 'Amplitude', "E'", "E''", "E_star"]
+                # Extend with generic names if more columns exist
+                while len(col_names) < n_cols:
+                    col_names.append(f"col_{len(col_names)}")
+                self.mc_raw_df.columns = col_names[:n_cols]
+            elif n_cols == 6:
                 # Full format: f, T, f_reduced, Amplitude, E', E''
-                self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'", "E''"][:n_cols]
+                self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'", "E''"]
             elif n_cols == 5:
                 # Missing E'': f, T, f_reduced, Amplitude, E'
                 self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'"]
