@@ -75,6 +75,7 @@ from persson_model.core.friction import (
     calculate_hrms_profile,
     RMSSlopeCalculator
 )
+from persson_model.core.master_curve import MasterCurveGenerator, load_multi_temp_dma
 
 # Configure matplotlib for better Korean font support
 # IMPORTANT: Set unicode_minus FIRST to avoid minus sign warnings
@@ -243,6 +244,11 @@ class PerssonModelGUI_V2:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
+        # Tab 0: Master Curve Generation (NEW - First Tab)
+        self.tab_master_curve = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_master_curve, text="0. 마스터 커브 생성")
+        self._create_master_curve_tab(self.tab_master_curve)
+
         # Tab 1: Input Data Verification
         self.tab_verification = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_verification, text="1. 입력 데이터 검증")
@@ -373,6 +379,578 @@ class PerssonModelGUI_V2:
             text="그래프 저장",
             command=lambda: self._save_plot(self.fig_verification, "verification_plot")
         ).pack(side=tk.LEFT, padx=5)
+
+    def _create_master_curve_tab(self, parent):
+        """Create Master Curve generation tab using Time-Temperature Superposition."""
+        # Main container
+        main_container = ttk.Frame(parent)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Left panel for controls (fixed width)
+        left_frame = ttk.Frame(main_container, width=380)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        left_frame.pack_propagate(False)
+
+        # ============== Left Panel: Controls ==============
+
+        # 1. Description
+        desc_frame = ttk.LabelFrame(left_frame, text="탭 설명", padding=5)
+        desc_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        desc_text = (
+            "다중 온도 DMA 데이터로부터 마스터 커브를 생성합니다.\n"
+            "시간-온도 중첩 원리(TTS) 적용:\n"
+            "  - 수평 이동 aT: 주파수 시프트\n"
+            "  - 수직 이동 bT: 모듈러스 시프트 (밀도/엔트로피 보정)"
+        )
+        ttk.Label(desc_frame, text=desc_text, font=('Arial', 9), justify=tk.LEFT).pack(anchor=tk.W)
+
+        # 2. File Loading
+        load_frame = ttk.LabelFrame(left_frame, text="데이터 로드", padding=5)
+        load_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        ttk.Button(
+            load_frame,
+            text="다중 온도 DMA 데이터 로드 (CSV/Excel)",
+            command=self._load_multi_temp_dma
+        ).pack(fill=tk.X, pady=2)
+
+        self.mc_data_info_var = tk.StringVar(value="데이터 미로드")
+        ttk.Label(load_frame, textvariable=self.mc_data_info_var,
+                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
+
+        # 3. Settings
+        settings_frame = ttk.LabelFrame(left_frame, text="설정", padding=5)
+        settings_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        # Reference temperature
+        row1 = ttk.Frame(settings_frame)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="기준 온도 Tref (°C):", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.mc_tref_var = tk.StringVar(value="20.0")
+        ttk.Entry(row1, textvariable=self.mc_tref_var, width=10).pack(side=tk.RIGHT)
+
+        # bT mode
+        row2 = ttk.Frame(settings_frame)
+        row2.pack(fill=tk.X, pady=2)
+        ttk.Label(row2, text="bT 계산 방법:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.mc_bt_mode_var = tk.StringVar(value="optimize")
+        bt_combo = ttk.Combobox(
+            row2, textvariable=self.mc_bt_mode_var,
+            values=["optimize", "theoretical"],
+            width=12, state="readonly"
+        )
+        bt_combo.pack(side=tk.RIGHT)
+
+        # Apply bT checkbox
+        self.mc_use_bt_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            settings_frame,
+            text="수직 이동 bT 적용 (Apply Vertical Shift)",
+            variable=self.mc_use_bt_var
+        ).pack(anchor=tk.W, pady=2)
+
+        ttk.Label(settings_frame,
+                  text="optimize: 수치 최적화 / theoretical: T/Tref 공식",
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        # 4. Calculate button
+        calc_frame = ttk.Frame(settings_frame)
+        calc_frame.pack(fill=tk.X, pady=5)
+
+        self.mc_calc_btn = ttk.Button(
+            calc_frame,
+            text="마스터 커브 생성",
+            command=self._generate_master_curve
+        )
+        self.mc_calc_btn.pack(fill=tk.X)
+
+        # Progress bar
+        self.mc_progress_var = tk.IntVar()
+        self.mc_progress_bar = ttk.Progressbar(
+            calc_frame, variable=self.mc_progress_var, maximum=100
+        )
+        self.mc_progress_bar.pack(fill=tk.X, pady=2)
+
+        # 5. Results Summary
+        results_frame = ttk.LabelFrame(left_frame, text="결과 요약", padding=5)
+        results_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        self.mc_result_text = tk.Text(results_frame, height=10, font=("Courier", 8), wrap=tk.WORD)
+        self.mc_result_text.pack(fill=tk.X)
+
+        # 6. Shift Factor Table
+        table_frame = ttk.LabelFrame(left_frame, text="Shift Factor 테이블", padding=5)
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=2, padx=3)
+
+        # Create treeview for shift factors
+        columns = ('T', 'aT', 'bT', 'log_aT')
+        self.mc_shift_table = ttk.Treeview(table_frame, columns=columns, show='headings', height=8)
+        self.mc_shift_table.heading('T', text='T (°C)')
+        self.mc_shift_table.heading('aT', text='aT')
+        self.mc_shift_table.heading('bT', text='bT')
+        self.mc_shift_table.heading('log_aT', text='log(aT)')
+
+        self.mc_shift_table.column('T', width=60, anchor='center')
+        self.mc_shift_table.column('aT', width=80, anchor='center')
+        self.mc_shift_table.column('bT', width=60, anchor='center')
+        self.mc_shift_table.column('log_aT', width=70, anchor='center')
+
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.mc_shift_table.yview)
+        self.mc_shift_table.configure(yscrollcommand=scrollbar.set)
+
+        self.mc_shift_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 7. Export buttons
+        export_frame = ttk.LabelFrame(left_frame, text="내보내기", padding=5)
+        export_frame.pack(fill=tk.X, pady=2, padx=3)
+
+        ttk.Button(
+            export_frame, text="마스터 커브 CSV 내보내기",
+            command=self._export_master_curve
+        ).pack(fill=tk.X, pady=1)
+
+        ttk.Button(
+            export_frame, text="마스터 커브 적용 (Tab 1로 전송)",
+            command=self._apply_master_curve_to_verification
+        ).pack(fill=tk.X, pady=1)
+
+        # ============== Right Panel: Plots ==============
+
+        right_panel = ttk.Frame(main_container)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        plot_frame = ttk.LabelFrame(right_panel, text="시각화", padding=5)
+        plot_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create figure with 2x2 subplots
+        self.fig_mc = Figure(figsize=(11, 8), dpi=100)
+
+        # Top-left: Raw data (multi-temperature)
+        self.ax_mc_raw = self.fig_mc.add_subplot(221)
+        self.ax_mc_raw.set_title('원본 데이터 (온도별)', fontweight='bold')
+        self.ax_mc_raw.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_raw.set_ylabel('E\', E\'\' (MPa)')
+        self.ax_mc_raw.set_xscale('log')
+        self.ax_mc_raw.set_yscale('log')
+        self.ax_mc_raw.grid(True, alpha=0.3)
+
+        # Top-right: Master curve
+        self.ax_mc_master = self.fig_mc.add_subplot(222)
+        self.ax_mc_master.set_title('마스터 커브 (Tref)', fontweight='bold')
+        self.ax_mc_master.set_xlabel('Reduced Frequency (Hz)')
+        self.ax_mc_master.set_ylabel('E\', E\'\' (MPa)')
+        self.ax_mc_master.set_xscale('log')
+        self.ax_mc_master.set_yscale('log')
+        self.ax_mc_master.grid(True, alpha=0.3)
+
+        # Bottom-left: aT vs Temperature
+        self.ax_mc_aT = self.fig_mc.add_subplot(223)
+        self.ax_mc_aT.set_title('수평 이동 계수 aT', fontweight='bold')
+        self.ax_mc_aT.set_xlabel('온도 T (°C)')
+        self.ax_mc_aT.set_ylabel('log10(aT)')
+        self.ax_mc_aT.grid(True, alpha=0.3)
+
+        # Bottom-right: bT vs Temperature
+        self.ax_mc_bT = self.fig_mc.add_subplot(224)
+        self.ax_mc_bT.set_title('수직 이동 계수 bT', fontweight='bold')
+        self.ax_mc_bT.set_xlabel('온도 T (°C)')
+        self.ax_mc_bT.set_ylabel('bT')
+        self.ax_mc_bT.grid(True, alpha=0.3)
+
+        self.fig_mc.tight_layout()
+
+        self.canvas_mc = FigureCanvasTkAgg(self.fig_mc, plot_frame)
+        self.canvas_mc.draw()
+        self.canvas_mc.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2Tk(self.canvas_mc, plot_frame)
+        toolbar.update()
+
+        # Initialize master curve generator
+        self.master_curve_gen = None
+        self.mc_raw_df = None
+
+    def _load_multi_temp_dma(self):
+        """Load multi-temperature DMA data for master curve generation."""
+        filename = filedialog.askopenfilename(
+            title="다중 온도 DMA 데이터 파일 선택",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("CSV files", "*.csv"),
+                ("Text files", "*.txt"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import pandas as pd
+
+            # Load data
+            if filename.endswith('.xlsx') or filename.endswith('.xls'):
+                self.mc_raw_df = pd.read_excel(filename, skiprows=1)
+            else:
+                # Try different delimiters
+                try:
+                    self.mc_raw_df = pd.read_csv(filename, skiprows=1, sep='\t')
+                    if len(self.mc_raw_df.columns) < 4:
+                        self.mc_raw_df = pd.read_csv(filename, skiprows=1, sep=',')
+                except:
+                    self.mc_raw_df = pd.read_csv(filename, skiprows=1, delim_whitespace=True)
+
+            # Standardize column names based on expected format
+            # Expected: f(Hz), T(°C), f(Hz), Amplitude, E'(MPa), E''(MPa)
+            if len(self.mc_raw_df.columns) >= 6:
+                self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'", "E''"][:len(self.mc_raw_df.columns)]
+            elif len(self.mc_raw_df.columns) >= 4:
+                self.mc_raw_df.columns = ['f', 'T', "E'", "E''"][:len(self.mc_raw_df.columns)]
+
+            # Convert to numeric and drop NaN
+            for col in self.mc_raw_df.columns:
+                self.mc_raw_df[col] = pd.to_numeric(self.mc_raw_df[col], errors='coerce')
+            self.mc_raw_df = self.mc_raw_df.dropna()
+
+            # Get unique temperatures
+            temps = self.mc_raw_df['T'].unique()
+            n_temps = len(temps)
+            n_points = len(self.mc_raw_df)
+
+            self.mc_data_info_var.set(f"로드됨: {n_points}개 데이터, {n_temps}개 온도")
+
+            # Plot raw data
+            self._plot_mc_raw_data()
+
+            messagebox.showinfo(
+                "성공",
+                f"데이터 로드 완료:\n"
+                f"  - 총 {n_points}개 데이터 포인트\n"
+                f"  - {n_temps}개 온도: {temps.min():.1f}°C ~ {temps.max():.1f}°C\n"
+                f"  - 주파수 범위: {self.mc_raw_df['f'].min():.2f} ~ {self.mc_raw_df['f'].max():.2f} Hz"
+            )
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"데이터 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def _plot_mc_raw_data(self):
+        """Plot raw multi-temperature DMA data."""
+        if self.mc_raw_df is None:
+            return
+
+        self.ax_mc_raw.clear()
+        self.ax_mc_raw.set_title('원본 데이터 (온도별)', fontweight='bold')
+        self.ax_mc_raw.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_raw.set_ylabel('E\', E\'\' (MPa)')
+        self.ax_mc_raw.set_xscale('log')
+        self.ax_mc_raw.set_yscale('log')
+        self.ax_mc_raw.grid(True, alpha=0.3)
+
+        temps = np.sort(self.mc_raw_df['T'].unique())
+        colors = plt.cm.coolwarm(np.linspace(0, 1, len(temps)))
+
+        for i, T in enumerate(temps):
+            mask = self.mc_raw_df['T'] == T
+            data = self.mc_raw_df[mask]
+
+            self.ax_mc_raw.plot(data['f'], data["E'"], 'o-', color=colors[i],
+                               markersize=3, linewidth=1, alpha=0.7,
+                               label=f"E' ({T:.0f}°C)")
+            self.ax_mc_raw.plot(data['f'], data["E''"], 's--', color=colors[i],
+                               markersize=2, linewidth=0.8, alpha=0.5)
+
+        # Add legend with limited entries
+        if len(temps) <= 8:
+            self.ax_mc_raw.legend(fontsize=6, loc='upper left', ncol=2)
+
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
+
+    def _generate_master_curve(self):
+        """Generate master curve using TTS."""
+        if self.mc_raw_df is None:
+            messagebox.showwarning("경고", "먼저 다중 온도 DMA 데이터를 로드하세요.")
+            return
+
+        try:
+            self.mc_calc_btn.config(state='disabled')
+            self.mc_progress_var.set(10)
+            self.root.update_idletasks()
+
+            # Get settings
+            T_ref = float(self.mc_tref_var.get())
+            use_bT = self.mc_use_bt_var.get()
+            bT_mode = self.mc_bt_mode_var.get()
+
+            # Create master curve generator
+            self.master_curve_gen = MasterCurveGenerator(T_ref=T_ref)
+
+            # Load data
+            self.master_curve_gen.load_data(
+                self.mc_raw_df,
+                T_col='T', f_col='f',
+                E_storage_col="E'", E_loss_col="E''"
+            )
+
+            self.mc_progress_var.set(30)
+            self.root.update_idletasks()
+
+            # Optimize shift factors
+            self.master_curve_gen.optimize_shift_factors(
+                use_bT=use_bT,
+                bT_mode=bT_mode,
+                verbose=False
+            )
+
+            self.mc_progress_var.set(60)
+            self.root.update_idletasks()
+
+            # Generate master curve
+            master_curve = self.master_curve_gen.generate_master_curve(
+                n_points=200, smooth=True
+            )
+
+            self.mc_progress_var.set(80)
+            self.root.update_idletasks()
+
+            # Fit WLF
+            wlf_result = self.master_curve_gen.fit_wlf()
+
+            self.mc_progress_var.set(90)
+            self.root.update_idletasks()
+
+            # Update plots
+            self._update_mc_plots(master_curve, wlf_result)
+
+            # Update results text
+            self._update_mc_results(wlf_result)
+
+            # Update shift factor table
+            self._update_mc_shift_table()
+
+            self.mc_progress_var.set(100)
+            self.status_var.set("마스터 커브 생성 완료")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"마스터 커브 생성 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+        finally:
+            self.mc_calc_btn.config(state='normal')
+
+    def _update_mc_plots(self, master_curve, wlf_result):
+        """Update master curve plots."""
+        # Clear all axes except raw data
+        self.ax_mc_master.clear()
+        self.ax_mc_aT.clear()
+        self.ax_mc_bT.clear()
+
+        # Get data
+        temps = np.sort(self.master_curve_gen.temperatures)
+        aT = self.master_curve_gen.aT
+        bT = self.master_curve_gen.bT
+        T_ref = self.master_curve_gen.T_ref
+
+        # Colors for temperatures
+        colors = plt.cm.coolwarm(np.linspace(0, 1, len(temps)))
+
+        # Plot 1: Master curve with shifted data
+        self.ax_mc_master.set_title(f'마스터 커브 (Tref={T_ref}°C)', fontweight='bold')
+        self.ax_mc_master.set_xlabel('Reduced Frequency (Hz)')
+        self.ax_mc_master.set_ylabel('E\', E\'\' (MPa)')
+        self.ax_mc_master.set_xscale('log')
+        self.ax_mc_master.set_yscale('log')
+        self.ax_mc_master.grid(True, alpha=0.3)
+
+        # Plot shifted data points
+        for i, T in enumerate(temps):
+            shifted = self.master_curve_gen.get_shifted_data(T)
+            self.ax_mc_master.scatter(shifted['f_reduced'], shifted['E_storage_shifted'],
+                                     c=[colors[i]], s=10, alpha=0.5, marker='o')
+            self.ax_mc_master.scatter(shifted['f_reduced'], shifted['E_loss_shifted'],
+                                     c=[colors[i]], s=8, alpha=0.3, marker='s')
+
+        # Plot master curve
+        self.ax_mc_master.plot(master_curve['f'], master_curve['E_storage'],
+                              'k-', linewidth=2, label="E' (Master)")
+        self.ax_mc_master.plot(master_curve['f'], master_curve['E_loss'],
+                              'k--', linewidth=2, label="E'' (Master)")
+        self.ax_mc_master.legend(fontsize=8)
+
+        # Plot 2: aT vs Temperature
+        self.ax_mc_aT.set_title('수평 이동 계수 aT', fontweight='bold')
+        self.ax_mc_aT.set_xlabel('온도 T (°C)')
+        self.ax_mc_aT.set_ylabel('log10(aT)')
+        self.ax_mc_aT.grid(True, alpha=0.3)
+
+        log_aT = [np.log10(aT[T]) for T in temps]
+        self.ax_mc_aT.scatter(temps, log_aT, c='blue', s=50, zorder=3, label='Measured')
+
+        # WLF fit line
+        if wlf_result['C1'] is not None:
+            T_fit = np.linspace(temps.min(), temps.max(), 100)
+            log_aT_fit = -wlf_result['C1'] * (T_fit - T_ref) / (wlf_result['C2'] + (T_fit - T_ref))
+            self.ax_mc_aT.plot(T_fit, log_aT_fit, 'r-', linewidth=2,
+                              label=f"WLF (C1={wlf_result['C1']:.2f}, C2={wlf_result['C2']:.1f})")
+        self.ax_mc_aT.legend(fontsize=8)
+        self.ax_mc_aT.axhline(0, color='gray', linestyle=':', alpha=0.5)
+        self.ax_mc_aT.axvline(T_ref, color='green', linestyle='--', alpha=0.5, label=f'Tref={T_ref}°C')
+
+        # Plot 3: bT vs Temperature
+        self.ax_mc_bT.set_title('수직 이동 계수 bT', fontweight='bold')
+        self.ax_mc_bT.set_xlabel('온도 T (°C)')
+        self.ax_mc_bT.set_ylabel('bT')
+        self.ax_mc_bT.grid(True, alpha=0.3)
+
+        bT_values = [bT[T] for T in temps]
+        self.ax_mc_bT.scatter(temps, bT_values, c='blue', s=50, zorder=3, label='Measured')
+
+        # Theoretical line T/Tref
+        T_ref_K = T_ref + 273.15
+        bT_theory = (temps + 273.15) / T_ref_K
+        self.ax_mc_bT.plot(temps, bT_theory, 'r--', linewidth=1.5, label='T/Tref (이론)')
+
+        self.ax_mc_bT.axhline(1, color='gray', linestyle=':', alpha=0.5)
+        self.ax_mc_bT.axvline(T_ref, color='green', linestyle='--', alpha=0.5)
+        self.ax_mc_bT.legend(fontsize=8)
+
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
+
+    def _update_mc_results(self, wlf_result):
+        """Update master curve results text."""
+        self.mc_result_text.delete('1.0', tk.END)
+
+        T_ref = self.master_curve_gen.T_ref
+        temps = self.master_curve_gen.temperatures
+
+        text = f"=== 마스터 커브 생성 결과 ===\n\n"
+        text += f"기준 온도 Tref: {T_ref}°C\n"
+        text += f"온도 범위: {temps.min():.1f} ~ {temps.max():.1f}°C\n"
+        text += f"온도 개수: {len(temps)}개\n\n"
+
+        if wlf_result['C1'] is not None:
+            text += f"=== WLF 파라미터 ===\n"
+            text += f"C1 = {wlf_result['C1']:.4f}\n"
+            text += f"C2 = {wlf_result['C2']:.4f}\n"
+            text += f"R² = {wlf_result['r_squared']:.4f}\n\n"
+
+        text += f"마스터 커브 주파수 범위:\n"
+        text += f"  {self.master_curve_gen.master_f.min():.2e} ~ "
+        text += f"{self.master_curve_gen.master_f.max():.2e} Hz\n"
+
+        self.mc_result_text.insert(tk.END, text)
+
+    def _update_mc_shift_table(self):
+        """Update shift factor table."""
+        # Clear existing entries
+        for item in self.mc_shift_table.get_children():
+            self.mc_shift_table.delete(item)
+
+        # Add new entries
+        temps = np.sort(self.master_curve_gen.temperatures)
+        for T in temps:
+            aT = self.master_curve_gen.aT[T]
+            bT = self.master_curve_gen.bT[T]
+            log_aT = np.log10(aT)
+
+            self.mc_shift_table.insert('', 'end', values=(
+                f'{T:.1f}',
+                f'{aT:.4e}',
+                f'{bT:.4f}',
+                f'{log_aT:.4f}'
+            ))
+
+    def _export_master_curve(self):
+        """Export master curve data to CSV."""
+        if self.master_curve_gen is None or self.master_curve_gen.master_f is None:
+            messagebox.showwarning("경고", "먼저 마스터 커브를 생성하세요.")
+            return
+
+        filename = filedialog.asksaveasfilename(
+            title="마스터 커브 저장",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import pandas as pd
+
+            # Master curve data
+            mc_data = pd.DataFrame({
+                'f (Hz)': self.master_curve_gen.master_f,
+                'omega (rad/s)': 2 * np.pi * self.master_curve_gen.master_f,
+                "E' (MPa)": self.master_curve_gen.master_E_storage,
+                "E'' (MPa)": self.master_curve_gen.master_E_loss,
+                'tan_delta': self.master_curve_gen.master_E_loss / self.master_curve_gen.master_E_storage
+            })
+
+            # Shift factors
+            shift_data = self.master_curve_gen.get_shift_factor_table()
+
+            # Save to CSV with both tables
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                f.write(f"# Master Curve (Tref = {self.master_curve_gen.T_ref}°C)\n")
+                mc_data.to_csv(f, index=False)
+                f.write("\n# Shift Factors\n")
+                shift_data.to_csv(f, index=False)
+
+            messagebox.showinfo("성공", f"마스터 커브 저장 완료:\n{filename}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+
+    def _apply_master_curve_to_verification(self):
+        """Apply generated master curve to Tab 1 for friction calculation."""
+        if self.master_curve_gen is None or self.master_curve_gen.master_f is None:
+            messagebox.showwarning("경고", "먼저 마스터 커브를 생성하세요.")
+            return
+
+        try:
+            # Get master curve data
+            omega = 2 * np.pi * self.master_curve_gen.master_f
+            E_storage = self.master_curve_gen.master_E_storage * 1e6  # MPa to Pa
+            E_loss = self.master_curve_gen.master_E_loss * 1e6  # MPa to Pa
+
+            # Create material from master curve
+            self.material = create_material_from_dma(
+                omega=omega,
+                E_storage=E_storage,
+                E_loss=E_loss,
+                material_name=f"Master Curve (Tref={self.master_curve_gen.T_ref}°C)",
+                reference_temp=self.master_curve_gen.T_ref
+            )
+
+            # Store raw data for plotting (in omega units)
+            self.raw_dma_data = {
+                'omega': omega,
+                'E_storage': E_storage,
+                'E_loss': E_loss
+            }
+
+            # Update verification plots
+            self._update_verification_plots()
+            self._update_material_display()
+
+            # Switch to verification tab
+            self.notebook.select(1)  # Tab 1
+
+            messagebox.showinfo(
+                "성공",
+                f"마스터 커브가 Tab 1에 적용되었습니다.\n"
+                f"기준 온도: {self.master_curve_gen.T_ref}°C\n"
+                f"주파수 범위: {self.master_curve_gen.master_f.min():.2e} ~ "
+                f"{self.master_curve_gen.master_f.max():.2e} Hz"
+            )
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"적용 실패:\n{str(e)}\n\n{traceback.format_exc()}")
 
     def _create_parameters_tab(self, parent):
         """Create calculation parameters tab."""
