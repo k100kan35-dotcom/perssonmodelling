@@ -1761,18 +1761,30 @@ class PerssonModelGUI_V2:
                 log_E_storage_ext = interp_storage(log_omega_ext)
                 log_E_loss_ext = interp_loss(log_omega_ext)
 
-                # Apply hold extrapolation at boundaries (don't let values explode)
-                # For low frequencies: hold the lowest frequency value
+                # Linear extrapolation in log-log space using edge slopes
+                # For low frequencies: extrapolate using slope from first few points
                 low_mask = log_omega_ext < log_omega.min()
                 if np.any(low_mask):
-                    log_E_storage_ext[low_mask] = log_E_storage[0]
-                    log_E_loss_ext[low_mask] = log_E_loss[0]
+                    # Use first 10 points (or less if not enough data) to estimate slope
+                    n_fit = min(10, len(log_omega) // 4, len(log_omega) - 1)
+                    if n_fit >= 2:
+                        slope_storage_low = (log_E_storage[n_fit] - log_E_storage[0]) / (log_omega[n_fit] - log_omega[0])
+                        slope_loss_low = (log_E_loss[n_fit] - log_E_loss[0]) / (log_omega[n_fit] - log_omega[0])
+                        delta_omega = log_omega_ext[low_mask] - log_omega[0]
+                        log_E_storage_ext[low_mask] = log_E_storage[0] + slope_storage_low * delta_omega
+                        log_E_loss_ext[low_mask] = log_E_loss[0] + slope_loss_low * delta_omega
 
-                # For high frequencies: hold the highest frequency value
+                # For high frequencies: extrapolate using slope from last few points
                 high_mask = log_omega_ext > log_omega.max()
                 if np.any(high_mask):
-                    log_E_storage_ext[high_mask] = log_E_storage[-1]
-                    log_E_loss_ext[high_mask] = log_E_loss[-1]
+                    # Use last 10 points (or less if not enough data) to estimate slope
+                    n_fit = min(10, len(log_omega) // 4, len(log_omega) - 1)
+                    if n_fit >= 2:
+                        slope_storage_high = (log_E_storage[-1] - log_E_storage[-n_fit-1]) / (log_omega[-1] - log_omega[-n_fit-1])
+                        slope_loss_high = (log_E_loss[-1] - log_E_loss[-n_fit-1]) / (log_omega[-1] - log_omega[-n_fit-1])
+                        delta_omega = log_omega_ext[high_mask] - log_omega[-1]
+                        log_E_storage_ext[high_mask] = log_E_storage[-1] + slope_storage_high * delta_omega
+                        log_E_loss_ext[high_mask] = log_E_loss[-1] + slope_loss_high * delta_omega
 
                 omega_final = omega_extended
                 E_storage_final = 10**log_E_storage_ext
@@ -4147,6 +4159,7 @@ $\begin{array}{lcc}
         try:
             self.status_var.set("μ_visc 계산 중...")
             self.mu_calc_button.config(state='disabled')
+            self.mu_progress_var.set(0)  # Initialize progress bar
             self.root.update()
 
             # Get parameters
@@ -4343,8 +4356,15 @@ $\begin{array}{lcc}
             )
 
             # Calculate mu_visc for all velocities
+            # Scale progress to 50-100% if nonlinear correction was applied (Stage 1 used 0-50%)
             def progress_callback(percent):
-                self.mu_progress_var.set(percent)
+                if use_fg and self.f_interpolator is not None and self.g_interpolator is not None:
+                    # Stage 2: scale 0-100% to 50-100%
+                    scaled_percent = 50 + int(percent * 0.5)
+                else:
+                    # No Stage 1, so use full 0-100%
+                    scaled_percent = percent
+                self.mu_progress_var.set(scaled_percent)
                 self.root.update()
 
             # Use strain_estimator if nonlinear correction is enabled
