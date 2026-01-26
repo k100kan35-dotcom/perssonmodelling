@@ -339,6 +339,53 @@ class PerssonModelGUI_V2:
             foreground='gray'
         ).grid(row=0, column=1, sticky=tk.W, padx=10, pady=3)
 
+        # DMA Smoothing and Extrapolation controls
+        smooth_extrap_frame = ttk.LabelFrame(parent, text="DMA 스무딩 및 외삽", padding=10)
+        smooth_extrap_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Smoothing controls row
+        smooth_row = ttk.Frame(smooth_extrap_frame)
+        smooth_row.pack(fill=tk.X, pady=2)
+
+        self.verify_smooth_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            smooth_row,
+            text="스무딩 적용",
+            variable=self.verify_smooth_var
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(smooth_row, text="강도:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 2))
+        self.verify_smooth_window_var = tk.IntVar(value=11)
+        self.verify_smooth_slider = ttk.Scale(
+            smooth_row,
+            from_=5, to=51,
+            orient=tk.HORIZONTAL,
+            variable=self.verify_smooth_window_var,
+            command=lambda v: self.verify_smooth_label.config(text=f"{int(float(v))}")
+        )
+        self.verify_smooth_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.verify_smooth_label = ttk.Label(smooth_row, text="11", width=3)
+        self.verify_smooth_label.pack(side=tk.LEFT)
+
+        # Extrapolation controls row
+        extrap_row = ttk.Frame(smooth_extrap_frame)
+        extrap_row.pack(fill=tk.X, pady=2)
+
+        self.verify_extrap_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            extrap_row,
+            text="주파수 범위 외삽 (10⁻² ~ 10¹² Hz)",
+            variable=self.verify_extrap_var
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Apply button
+        ttk.Button(
+            extrap_row,
+            text="스무딩/외삽 적용",
+            command=self._apply_dma_smoothing_extrapolation,
+            width=18
+        ).pack(side=tk.RIGHT, padx=5)
+
         # Plot area
         plot_frame = ttk.Frame(parent)
         plot_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -1625,6 +1672,127 @@ class PerssonModelGUI_V2:
 
         except Exception as e:
             messagebox.showerror("Error", f"스무딩 적용 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _apply_dma_smoothing_extrapolation(self):
+        """Apply smoothing and/or extrapolation to DMA data in verification tab."""
+        if self.raw_dma_data is None:
+            messagebox.showwarning("경고", "먼저 DMA 데이터를 불러오세요.")
+            return
+
+        try:
+            from scipy.signal import savgol_filter
+            from scipy.interpolate import interp1d
+
+            # Get raw data
+            omega_raw = self.raw_dma_data['omega'].copy()
+            E_storage_raw = self.raw_dma_data['E_storage'].copy()
+            E_loss_raw = self.raw_dma_data['E_loss'].copy()
+
+            # Sort by omega
+            sort_idx = np.argsort(omega_raw)
+            omega_sorted = omega_raw[sort_idx]
+            E_storage_sorted = E_storage_raw[sort_idx]
+            E_loss_sorted = E_loss_raw[sort_idx]
+
+            # Apply smoothing if enabled
+            if self.verify_smooth_var.get():
+                window = self.verify_smooth_window_var.get()
+                if window % 2 == 0:
+                    window += 1  # Must be odd
+                window = min(window, len(omega_sorted) - 1)
+                if window < 5:
+                    window = 5
+                if len(omega_sorted) > window:
+                    # Use log scale for smoothing
+                    log_E_storage = np.log10(np.maximum(E_storage_sorted, 1e-10))
+                    log_E_loss = np.log10(np.maximum(E_loss_sorted, 1e-10))
+                    log_E_storage_smooth = savgol_filter(log_E_storage, window, 3)
+                    log_E_loss_smooth = savgol_filter(log_E_loss, window, 3)
+                    E_storage_smooth = 10**log_E_storage_smooth
+                    E_loss_smooth = 10**log_E_loss_smooth
+                else:
+                    E_storage_smooth = E_storage_sorted
+                    E_loss_smooth = E_loss_sorted
+            else:
+                E_storage_smooth = E_storage_sorted
+                E_loss_smooth = E_loss_sorted
+
+            # Apply extrapolation if enabled
+            if self.verify_extrap_var.get():
+                # Target range: 10^-2 to 10^12 Hz -> omega = 2*pi*f
+                omega_min_target = 2 * np.pi * 1e-2
+                omega_max_target = 2 * np.pi * 1e12
+
+                # Create extended omega array
+                omega_extended = np.logspace(
+                    np.log10(omega_min_target),
+                    np.log10(omega_max_target),
+                    500
+                )
+
+                # Create interpolators (log-log space)
+                log_omega = np.log10(omega_sorted)
+                log_E_storage = np.log10(np.maximum(E_storage_smooth, 1e-10))
+                log_E_loss = np.log10(np.maximum(E_loss_smooth, 1e-10))
+
+                interp_storage = interp1d(log_omega, log_E_storage, kind='linear',
+                                         fill_value='extrapolate')
+                interp_loss = interp1d(log_omega, log_E_loss, kind='linear',
+                                      fill_value='extrapolate')
+
+                # Extrapolate
+                log_omega_ext = np.log10(omega_extended)
+                log_E_storage_ext = interp_storage(log_omega_ext)
+                log_E_loss_ext = interp_loss(log_omega_ext)
+
+                # Apply hold extrapolation at boundaries (don't let values explode)
+                # For low frequencies: hold the lowest frequency value
+                low_mask = log_omega_ext < log_omega.min()
+                if np.any(low_mask):
+                    log_E_storage_ext[low_mask] = log_E_storage[0]
+                    log_E_loss_ext[low_mask] = log_E_loss[0]
+
+                # For high frequencies: hold the highest frequency value
+                high_mask = log_omega_ext > log_omega.max()
+                if np.any(high_mask):
+                    log_E_storage_ext[high_mask] = log_E_storage[-1]
+                    log_E_loss_ext[high_mask] = log_E_loss[-1]
+
+                omega_final = omega_extended
+                E_storage_final = 10**log_E_storage_ext
+                E_loss_final = 10**log_E_loss_ext
+            else:
+                omega_final = omega_sorted
+                E_storage_final = E_storage_smooth
+                E_loss_final = E_loss_smooth
+
+            # Update material
+            self.material = create_material_from_dma(
+                omega=omega_final,
+                E_storage=E_storage_final,
+                E_loss=E_loss_final,
+                material_name=self.material.name if self.material else "Processed DMA",
+                reference_temp=float(self.temperature_var.get())
+            )
+
+            # Update status
+            f_min = omega_final.min() / (2 * np.pi)
+            f_max = omega_final.max() / (2 * np.pi)
+            smooth_str = f"스무딩(w={self.verify_smooth_window_var.get()})" if self.verify_smooth_var.get() else ""
+            extrap_str = "외삽" if self.verify_extrap_var.get() else ""
+            process_str = "+".join(filter(None, [smooth_str, extrap_str])) or "원본"
+            self.dma_import_status_var.set(f"처리됨 [{process_str}] ({f_min:.1e}~{f_max:.1e} Hz)")
+
+            # Update plots
+            self._update_verification_plots()
+            self.status_var.set("DMA 스무딩/외삽 적용 완료")
+
+            messagebox.showinfo("완료", f"DMA 데이터 처리 완료\n- 스무딩: {'적용' if self.verify_smooth_var.get() else '미적용'}\n- 외삽: {'적용' if self.verify_extrap_var.get() else '미적용'}\n- 주파수 범위: {f_min:.1e} ~ {f_max:.1e} Hz")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"스무딩/외삽 적용 실패:\n{str(e)}")
             import traceback
             traceback.print_exc()
 
@@ -3570,12 +3738,7 @@ $\begin{array}{lcc}
                 self.ax_fg_curves.plot(s_orig, f_A, 'b--', linewidth=2, alpha=0.6, label='Group A f(ε)')
                 self.ax_fg_curves.plot(s_orig, g_A, 'r--', linewidth=2, alpha=0.6, label='Group A g(ε)')
 
-            # Group B average (use original strain length)
-            if self.piecewise_result['result_B'] is not None:
-                f_B = self.piecewise_result['result_B']['f_avg']
-                g_B = self.piecewise_result['result_B']['g_avg']
-                self.ax_fg_curves.plot(s_orig, f_B, 'c--', linewidth=2, alpha=0.6, label='Group B f(ε)')
-                self.ax_fg_curves.plot(s_orig, g_B, 'm--', linewidth=2, alpha=0.6, label='Group B g(ε)')
+            # Group B removed from plot as requested (not visible anyway)
 
             # Stitched (final) result - use full extended strain
             f_final = self.piecewise_result['f_avg']
@@ -3595,7 +3758,7 @@ $\begin{array}{lcc}
             self.ax_fg_curves.plot(s, f_avg, 'b-', linewidth=3, label='f(ε) 평균')
             self.ax_fg_curves.plot(s, g_avg, 'r-', linewidth=3, label='g(ε) 평균')
 
-        self.ax_fg_curves.set_xlim(left=0)
+        self.ax_fg_curves.set_xlim(0, 1.0)  # Always show up to 100% strain
         self.ax_fg_curves.set_ylim(0, 1.1)
         self.ax_fg_curves.legend(loc='upper right', fontsize=7, ncol=2)
 
@@ -4669,6 +4832,16 @@ $\begin{array}{lcc}
         log_q = np.log10(q)
         V, Q = np.meshgrid(log_v, log_q)
 
+        # CRITICAL: Remove existing colorbars before creating new ones
+        # This prevents colorbar duplication on repeated button clicks
+        if hasattr(self, '_strain_map_colorbars'):
+            for cbar in self._strain_map_colorbars:
+                try:
+                    cbar.remove()
+                except:
+                    pass
+        self._strain_map_colorbars = []
+
         # Clear all axes
         for ax in [self.ax_strain_linear, self.ax_strain_nonlinear,
                    self.ax_modulus_linear, self.ax_modulus_nonlinear]:
@@ -4678,37 +4851,38 @@ $\begin{array}{lcc}
         strain_cmap = 'YlOrRd'  # Yellow to Red for strain
         modulus_cmap = 'viridis'  # Viridis for modulus
 
-        # Plot 1: Linear strain (same as nonlinear strain since strain estimation doesn't change)
-        # But we show it for comparison
+        # Plot 1: Local Strain map
         im1 = self.ax_strain_linear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
         self.ax_strain_linear.set_title('Local Strain ε(q,v) [%]', fontweight='bold', fontsize=10)
         self.ax_strain_linear.set_xlabel('log₁₀(v) [m/s]')
         self.ax_strain_linear.set_ylabel('log₁₀(q) [1/m]')
         cbar1 = self.fig_strain_map.colorbar(im1, ax=self.ax_strain_linear, label='ε [%]')
+        self._strain_map_colorbars.append(cbar1)
 
-        # Plot 2: Strain with annotations
+        # Plot 2: Strain with contour annotations
         im2 = self.ax_strain_nonlinear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
-        self.ax_strain_nonlinear.set_title('Local Strain ε(q,v) - 상세 [%]', fontweight='bold', fontsize=10)
+        self.ax_strain_nonlinear.set_title('Local Strain ε(q,v) - 등고선 [%]', fontweight='bold', fontsize=10)
         self.ax_strain_nonlinear.set_xlabel('log₁₀(v) [m/s]')
         self.ax_strain_nonlinear.set_ylabel('log₁₀(q) [1/m]')
         cbar2 = self.fig_strain_map.colorbar(im2, ax=self.ax_strain_nonlinear, label='ε [%]')
+        self._strain_map_colorbars.append(cbar2)
 
-        # Add contour lines
+        # Add contour lines with visible labels
         try:
             contour_levels = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-            cs = self.ax_strain_nonlinear.contour(V, Q, strain * 100, levels=contour_levels, colors='white', linewidths=0.5)
-            self.ax_strain_nonlinear.clabel(cs, inline=True, fontsize=7, fmt='%.1f%%')
+            cs = self.ax_strain_nonlinear.contour(V, Q, strain * 100, levels=contour_levels, colors='black', linewidths=0.8)
+            self.ax_strain_nonlinear.clabel(cs, inline=True, fontsize=8, fmt='%.1f%%', colors='black')
         except:
             pass
 
         # Plot 3: Linear E''
-        # Use log scale for modulus
         E_linear_safe = np.maximum(E_linear, 1e-10)
         im3 = self.ax_modulus_linear.pcolormesh(V, Q, np.log10(E_linear_safe), cmap=modulus_cmap, shading='auto')
         self.ax_modulus_linear.set_title("E''(ω=qv) - 선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
         self.ax_modulus_linear.set_xlabel('log₁₀(v) [m/s]')
         self.ax_modulus_linear.set_ylabel('log₁₀(q) [1/m]')
         cbar3 = self.fig_strain_map.colorbar(im3, ax=self.ax_modulus_linear, label="log₁₀(E'') [Pa]")
+        self._strain_map_colorbars.append(cbar3)
 
         # Plot 4: Nonlinear E'' (with g(ε) correction)
         E_nonlinear_safe = np.maximum(E_nonlinear, 1e-10)
@@ -4717,8 +4891,9 @@ $\begin{array}{lcc}
         self.ax_modulus_nonlinear.set_xlabel('log₁₀(v) [m/s]')
         self.ax_modulus_nonlinear.set_ylabel('log₁₀(q) [1/m]')
         cbar4 = self.fig_strain_map.colorbar(im4, ax=self.ax_modulus_nonlinear, label="log₁₀(E''·g) [Pa]")
+        self._strain_map_colorbars.append(cbar4)
 
-        # Add text showing reduction ratio
+        # Add text showing reduction ratio with better visibility
         if self.g_interpolator is not None:
             # Calculate average reduction
             ratio = E_nonlinear / np.maximum(E_linear, 1e-10)
@@ -4727,9 +4902,20 @@ $\begin{array}{lcc}
             self.ax_modulus_nonlinear.text(
                 0.02, 0.98, f'평균 감소율: {avg_ratio:.2%}\n최소 감소율: {min_ratio:.2%}',
                 transform=self.ax_modulus_nonlinear.transAxes,
-                fontsize=8, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
+                fontsize=9, verticalalignment='top', fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
             )
+
+        # Add strain statistics to strain plots
+        strain_mean = np.mean(strain) * 100
+        strain_max = np.max(strain) * 100
+        strain_min = np.min(strain) * 100
+        self.ax_strain_linear.text(
+            0.02, 0.98, f'평균: {strain_mean:.2f}%\n최대: {strain_max:.2f}%\n최소: {strain_min:.2f}%',
+            transform=self.ax_strain_linear.transAxes,
+            fontsize=9, verticalalignment='top', fontweight='bold',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
+        )
 
         self.fig_strain_map.tight_layout()
         self.canvas_strain_map.draw()
