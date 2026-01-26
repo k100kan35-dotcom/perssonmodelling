@@ -301,51 +301,30 @@ class PerssonModelGUI_V2:
             font=('Arial', 10)
         ).pack()
 
-        # DMA smoothing controls
-        smoothing_frame = ttk.LabelFrame(parent, text="DMA 데이터 스무딩 설정", padding=10)
-        smoothing_frame.pack(fill=tk.X, padx=10, pady=5)
+        # DMA data import controls
+        import_frame = ttk.LabelFrame(parent, text="DMA 데이터 가져오기", padding=10)
+        import_frame.pack(fill=tk.X, padx=10, pady=5)
 
         # Create controls in a grid
-        control_grid = ttk.Frame(smoothing_frame)
+        control_grid = ttk.Frame(import_frame)
         control_grid.pack(fill=tk.X)
 
-        # Enable smoothing checkbox
-        self.enable_smoothing_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            control_grid,
-            text="스무딩 활성화",
-            variable=self.enable_smoothing_var,
-            command=self._apply_smoothing
-        ).grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
-
-        # Window length control
-        ttk.Label(control_grid, text="스무딩 강도 (윈도우 길이):").grid(row=0, column=1, sticky=tk.W, padx=5, pady=3)
-        self.smoothing_window_var = tk.StringVar(value="auto")
-        smoothing_combo = ttk.Combobox(
-            control_grid,
-            textvariable=self.smoothing_window_var,
-            values=["auto", "7", "11", "15", "21", "31", "51"],
-            width=10,
-            state="readonly"
-        )
-        smoothing_combo.grid(row=0, column=2, sticky=tk.W, padx=5, pady=3)
-        smoothing_combo.bind('<<ComboboxSelected>>', lambda e: self._apply_smoothing())
-
-        # Remove outliers checkbox
-        self.remove_outliers_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            control_grid,
-            text="이상치 제거",
-            variable=self.remove_outliers_var,
-            command=self._apply_smoothing
-        ).grid(row=0, column=3, sticky=tk.W, padx=5, pady=3)
-
-        # Apply button
+        # Import from Master Curve button
         ttk.Button(
             control_grid,
-            text="적용",
-            command=self._apply_smoothing
-        ).grid(row=0, column=4, sticky=tk.W, padx=5, pady=3)
+            text="마스터 커브에서 가져오기 (Tab 0)",
+            command=self._import_from_master_curve,
+            width=30
+        ).grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
+
+        # Status label
+        self.dma_import_status_var = tk.StringVar(value="데이터 미로드")
+        ttk.Label(
+            control_grid,
+            textvariable=self.dma_import_status_var,
+            font=('Arial', 9),
+            foreground='gray'
+        ).grid(row=0, column=1, sticky=tk.W, padx=10, pady=3)
 
         # Plot area
         plot_frame = ttk.Frame(parent)
@@ -495,6 +474,15 @@ class PerssonModelGUI_V2:
         self.mc_smooth_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.mc_smooth_label = ttk.Label(slider_frame, text="11", width=3)
         self.mc_smooth_label.pack(side=tk.RIGHT)
+
+        # bT comparison checkbox
+        self.mc_compare_bt_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            smooth_frame,
+            text="bT 적용/미적용 비교 보기",
+            variable=self.mc_compare_bt_var,
+            command=self._toggle_bt_comparison
+        ).pack(anchor=tk.W, pady=2)
 
         # 4. Calculate button
         calc_frame = ttk.Frame(settings_frame)
@@ -939,6 +927,93 @@ class PerssonModelGUI_V2:
 
         self.mc_result_text.insert(tk.END, text)
 
+    def _toggle_bt_comparison(self):
+        """Toggle bT comparison view in master curve plot."""
+        if self.master_curve_gen is None or self.master_curve_gen.master_f is None:
+            return
+
+        show_comparison = self.mc_compare_bt_var.get()
+
+        # Clear and redraw master curve plot
+        self.ax_mc_master.clear()
+
+        temps = np.sort(self.master_curve_gen.temperatures)
+        T_ref = self.master_curve_gen.T_ref
+        colors = plt.cm.coolwarm(np.linspace(0, 1, len(temps)))
+
+        self.ax_mc_master.set_xlabel('Reduced Frequency (Hz)')
+        self.ax_mc_master.set_ylabel('E\', E\'\' (MPa)')
+        self.ax_mc_master.set_xscale('log')
+        self.ax_mc_master.set_yscale('log')
+        self.ax_mc_master.grid(True, alpha=0.3)
+
+        if show_comparison:
+            # Show both with and without bT
+            self.ax_mc_master.set_title(f'마스터 커브 비교: bT 적용 vs 미적용 (Tref={T_ref}°C)', fontweight='bold')
+
+            # Plot WITH bT (solid lines)
+            for i, T in enumerate(temps):
+                shifted = self.master_curve_gen.get_shifted_data(T)
+                self.ax_mc_master.scatter(shifted['f_reduced'], shifted['E_storage_shifted'],
+                                         c=[colors[i]], s=12, alpha=0.7, marker='o')
+
+            # Plot master curve with bT
+            self.ax_mc_master.plot(self.master_curve_gen.master_f, self.master_curve_gen.master_E_storage,
+                                  'k-', linewidth=2.5, label="E' (bT 적용)", zorder=10)
+            self.ax_mc_master.plot(self.master_curve_gen.master_f, self.master_curve_gen.master_E_loss,
+                                  'k--', linewidth=2.5, label="E'' (bT 적용)", zorder=10)
+
+            # Plot WITHOUT bT (dashed, lighter)
+            for i, T in enumerate(temps):
+                f_reduced = self.master_curve_gen.raw_data[T]['f'] * self.master_curve_gen.aT[T]
+                E_storage_no_bt = self.master_curve_gen.raw_data[T]['E_storage']  # No bT division
+                E_loss_no_bt = self.master_curve_gen.raw_data[T]['E_loss']
+                self.ax_mc_master.scatter(f_reduced, E_storage_no_bt,
+                                         c=[colors[i]], s=8, alpha=0.3, marker='x')
+
+            # Generate master curve without bT for comparison
+            all_f = []
+            all_E_storage_no_bt = []
+            all_E_loss_no_bt = []
+            for T in temps:
+                f_reduced = self.master_curve_gen.raw_data[T]['f'] * self.master_curve_gen.aT[T]
+                all_f.extend(f_reduced)
+                all_E_storage_no_bt.extend(self.master_curve_gen.raw_data[T]['E_storage'])
+                all_E_loss_no_bt.extend(self.master_curve_gen.raw_data[T]['E_loss'])
+
+            all_f = np.array(all_f)
+            all_E_storage_no_bt = np.array(all_E_storage_no_bt)
+            all_E_loss_no_bt = np.array(all_E_loss_no_bt)
+            sort_idx = np.argsort(all_f)
+
+            self.ax_mc_master.plot(all_f[sort_idx], all_E_storage_no_bt[sort_idx],
+                                  'b:', linewidth=1.5, alpha=0.7, label="E' (bT 미적용)")
+            self.ax_mc_master.plot(all_f[sort_idx], all_E_loss_no_bt[sort_idx],
+                                  'r:', linewidth=1.5, alpha=0.7, label="E'' (bT 미적용)")
+
+        else:
+            # Normal view with bT
+            target = self.mc_target_var.get()
+            target_names = {'E_storage': "E'", 'E_loss': "E''", 'tan_delta': "tanδ"}
+            target_display = target_names.get(target, target)
+            self.ax_mc_master.set_title(f'마스터 커브 (Tref={T_ref}°C, 최적화: {target_display})', fontweight='bold')
+
+            for i, T in enumerate(temps):
+                shifted = self.master_curve_gen.get_shifted_data(T)
+                self.ax_mc_master.scatter(shifted['f_reduced'], shifted['E_storage_shifted'],
+                                         c=[colors[i]], s=10, alpha=0.5, marker='o')
+                self.ax_mc_master.scatter(shifted['f_reduced'], shifted['E_loss_shifted'],
+                                         c=[colors[i]], s=8, alpha=0.3, marker='s')
+
+            self.ax_mc_master.plot(self.master_curve_gen.master_f, self.master_curve_gen.master_E_storage,
+                                  'k-', linewidth=2, label="E' (Master)")
+            self.ax_mc_master.plot(self.master_curve_gen.master_f, self.master_curve_gen.master_E_loss,
+                                  'k--', linewidth=2, label="E'' (Master)")
+
+        self.ax_mc_master.legend(fontsize=8, loc='best')
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
+
     def _update_mc_shift_table(self):
         """Update shift factor table."""
         # Clear existing entries
@@ -1041,6 +1116,12 @@ class PerssonModelGUI_V2:
 
             # Update temperature entry with reference temperature
             self.temperature_var.set(str(self.master_curve_gen.T_ref))
+
+            # Update status label in Tab 1
+            f_min = self.master_curve_gen.master_f.min()
+            f_max = self.master_curve_gen.master_f.max()
+            T_ref = self.master_curve_gen.T_ref
+            self.dma_import_status_var.set(f"Master Curve (Tref={T_ref}°C, {f_min:.1e}~{f_max:.1e} Hz)")
 
             # Update verification plots
             self._update_verification_plots()
@@ -1476,61 +1557,58 @@ class PerssonModelGUI_V2:
                 import traceback
                 messagebox.showerror("Error", f"Failed to load PSD data:\n{str(e)}\n\n{traceback.format_exc()}")
 
-    def _apply_smoothing(self):
-        """Apply smoothing to DMA data with current settings."""
-        # Check if raw DMA data exists
-        if not hasattr(self, 'raw_dma_data') or self.raw_dma_data is None:
+    def _import_from_master_curve(self):
+        """Import DMA data from master curve tab (Tab 0)."""
+        if self.master_curve_gen is None or self.master_curve_gen.master_f is None:
+            messagebox.showwarning("경고", "먼저 Tab 0에서 마스터 커브를 생성하세요.")
             return
 
         try:
-            omega_raw = self.raw_dma_data['omega']
-            E_storage_raw = self.raw_dma_data['E_storage']
-            E_loss_raw = self.raw_dma_data['E_loss']
+            # Get master curve data
+            omega = 2 * np.pi * self.master_curve_gen.master_f
+            E_storage = self.master_curve_gen.master_E_storage * 1e6  # MPa to Pa
+            E_loss = self.master_curve_gen.master_E_loss * 1e6  # MPa to Pa
+            T_ref = self.master_curve_gen.T_ref
 
-            # Get smoothing parameters from GUI
-            enable_smoothing = self.enable_smoothing_var.get()
-            remove_outliers = self.remove_outliers_var.get()
-            window_str = self.smoothing_window_var.get()
+            # Create material from master curve
+            self.material = create_material_from_dma(
+                omega=omega,
+                E_storage=E_storage,
+                E_loss=E_loss,
+                material_name=f"Master Curve (Tref={T_ref}°C)",
+                reference_temp=T_ref
+            )
 
-            # Parse window length
-            if window_str == "auto":
-                window_length = None  # Auto-determine
-            else:
-                window_length = int(window_str)
+            # Store raw data for plotting
+            self.raw_dma_data = {
+                'omega': omega,
+                'E_storage': E_storage,
+                'E_loss': E_loss
+            }
 
-            if enable_smoothing:
-                # Apply smoothing
-                smoothed = smooth_dma_data(
-                    omega_raw,
-                    E_storage_raw,
-                    E_loss_raw,
-                    window_length=window_length,
-                    polyorder=2,
-                    remove_outliers=remove_outliers
-                )
+            # Store shift factor data
+            self.master_curve_shift_factors = {
+                'aT': self.master_curve_gen.aT.copy(),
+                'bT': self.master_curve_gen.bT.copy(),
+                'T_ref': T_ref,
+                'C1': self.master_curve_gen.C1,
+                'C2': self.master_curve_gen.C2,
+                'temperatures': list(self.master_curve_gen.temperatures)
+            }
 
-                # Create material from smoothed data
-                self.material = create_material_from_dma(
-                    omega=smoothed['omega'],
-                    E_storage=smoothed['E_storage_smooth'],
-                    E_loss=smoothed['E_loss_smooth'],
-                    material_name="Measured Rubber (smoothed)",
-                    reference_temp=float(self.temperature_var.get())
-                )
-            else:
-                # Use raw data without smoothing
-                self.material = create_material_from_dma(
-                    omega=omega_raw,
-                    E_storage=E_storage_raw,
-                    E_loss=E_loss_raw,
-                    material_name="Measured Rubber (raw)",
-                    reference_temp=float(self.temperature_var.get())
-                )
+            # Update temperature entry
+            self.temperature_var.set(str(T_ref))
+
+            # Update status
+            f_min = self.master_curve_gen.master_f.min()
+            f_max = self.master_curve_gen.master_f.max()
+            self.dma_import_status_var.set(f"Master Curve (Tref={T_ref}°C, {f_min:.1e}~{f_max:.1e} Hz)")
 
             # Update plots
             self._update_material_display()
             self._update_verification_plots()
-            self.status_var.set(f"스무딩 적용 완료 (윈도우: {window_str}, 이상치 제거: {remove_outliers})")
+
+            self.status_var.set(f"마스터 커브 가져오기 완료 (Tref={T_ref}°C)")
 
         except Exception as e:
             messagebox.showerror("Error", f"스무딩 적용 실패:\n{str(e)}")
