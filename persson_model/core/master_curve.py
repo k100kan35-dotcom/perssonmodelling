@@ -458,6 +458,10 @@ class MasterCurveGenerator:
 
         log(aT) = -C1 * (T - T_ref) / (C2 + (T - T_ref))
 
+        Typical values for polymers:
+        - Universal values: C1 ≈ 17.44, C2 ≈ 51.6
+        - But varies by material: C1 can range 5-30, C2 can range 20-200
+
         Returns
         -------
         dict
@@ -466,8 +470,14 @@ class MasterCurveGenerator:
         if self.aT is None:
             raise ValueError("Shift factors not calculated.")
 
-        temps = np.array(list(self.aT.keys()))
-        log_aT = np.log10(np.array(list(self.aT.values())))
+        # Sort temperatures and get log(aT)
+        temps_sorted = np.sort(list(self.aT.keys()))
+        log_aT_sorted = np.array([np.log10(self.aT[T]) for T in temps_sorted])
+
+        # Remove reference temperature point (log_aT = 0) for better fitting
+        mask = np.abs(log_aT_sorted) > 1e-10
+        temps_fit = temps_sorted[mask] if np.sum(mask) > 2 else temps_sorted
+        log_aT_fit = log_aT_sorted[mask] if np.sum(mask) > 2 else log_aT_sorted
 
         # WLF equation: log(aT) = -C1*(T-Tref)/(C2+(T-Tref))
         def wlf_func(T, C1, C2):
@@ -477,34 +487,75 @@ class MasterCurveGenerator:
             denom = np.where(np.abs(denom) < 0.1, np.sign(denom) * 0.1, denom)
             return -C1 * dT / denom
 
-        # Initial guess
-        C1_init = 10.0
-        C2_init = 50.0
+        # Estimate initial parameters from data
+        # From the definition, when T >> Tref: log(aT) ≈ -C1
+        # And C2 relates to the curvature
+        if len(temps_fit) > 2:
+            dT = temps_fit - self.T_ref
+            # Simple linear regression to estimate C1
+            # For small dT: log(aT) ≈ -(C1/C2)*dT
+            slope_estimate = np.polyfit(dT, log_aT_fit, 1)[0]
+            C1_init = max(5.0, min(25.0, abs(slope_estimate) * 50))  # Rough estimate
+            C2_init = 50.0
+        else:
+            C1_init = 17.44  # Universal value
+            C2_init = 51.6
 
-        try:
-            popt, pcov = optimize.curve_fit(
-                wlf_func, temps, log_aT,
-                p0=[C1_init, C2_init],
-                bounds=([0.1, 1], [50, 300]),
-                maxfev=5000
-            )
-            self.C1, self.C2 = popt
+        best_result = None
+        best_r2 = -np.inf
 
-            # Calculate R-squared
-            y_pred = wlf_func(temps, self.C1, self.C2)
-            ss_res = np.sum((log_aT - y_pred)**2)
-            ss_tot = np.sum((log_aT - np.mean(log_aT))**2)
-            r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+        # Try multiple initial guesses
+        initial_guesses = [
+            (C1_init, C2_init),
+            (17.44, 51.6),      # Universal WLF
+            (8.86, 101.6),      # Alternative universal
+            (10.0, 30.0),
+            (20.0, 80.0),
+            (15.0, 50.0),
+        ]
 
+        for C1_try, C2_try in initial_guesses:
+            try:
+                popt, pcov = optimize.curve_fit(
+                    wlf_func, temps_fit, log_aT_fit,
+                    p0=[C1_try, C2_try],
+                    bounds=([1.0, 5.0], [50.0, 500.0]),  # Wider bounds
+                    maxfev=10000
+                )
+                C1_fit, C2_fit = popt
+
+                # Calculate R-squared on all data
+                y_pred = wlf_func(temps_sorted, C1_fit, C2_fit)
+                ss_res = np.sum((log_aT_sorted - y_pred)**2)
+                ss_tot = np.sum((log_aT_sorted - np.mean(log_aT_sorted))**2)
+                r_squared = 1 - ss_res / ss_tot if ss_tot > 1e-10 else 0
+
+                if r_squared > best_r2:
+                    best_r2 = r_squared
+                    best_result = (C1_fit, C2_fit, r_squared)
+
+            except Exception:
+                continue
+
+        if best_result is not None:
+            self.C1, self.C2, r_squared = best_result
             return {
                 'C1': self.C1,
                 'C2': self.C2,
                 'r_squared': r_squared,
                 'T_ref': self.T_ref
             }
-        except Exception as e:
-            warnings.warn(f"WLF fitting failed: {e}")
-            return {'C1': None, 'C2': None, 'r_squared': None, 'T_ref': self.T_ref}
+        else:
+            # Fallback: use universal values
+            warnings.warn("WLF fitting failed, using universal values")
+            self.C1 = 17.44
+            self.C2 = 51.6
+            return {
+                'C1': self.C1,
+                'C2': self.C2,
+                'r_squared': 0.0,
+                'T_ref': self.T_ref
+            }
 
     def get_shift_factor_table(self):
         """

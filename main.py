@@ -469,6 +469,33 @@ class PerssonModelGUI_V2:
                   text="E_storage: E' / E_loss: E'' / tan_delta: tanδ",
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
+        # Smoothing control for master curve
+        smooth_frame = ttk.LabelFrame(settings_frame, text="마스터 커브 스무딩", padding=3)
+        smooth_frame.pack(fill=tk.X, pady=3)
+
+        self.mc_smooth_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            smooth_frame,
+            text="스무딩 적용",
+            variable=self.mc_smooth_var
+        ).pack(anchor=tk.W)
+
+        # Smoothing window slider
+        slider_frame = ttk.Frame(smooth_frame)
+        slider_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(slider_frame, text="스무딩 강도:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.mc_smooth_window_var = tk.IntVar(value=11)
+        self.mc_smooth_slider = ttk.Scale(
+            slider_frame,
+            from_=5, to=51,
+            orient=tk.HORIZONTAL,
+            variable=self.mc_smooth_window_var,
+            command=lambda v: self.mc_smooth_label.config(text=f"{int(float(v))}")
+        )
+        self.mc_smooth_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.mc_smooth_label = ttk.Label(slider_frame, text="11", width=3)
+        self.mc_smooth_label.pack(side=tk.RIGHT)
+
         # 4. Calculate button
         calc_frame = ttk.Frame(settings_frame)
         calc_frame.pack(fill=tk.X, pady=5)
@@ -754,9 +781,15 @@ class PerssonModelGUI_V2:
             self.mc_progress_var.set(60)
             self.root.update_idletasks()
 
-            # Generate master curve
+            # Generate master curve with smoothing settings
+            smooth_enabled = self.mc_smooth_var.get()
+            smooth_window = self.mc_smooth_window_var.get()
+            # Ensure window is odd
+            if smooth_window % 2 == 0:
+                smooth_window += 1
+
             master_curve = self.master_curve_gen.generate_master_curve(
-                n_points=200, smooth=True
+                n_points=300, smooth=smooth_enabled, window_length=smooth_window
             )
 
             self.mc_progress_var.set(80)
@@ -996,6 +1029,19 @@ class PerssonModelGUI_V2:
                 'E_loss': E_loss
             }
 
+            # Store shift factor data for temperature conversion
+            self.master_curve_shift_factors = {
+                'aT': self.master_curve_gen.aT.copy(),
+                'bT': self.master_curve_gen.bT.copy(),
+                'T_ref': self.master_curve_gen.T_ref,
+                'C1': self.master_curve_gen.C1,
+                'C2': self.master_curve_gen.C2,
+                'temperatures': list(self.master_curve_gen.temperatures)
+            }
+
+            # Update temperature entry with reference temperature
+            self.temperature_var.set(str(self.master_curve_gen.T_ref))
+
             # Update verification plots
             self._update_verification_plots()
             self._update_material_display()
@@ -1003,13 +1049,18 @@ class PerssonModelGUI_V2:
             # Switch to verification tab
             self.notebook.select(1)  # Tab 1
 
-            messagebox.showinfo(
-                "성공",
-                f"마스터 커브가 Tab 1에 적용되었습니다.\n"
-                f"기준 온도: {self.master_curve_gen.T_ref}°C\n"
-                f"주파수 범위: {self.master_curve_gen.master_f.min():.2e} ~ "
-                f"{self.master_curve_gen.master_f.max():.2e} Hz"
-            )
+            # Build info message
+            info_msg = f"마스터 커브가 Tab 1에 적용되었습니다.\n\n"
+            info_msg += f"기준 온도 (Tref): {self.master_curve_gen.T_ref}°C\n"
+            info_msg += f"주파수 범위: {self.master_curve_gen.master_f.min():.2e} ~ "
+            info_msg += f"{self.master_curve_gen.master_f.max():.2e} Hz\n\n"
+
+            if self.master_curve_gen.C1 is not None:
+                info_msg += f"WLF 파라미터:\n"
+                info_msg += f"  C1 = {self.master_curve_gen.C1:.2f}\n"
+                info_msg += f"  C2 = {self.master_curve_gen.C2:.2f}°C\n"
+
+            messagebox.showinfo("성공", info_msg)
 
         except Exception as e:
             import traceback
