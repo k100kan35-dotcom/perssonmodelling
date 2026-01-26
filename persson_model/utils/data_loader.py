@@ -1099,18 +1099,23 @@ def average_fg_curves(
     F = np.vstack(F)
     G = np.vstack(G)
 
-    # Average
-    if avg_mode == 'mean':
-        f_avg = np.nanmean(F, axis=0)
-        g_avg = np.nanmean(G, axis=0)
-    elif avg_mode == 'median':
-        f_avg = np.nanmedian(F, axis=0)
-        g_avg = np.nanmedian(G, axis=0)
-    elif avg_mode == 'max':
-        f_avg = np.nanmax(F, axis=0)
-        g_avg = np.nanmax(G, axis=0)
-    else:
-        raise ValueError(f"Unknown avg_mode: {avg_mode}")
+    # Check if arrays are all NaN
+    if np.all(np.isnan(F)) or np.all(np.isnan(G)):
+        return None
+
+    # Average with suppressed warnings for empty slices
+    with np.errstate(all='ignore'):
+        if avg_mode == 'mean':
+            f_avg = np.nanmean(F, axis=0)
+            g_avg = np.nanmean(G, axis=0)
+        elif avg_mode == 'median':
+            f_avg = np.nanmedian(F, axis=0)
+            g_avg = np.nanmedian(G, axis=0)
+        elif avg_mode == 'max':
+            f_avg = np.nanmax(F, axis=0)
+            g_avg = np.nanmax(G, axis=0)
+        else:
+            raise ValueError(f"Unknown avg_mode: {avg_mode}")
 
     n_eff = np.sum(np.isfinite(F), axis=0)
 

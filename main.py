@@ -274,19 +274,24 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_mu_visc, text="5. μ_visc 계산")
         self._create_mu_visc_tab(self.tab_mu_visc)
 
-        # Tab 6: Integrand Visualization (NEW)
+        # Tab 6: Local Strain Map (NEW)
+        self.tab_strain_map = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_strain_map, text="6. Local Strain Map")
+        self._create_strain_map_tab(self.tab_strain_map)
+
+        # Tab 7: Integrand Visualization
         self.tab_integrand = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_integrand, text="6. 피적분함수 분석")
+        self.notebook.add(self.tab_integrand, text="7. 피적분함수 분석")
         self._create_integrand_tab(self.tab_integrand)
 
-        # Tab 7: Equations Summary
+        # Tab 8: Equations Summary
         self.tab_equations = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_equations, text="7. 수식 정리")
+        self.notebook.add(self.tab_equations, text="8. 수식 정리")
         self._create_equations_tab(self.tab_equations)
 
-        # Tab 8: Variable Relationship
+        # Tab 9: Variable Relationship
         self.tab_variables = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_variables, text="8. 변수 관계")
+        self.notebook.add(self.tab_variables, text="9. 변수 관계")
         self._create_variables_tab(self.tab_variables)
 
     def _create_verification_tab(self, parent):
@@ -4200,98 +4205,132 @@ $\begin{array}{lcc}
 
     def _update_mu_visc_plots(self, v, mu_array, details, use_nonlinear=False):
         """Update mu_visc plots."""
-        # Clear all subplots
-        self.ax_mu_v.clear()
-        self.ax_mu_cumulative.clear()
+        try:
+            # Sanitize input arrays - replace NaN/Inf with safe values
+            mu_array = np.nan_to_num(mu_array, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Remove any existing twin axes from ax_ps
-        for ax in self.fig_mu_visc.axes:
-            if ax is not self.ax_fg_curves and ax is not self.ax_mu_v and \
-               ax is not self.ax_mu_cumulative and ax is not self.ax_ps:
-                ax.remove()
-        self.ax_ps.clear()
+            # Clear all subplots
+            self.ax_mu_v.clear()
+            self.ax_mu_cumulative.clear()
 
-        # Helper function for smart formatting
-        def smart_format(val, threshold=0.001):
-            if abs(val) < threshold and val != 0:
-                return f'{val:.2e}'
-            return f'{val:.4f}'
+            # Remove any existing twin axes from ax_ps
+            for ax in self.fig_mu_visc.axes:
+                if ax is not self.ax_fg_curves and ax is not self.ax_mu_v and \
+                   ax is not self.ax_mu_cumulative and ax is not self.ax_ps:
+                    ax.remove()
+            self.ax_ps.clear()
 
-        # Plot 1: mu_visc vs velocity
-        self.ax_mu_v.semilogx(v, mu_array, 'b-', linewidth=2.5, marker='o', markersize=4)
-        self.ax_mu_v.set_title('μ_visc(v) 곡선', fontweight='bold')
-        self.ax_mu_v.set_xlabel('속도 v (m/s)')
-        self.ax_mu_v.set_ylabel('마찰 계수 μ_visc')
-        self.ax_mu_v.grid(True, alpha=0.3)
+            # Helper function for smart formatting
+            def smart_format(val, threshold=0.001):
+                if abs(val) < threshold and val != 0:
+                    return f'{val:.2e}'
+                return f'{val:.4f}'
 
-        # Find peak
-        peak_idx = np.argmax(mu_array)
-        peak_mu = mu_array[peak_idx]
-        peak_v = v[peak_idx]
-        self.ax_mu_v.plot(peak_v, peak_mu, 'r*', markersize=15,
-                         label=f'최대값: μ={smart_format(peak_mu)} @ v={peak_v:.4f} m/s')
-        self.ax_mu_v.legend(loc='upper left', fontsize=7)
+            # Plot 1: mu_visc vs velocity (handle NaN values)
+            valid_mask = np.isfinite(mu_array)
+            if np.any(valid_mask):
+                self.ax_mu_v.semilogx(v[valid_mask], mu_array[valid_mask], 'b-', linewidth=2.5, marker='o', markersize=4)
+            else:
+                self.ax_mu_v.semilogx(v, np.zeros_like(v), 'b-', linewidth=2.5, marker='o', markersize=4)
+            self.ax_mu_v.set_title('μ_visc(v) 곡선', fontweight='bold')
+            self.ax_mu_v.set_xlabel('속도 v (m/s)')
+            self.ax_mu_v.set_ylabel('마찰 계수 μ_visc')
+            self.ax_mu_v.grid(True, alpha=0.3)
 
-        # Plot 2: Real Contact Area Ratio A/A₀ = P(q_max) vs velocity
-        # P(q_max) is the true contact area ratio at the finest resolution
-        # G(q_max) is the full cumulative integral, so P(q_max) = erf(1/(2√G_total))
-        # This should match Tab 3's contact area plot
-        P_qmax_array = np.zeros(len(v))
+            # Find peak (handle NaN values)
+            mu_for_peak = np.where(np.isfinite(mu_array), mu_array, -np.inf)
+            peak_idx = np.argmax(mu_for_peak)
+            peak_mu = mu_array[peak_idx] if np.isfinite(mu_array[peak_idx]) else 0.0
+            peak_v = v[peak_idx]
+            self.ax_mu_v.plot(peak_v, peak_mu, 'r*', markersize=15,
+                             label=f'최대값: μ={smart_format(peak_mu)} @ v={peak_v:.4f} m/s')
+            self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
-        for i, det in enumerate(details['details']):
-            P = det.get('P', np.zeros(1))
-            # P at q_max = A/A₀ (true real contact area ratio)
-            P_qmax_array[i] = P[-1] if len(P) > 0 else 0
+            # Plot 2: Real Contact Area Ratio A/A₀ = P(q_max) vs velocity
+            P_qmax_array = np.zeros(len(v))
 
-        # Color based on nonlinear correction
-        if use_nonlinear:
-            label_str = 'A/A₀ - 비선형 G(q)'
-            color = 'r'
-            title_suffix = ' (f,g 보정 적용)'
-        else:
-            label_str = 'A/A₀ - 선형 G(q)'
-            color = 'b'
-            title_suffix = ''
+            for i, det in enumerate(details['details']):
+                P = det.get('P', np.zeros(1))
+                P_qmax_array[i] = P[-1] if len(P) > 0 else 0
 
-        # Plot A/A₀ = P(q_max)
-        self.ax_mu_cumulative.semilogx(v, P_qmax_array, f'{color}-', linewidth=2,
-                                        marker='s', markersize=4, label=label_str)
+            # Sanitize P_qmax_array
+            P_qmax_array = np.nan_to_num(P_qmax_array, nan=0.0, posinf=1.0, neginf=0.0)
 
-        self.ax_mu_cumulative.set_title(f'실접촉 면적비율 A/A₀{title_suffix}', fontweight='bold', fontsize=8)
-        self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
-        self.ax_mu_cumulative.set_ylabel('A/A₀ = P(q_max)')
-        self.ax_mu_cumulative.legend(loc='best', fontsize=7)
-        self.ax_mu_cumulative.grid(True, alpha=0.3)
-        # Set y-axis to show data with padding
-        y_max = max(np.max(P_qmax_array) * 1.2, 0.05)
-        self.ax_mu_cumulative.set_ylim(0, y_max)
+            # Color based on nonlinear correction
+            if use_nonlinear:
+                label_str = 'A/A₀ - 비선형 G(q)'
+                color = 'r'
+                title_suffix = ' (f,g 보정 적용)'
+            else:
+                label_str = 'A/A₀ - 선형 G(q)'
+                color = 'b'
+                title_suffix = ''
 
-        # Plot 3: P(q), S(q) for middle velocity
-        mid_idx = len(details['details']) // 2
-        detail = details['details'][mid_idx]
-        q = detail['q']
-        P = detail['P']
-        S = detail['S']
-        cumulative = detail.get('cumulative_mu', np.zeros_like(q))
+            # Plot A/A₀ = P(q_max)
+            self.ax_mu_cumulative.semilogx(v, P_qmax_array, f'{color}-', linewidth=2,
+                                            marker='s', markersize=4, label=label_str)
 
-        # Use twin axis for cumulative
-        ax_twin = self.ax_ps.twinx()
+            self.ax_mu_cumulative.set_title(f'실접촉 면적비율 A/A₀{title_suffix}', fontweight='bold', fontsize=8)
+            self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
+            self.ax_mu_cumulative.set_ylabel('A/A₀ = P(q_max)')
+            self.ax_mu_cumulative.legend(loc='best', fontsize=7)
+            self.ax_mu_cumulative.grid(True, alpha=0.3)
 
-        self.ax_ps.semilogx(q, P, 'b-', linewidth=1.5, label='P(q)')
-        self.ax_ps.semilogx(q, S, 'r--', linewidth=1.5, label='S(q)')
-        ax_twin.semilogx(q, cumulative, 'g-', linewidth=1.5, alpha=0.7, label='누적μ')
+            # Set y-axis to show data with padding
+            y_max = max(np.max(P_qmax_array) * 1.2, 0.05)
+            if not np.isfinite(y_max):
+                y_max = 1.0
+            self.ax_mu_cumulative.set_ylim(0, y_max)
 
-        self.ax_ps.set_title('P(q), S(q) / 누적 μ', fontweight='bold', fontsize=9)
-        self.ax_ps.set_xlabel('파수 q (1/m)')
-        self.ax_ps.set_ylabel('P(q), S(q)', color='blue')
-        ax_twin.set_ylabel('누적 μ', color='green')
-        self.ax_ps.legend(loc='upper left', fontsize=7)
-        ax_twin.legend(loc='upper right', fontsize=7)
-        self.ax_ps.grid(True, alpha=0.3)
-        self.ax_ps.set_ylim(0, 1.1)
+            # Plot 3: P(q), S(q) for middle velocity
+            mid_idx = len(details['details']) // 2
+            detail = details['details'][mid_idx]
+            q = detail['q']
+            P = detail['P']
+            S = detail['S']
+            cumulative = detail.get('cumulative_mu', np.zeros_like(q))
 
-        self.fig_mu_visc.tight_layout()
-        self.canvas_mu_visc.draw()
+            # Handle NaN values in P, S, cumulative
+            P = np.nan_to_num(P, nan=0.0, posinf=1.0, neginf=0.0)
+            S = np.nan_to_num(S, nan=0.0, posinf=1.0, neginf=0.0)
+            cumulative = np.nan_to_num(cumulative, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Use twin axis for cumulative
+            ax_twin = self.ax_ps.twinx()
+
+            self.ax_ps.semilogx(q, P, 'b-', linewidth=1.5, label='P(q)')
+            self.ax_ps.semilogx(q, S, 'r--', linewidth=1.5, label='S(q)')
+            ax_twin.semilogx(q, cumulative, 'g-', linewidth=1.5, alpha=0.7, label='누적μ')
+
+            self.ax_ps.set_title('P(q), S(q) / 누적 μ', fontweight='bold', fontsize=9)
+            self.ax_ps.set_xlabel('파수 q (1/m)')
+            self.ax_ps.set_ylabel('P(q), S(q)', color='blue')
+            ax_twin.set_ylabel('누적 μ', color='green')
+            self.ax_ps.legend(loc='upper left', fontsize=7)
+            ax_twin.legend(loc='upper right', fontsize=7)
+            self.ax_ps.grid(True, alpha=0.3)
+            self.ax_ps.set_ylim(0, 1.1)
+
+            # Set twin axis limits safely
+            cumulative_max = np.max(cumulative) if len(cumulative) > 0 else 0.1
+            if not np.isfinite(cumulative_max) or cumulative_max <= 0:
+                cumulative_max = 0.1
+            ax_twin.set_ylim(0, cumulative_max * 1.2)
+
+            self.fig_mu_visc.tight_layout()
+            self.canvas_mu_visc.draw()
+
+        except Exception as e:
+            # Fallback: clear plots and show error message
+            print(f"Plot update error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.ax_mu_v.clear()
+            self.ax_mu_cumulative.clear()
+            self.ax_ps.clear()
+            self.ax_mu_v.text(0.5, 0.5, f'플롯 오류: {str(e)[:50]}',
+                             ha='center', va='center', transform=self.ax_mu_v.transAxes)
+            self.canvas_mu_visc.draw()
 
     def _export_mu_visc_results(self):
         """Export mu_visc results to CSV file."""
@@ -4326,6 +4365,305 @@ $\begin{array}{lcc}
 
         except Exception as e:
             messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+
+    def _create_strain_map_tab(self, parent):
+        """Create Local Strain Map visualization tab."""
+        # Main container
+        main_frame = ttk.Frame(parent)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Top control panel
+        control_frame = ttk.LabelFrame(main_frame, text="Local Strain Map 설정", padding=5)
+        control_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Description
+        desc_text = (
+            "각 파수 q와 슬립 속도 v에서의 국소 변형률 ε(q,v)와 감소된 모듈러스를 시각화합니다.\n"
+            "ω = q·v·cos(φ) 로 주파수가 결정되며, 해당 주파수에서의 모듈러스가 변형률에 따라 감소합니다."
+        )
+        ttk.Label(control_frame, text=desc_text, font=('Arial', 9)).pack(anchor=tk.W)
+
+        # Control row
+        ctrl_row = ttk.Frame(control_frame)
+        ctrl_row.pack(fill=tk.X, pady=5)
+
+        # Number of q points
+        ttk.Label(ctrl_row, text="q 분할 수:").pack(side=tk.LEFT, padx=5)
+        self.strain_map_nq_var = tk.StringVar(value="32")
+        ttk.Entry(ctrl_row, textvariable=self.strain_map_nq_var, width=6).pack(side=tk.LEFT)
+
+        # Number of v points
+        ttk.Label(ctrl_row, text="  v 분할 수:").pack(side=tk.LEFT, padx=5)
+        self.strain_map_nv_var = tk.StringVar(value="32")
+        ttk.Entry(ctrl_row, textvariable=self.strain_map_nv_var, width=6).pack(side=tk.LEFT)
+
+        # Strain estimation method
+        ttk.Label(ctrl_row, text="  변형률 추정:").pack(side=tk.LEFT, padx=5)
+        self.strain_map_method_var = tk.StringVar(value="persson")
+        method_combo = ttk.Combobox(
+            ctrl_row, textvariable=self.strain_map_method_var,
+            values=["persson", "simple", "rms_slope", "fixed"],
+            width=10, state="readonly"
+        )
+        method_combo.pack(side=tk.LEFT)
+
+        # Fixed strain value
+        ttk.Label(ctrl_row, text="  고정 ε (%):").pack(side=tk.LEFT, padx=5)
+        self.strain_map_fixed_var = tk.StringVar(value="1.0")
+        ttk.Entry(ctrl_row, textvariable=self.strain_map_fixed_var, width=6).pack(side=tk.LEFT)
+
+        # Calculate button
+        ttk.Button(
+            ctrl_row, text="계산 및 시각화",
+            command=self._calculate_strain_map
+        ).pack(side=tk.LEFT, padx=20)
+
+        # Progress bar
+        self.strain_map_progress = ttk.Progressbar(control_frame, mode='determinate')
+        self.strain_map_progress.pack(fill=tk.X, pady=3)
+
+        # Plot area - 2x2 grid for 4 heatmaps
+        plot_frame = ttk.Frame(main_frame)
+        plot_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.fig_strain_map = Figure(figsize=(14, 10), dpi=100)
+
+        # 2x2 subplots
+        self.ax_strain_linear = self.fig_strain_map.add_subplot(221)
+        self.ax_strain_nonlinear = self.fig_strain_map.add_subplot(222)
+        self.ax_modulus_linear = self.fig_strain_map.add_subplot(223)
+        self.ax_modulus_nonlinear = self.fig_strain_map.add_subplot(224)
+
+        self.canvas_strain_map = FigureCanvasTkAgg(self.fig_strain_map, plot_frame)
+        self.canvas_strain_map.draw()
+        self.canvas_strain_map.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar = NavigationToolbar2Tk(self.canvas_strain_map, plot_frame)
+        toolbar.update()
+
+        # Initialize plots
+        self._init_strain_map_plots()
+
+    def _init_strain_map_plots(self):
+        """Initialize strain map plots with placeholder data."""
+        for ax, title in [
+            (self.ax_strain_linear, 'Local Strain ε(q,v) - 선형'),
+            (self.ax_strain_nonlinear, 'Local Strain ε(q,v) - 비선형'),
+            (self.ax_modulus_linear, "E''(q,v) [Pa] - 선형"),
+            (self.ax_modulus_nonlinear, "E''_eff(q,v) = E''·g(ε) [Pa] - 비선형")
+        ]:
+            ax.set_title(title, fontweight='bold', fontsize=10)
+            ax.set_xlabel('log₁₀(v) [m/s]')
+            ax.set_ylabel('log₁₀(q) [1/m]')
+            ax.text(0.5, 0.5, '데이터 없음\n계산 버튼을 클릭하세요',
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=12, color='gray')
+
+        self.fig_strain_map.tight_layout()
+        self.canvas_strain_map.draw()
+
+    def _calculate_strain_map(self):
+        """Calculate and visualize local strain map."""
+        if self.material is None or self.psd_model is None:
+            messagebox.showwarning("경고", "먼저 재료(DMA)와 PSD 데이터를 로드하세요.")
+            return
+
+        if not self.results or '2d_results' not in self.results:
+            messagebox.showwarning("경고", "먼저 G(q,v) 계산을 실행하세요 (탭 2).")
+            return
+
+        try:
+            self.status_var.set("Local Strain Map 계산 중...")
+            self.root.update()
+
+            # Get parameters
+            n_q = int(self.strain_map_nq_var.get())
+            n_v = int(self.strain_map_nv_var.get())
+            method = self.strain_map_method_var.get()
+            fixed_strain = float(self.strain_map_fixed_var.get()) / 100.0
+
+            sigma_0 = float(self.sigma_0_var.get()) * 1e6  # MPa to Pa
+            temperature = float(self.temperature_var.get())
+            poisson = float(self.poisson_var.get())
+
+            # Get q and v ranges from G(q,v) results
+            results_2d = self.results['2d_results']
+            q_min = results_2d['q'].min()
+            q_max = results_2d['q'].max()
+            v_min = results_2d['v'].min()
+            v_max = results_2d['v'].max()
+
+            # Create q and v arrays
+            q_array = np.logspace(np.log10(q_min), np.log10(q_max), n_q)
+            v_array = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
+
+            # Get PSD values
+            C_q = self.psd_model(q_array)
+
+            # Prepare RMS slope interpolator if available
+            rms_strain_interp = None
+            if method == 'rms_slope' and hasattr(self, 'rms_slope_profiles') and self.rms_slope_profiles is not None:
+                from scipy.interpolate import interp1d
+                rms_q = self.rms_slope_profiles['q']
+                rms_strain = self.rms_slope_profiles['strain']
+                log_q = np.log10(rms_q)
+                log_strain = np.log10(np.maximum(rms_strain, 1e-10))
+                rms_strain_interp = interp1d(log_q, log_strain, kind='linear',
+                                             bounds_error=False, fill_value='extrapolate')
+
+            # Initialize matrices
+            strain_matrix = np.zeros((n_q, n_v))
+            E_loss_linear = np.zeros((n_q, n_v))
+            E_loss_nonlinear = np.zeros((n_q, n_v))
+
+            # Calculate for each (q, v) pair
+            total = n_q * n_v
+            count = 0
+
+            for i, q in enumerate(q_array):
+                for j, v in enumerate(v_array):
+                    # Characteristic frequency: ω = q * v (simplified, ignoring cos(φ))
+                    omega = q * v
+
+                    # Get linear E'' at this frequency
+                    E_loss = self.material.get_loss_modulus(np.array([omega]), temperature=temperature)[0]
+                    E_storage = self.material.get_storage_modulus(np.array([omega]), temperature=temperature)[0]
+                    E_loss_linear[i, j] = E_loss
+
+                    # Estimate local strain
+                    if method == 'fixed':
+                        strain = fixed_strain
+                    elif method == 'rms_slope' and rms_strain_interp is not None:
+                        try:
+                            strain = 10 ** rms_strain_interp(np.log10(q))
+                        except:
+                            strain = fixed_strain
+                    elif method == 'persson':
+                        # Persson approach: ε ~ sqrt(C(q) * q^4) * σ₀ / E'
+                        C_val = self.psd_model(q)
+                        strain = np.sqrt(max(C_val * q**4, 1e-20)) * sigma_0 / max(E_storage, 1e3)
+                    elif method == 'simple':
+                        # Simple: ε ~ σ₀ / E'
+                        strain = sigma_0 / max(E_storage, 1e3)
+                    else:
+                        strain = fixed_strain
+
+                    strain = np.clip(strain, 0.0, 1.0)
+                    strain_matrix[i, j] = strain
+
+                    # Apply g(ε) correction for nonlinear E''
+                    if self.g_interpolator is not None:
+                        g_val = self.g_interpolator(strain)
+                        g_val = np.clip(g_val, 0.0, 1.0)
+                        E_loss_nonlinear[i, j] = E_loss * g_val
+                    else:
+                        E_loss_nonlinear[i, j] = E_loss
+
+                    count += 1
+                    if count % (total // 20 + 1) == 0:
+                        self.strain_map_progress['value'] = (count / total) * 100
+                        self.root.update()
+
+            # Store results
+            self.strain_map_results = {
+                'q': q_array,
+                'v': v_array,
+                'strain': strain_matrix,
+                'E_loss_linear': E_loss_linear,
+                'E_loss_nonlinear': E_loss_nonlinear
+            }
+
+            # Update plots
+            self._update_strain_map_plots()
+
+            self.strain_map_progress['value'] = 100
+            self.status_var.set("Local Strain Map 계산 완료")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"계산 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+            self.status_var.set("오류 발생")
+
+    def _update_strain_map_plots(self):
+        """Update strain map heatmap plots."""
+        if not hasattr(self, 'strain_map_results') or self.strain_map_results is None:
+            return
+
+        q = self.strain_map_results['q']
+        v = self.strain_map_results['v']
+        strain = self.strain_map_results['strain']
+        E_linear = self.strain_map_results['E_loss_linear']
+        E_nonlinear = self.strain_map_results['E_loss_nonlinear']
+
+        # Create meshgrid for pcolormesh
+        log_v = np.log10(v)
+        log_q = np.log10(q)
+        V, Q = np.meshgrid(log_v, log_q)
+
+        # Clear all axes
+        for ax in [self.ax_strain_linear, self.ax_strain_nonlinear,
+                   self.ax_modulus_linear, self.ax_modulus_nonlinear]:
+            ax.clear()
+
+        # Color maps
+        strain_cmap = 'YlOrRd'  # Yellow to Red for strain
+        modulus_cmap = 'viridis'  # Viridis for modulus
+
+        # Plot 1: Linear strain (same as nonlinear strain since strain estimation doesn't change)
+        # But we show it for comparison
+        im1 = self.ax_strain_linear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
+        self.ax_strain_linear.set_title('Local Strain ε(q,v) [%]', fontweight='bold', fontsize=10)
+        self.ax_strain_linear.set_xlabel('log₁₀(v) [m/s]')
+        self.ax_strain_linear.set_ylabel('log₁₀(q) [1/m]')
+        cbar1 = self.fig_strain_map.colorbar(im1, ax=self.ax_strain_linear, label='ε [%]')
+
+        # Plot 2: Strain with annotations
+        im2 = self.ax_strain_nonlinear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
+        self.ax_strain_nonlinear.set_title('Local Strain ε(q,v) - 상세 [%]', fontweight='bold', fontsize=10)
+        self.ax_strain_nonlinear.set_xlabel('log₁₀(v) [m/s]')
+        self.ax_strain_nonlinear.set_ylabel('log₁₀(q) [1/m]')
+        cbar2 = self.fig_strain_map.colorbar(im2, ax=self.ax_strain_nonlinear, label='ε [%]')
+
+        # Add contour lines
+        try:
+            contour_levels = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+            cs = self.ax_strain_nonlinear.contour(V, Q, strain * 100, levels=contour_levels, colors='white', linewidths=0.5)
+            self.ax_strain_nonlinear.clabel(cs, inline=True, fontsize=7, fmt='%.1f%%')
+        except:
+            pass
+
+        # Plot 3: Linear E''
+        # Use log scale for modulus
+        E_linear_safe = np.maximum(E_linear, 1e-10)
+        im3 = self.ax_modulus_linear.pcolormesh(V, Q, np.log10(E_linear_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_modulus_linear.set_title("E''(ω=qv) - 선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
+        self.ax_modulus_linear.set_xlabel('log₁₀(v) [m/s]')
+        self.ax_modulus_linear.set_ylabel('log₁₀(q) [1/m]')
+        cbar3 = self.fig_strain_map.colorbar(im3, ax=self.ax_modulus_linear, label="log₁₀(E'') [Pa]")
+
+        # Plot 4: Nonlinear E'' (with g(ε) correction)
+        E_nonlinear_safe = np.maximum(E_nonlinear, 1e-10)
+        im4 = self.ax_modulus_nonlinear.pcolormesh(V, Q, np.log10(E_nonlinear_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_modulus_nonlinear.set_title("E''·g(ε) - 비선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
+        self.ax_modulus_nonlinear.set_xlabel('log₁₀(v) [m/s]')
+        self.ax_modulus_nonlinear.set_ylabel('log₁₀(q) [1/m]')
+        cbar4 = self.fig_strain_map.colorbar(im4, ax=self.ax_modulus_nonlinear, label="log₁₀(E''·g) [Pa]")
+
+        # Add text showing reduction ratio
+        if self.g_interpolator is not None:
+            # Calculate average reduction
+            ratio = E_nonlinear / np.maximum(E_linear, 1e-10)
+            avg_ratio = np.mean(ratio)
+            min_ratio = np.min(ratio)
+            self.ax_modulus_nonlinear.text(
+                0.02, 0.98, f'평균 감소율: {avg_ratio:.2%}\n최소 감소율: {min_ratio:.2%}',
+                transform=self.ax_modulus_nonlinear.transAxes,
+                fontsize=8, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
+            )
+
+        self.fig_strain_map.tight_layout()
+        self.canvas_strain_map.draw()
 
     def _create_integrand_tab(self, parent):
         """Create Integrand visualization tab for G(q) and μ_visc analysis."""
