@@ -16,7 +16,8 @@ import re
 
 def load_psd_from_text(
     data_text: str,
-    skip_header: int = 0
+    skip_header: int = 0,
+    is_log_data: Optional[bool] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load PSD data from text string.
@@ -28,6 +29,10 @@ def load_psd_from_text(
         Can be tab or space separated
     skip_header : int, optional
         Number of header lines to skip
+    is_log_data : bool or None, optional
+        If True, input data is in log10 format (log10(q), log10(C))
+        If False, input data is in linear format
+        If None (default), auto-detect based on data values
 
     Returns
     -------
@@ -60,6 +65,24 @@ def load_psd_from_text(
     q = np.array(q_list)
     C_q = np.array(C_list)
 
+    # Auto-detect log-log format if not specified
+    if is_log_data is None:
+        # Heuristic: if C values are negative or q values are small (< 10),
+        # it's likely log10 data
+        # log10(q) for typical PSD: 2~8 (q = 100 ~ 1e8)
+        # log10(C) for typical PSD: -20 ~ -5 (C = 1e-20 ~ 1e-5)
+        if len(C_q) > 0:
+            # Check if C values are mostly negative (log10 of small positive values)
+            if np.mean(C_q) < 0 and np.max(q) < 15:
+                is_log_data = True
+            else:
+                is_log_data = False
+
+    # Convert from log10 to linear if input is log-log format
+    if is_log_data:
+        q = 10**q
+        C_q = 10**C_q
+
     # Sort by q
     sort_idx = np.argsort(q)
     q = q[sort_idx]
@@ -70,7 +93,8 @@ def load_psd_from_text(
 
 def load_psd_from_file(
     filename: str,
-    skip_header: int = 0
+    skip_header: int = 0,
+    is_log_data: Optional[bool] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load PSD data from file.
@@ -81,12 +105,22 @@ def load_psd_from_file(
     200     4.56e-13
     ...
 
+    Or if is_log_data=True (log10 format):
+    log10(q)  log10(C)
+    2         -12
+    3         -13
+    ...
+
     Parameters
     ----------
     filename : str
         Path to PSD data file
     skip_header : int, optional
         Number of header lines to skip
+    is_log_data : bool or None, optional
+        If True, input data is in log10 format
+        If False, input data is in linear format
+        If None (default), auto-detect based on data values
 
     Returns
     -------
@@ -98,7 +132,7 @@ def load_psd_from_file(
     with open(filename, 'r') as f:
         data_text = f.read()
 
-    return load_psd_from_text(data_text, skip_header)
+    return load_psd_from_text(data_text, skip_header, is_log_data)
 
 
 def load_dma_from_text(
