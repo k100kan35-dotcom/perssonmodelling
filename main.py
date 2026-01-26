@@ -602,12 +602,34 @@ class PerssonModelGUI_V2:
                 except:
                     self.mc_raw_df = pd.read_csv(filename, skiprows=1, delim_whitespace=True)
 
-            # Standardize column names based on expected format
-            # Expected: f(Hz), T(°C), f(Hz), Amplitude, E'(MPa), E''(MPa)
-            if len(self.mc_raw_df.columns) >= 6:
-                self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'", "E''"][:len(self.mc_raw_df.columns)]
-            elif len(self.mc_raw_df.columns) >= 4:
-                self.mc_raw_df.columns = ['f', 'T', "E'", "E''"][:len(self.mc_raw_df.columns)]
+            # Standardize column names based on number of columns
+            n_cols = len(self.mc_raw_df.columns)
+
+            if n_cols >= 6:
+                # Full format: f, T, f_reduced, Amplitude, E', E''
+                self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'", "E''"][:n_cols]
+            elif n_cols == 5:
+                # Missing E'': f, T, f_reduced, Amplitude, E'
+                self.mc_raw_df.columns = ['f', 'T', 'f_reduced', 'Amplitude', "E'"]
+                # E'' is missing - show warning
+                messagebox.showwarning(
+                    "주의",
+                    "E'' (손실 탄성률) 컬럼이 없습니다.\n"
+                    "마스터 커브 생성은 E'만 사용합니다.\n\n"
+                    "완전한 분석을 위해 6개 컬럼 데이터를 권장합니다:\n"
+                    "f(Hz), T(°C), f_reduced, Amplitude, E'(MPa), E''(MPa)"
+                )
+                # Estimate E'' as 10% of E' (rough estimate for demonstration)
+                self.mc_raw_df["E''"] = self.mc_raw_df["E'"] * 0.1
+            elif n_cols == 4:
+                # Minimal: f, T, E', E''
+                self.mc_raw_df.columns = ['f', 'T', "E'", "E''"]
+            elif n_cols == 3:
+                # Very minimal: f, T, E' (no E'')
+                self.mc_raw_df.columns = ['f', 'T', "E'"]
+                self.mc_raw_df["E''"] = self.mc_raw_df["E'"] * 0.1
+            else:
+                raise ValueError(f"데이터 컬럼 수가 부족합니다 ({n_cols}개). 최소 3개 컬럼이 필요합니다.")
 
             # Convert to numeric and drop NaN
             for col in self.mc_raw_df.columns:
