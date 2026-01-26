@@ -374,7 +374,7 @@ class PerssonModelGUI_V2:
         self.verify_extrap_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             extrap_row,
-            text="주파수 범위 외삽 (10⁻² ~ 10¹² Hz)",
+            text="Extrapolate frequency (1e-2 ~ 1e12 Hz)",
             variable=self.verify_extrap_var
         ).pack(side=tk.LEFT, padx=5)
 
@@ -4660,11 +4660,15 @@ $\begin{array}{lcc}
 
         self.fig_strain_map = Figure(figsize=(14, 10), dpi=100)
 
-        # 2x2 subplots
-        self.ax_strain_linear = self.fig_strain_map.add_subplot(221)
-        self.ax_strain_nonlinear = self.fig_strain_map.add_subplot(222)
-        self.ax_modulus_linear = self.fig_strain_map.add_subplot(223)
-        self.ax_modulus_nonlinear = self.fig_strain_map.add_subplot(224)
+        # 2x2 subplots - reorganized to remove duplicates and add E'
+        # Top-left: Local Strain with contours
+        # Top-right: E' storage modulus
+        # Bottom-left: E'' loss modulus (with g correction)
+        # Bottom-right: E' storage modulus (with f correction)
+        self.ax_strain_contour = self.fig_strain_map.add_subplot(221)
+        self.ax_E_storage = self.fig_strain_map.add_subplot(222)
+        self.ax_E_loss_nonlinear = self.fig_strain_map.add_subplot(223)
+        self.ax_E_storage_nonlinear = self.fig_strain_map.add_subplot(224)
 
         self.canvas_strain_map = FigureCanvasTkAgg(self.fig_strain_map, plot_frame)
         self.canvas_strain_map.draw()
@@ -4679,15 +4683,15 @@ $\begin{array}{lcc}
     def _init_strain_map_plots(self):
         """Initialize strain map plots with placeholder data."""
         for ax, title in [
-            (self.ax_strain_linear, 'Local Strain ε(q,v) - 선형'),
-            (self.ax_strain_nonlinear, 'Local Strain ε(q,v) - 비선형'),
-            (self.ax_modulus_linear, "E''(q,v) [Pa] - 선형"),
-            (self.ax_modulus_nonlinear, "E''_eff(q,v) = E''·g(ε) [Pa] - 비선형")
+            (self.ax_strain_contour, 'Local Strain (q,v) [%]'),
+            (self.ax_E_storage, "E'(q,v) - Storage Modulus"),
+            (self.ax_E_loss_nonlinear, "E''*g - Loss Modulus (nonlinear)"),
+            (self.ax_E_storage_nonlinear, "E'*f - Storage Modulus (nonlinear)")
         ]:
             ax.set_title(title, fontweight='bold', fontsize=10)
-            ax.set_xlabel('log₁₀(v) [m/s]')
-            ax.set_ylabel('log₁₀(q) [1/m]')
-            ax.text(0.5, 0.5, '데이터 없음\n계산 버튼을 클릭하세요',
+            ax.set_xlabel('log10(v) [m/s]')
+            ax.set_ylabel('log10(q) [1/m]')
+            ax.text(0.5, 0.5, 'No data\nClick calculate button',
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
 
@@ -4745,8 +4749,10 @@ $\begin{array}{lcc}
 
             # Initialize matrices
             strain_matrix = np.zeros((n_q, n_v))
+            E_storage_matrix = np.zeros((n_q, n_v))  # E' storage modulus
             E_loss_linear = np.zeros((n_q, n_v))
             E_loss_nonlinear = np.zeros((n_q, n_v))
+            E_storage_nonlinear = np.zeros((n_q, n_v))  # E'·f(ε)
 
             # Calculate for each (q, v) pair
             total = n_q * n_v
@@ -4757,10 +4763,11 @@ $\begin{array}{lcc}
                     # Characteristic frequency: ω = q * v (simplified, ignoring cos(φ))
                     omega = q * v
 
-                    # Get linear E'' at this frequency
+                    # Get linear E' and E'' at this frequency
                     E_loss = self.material.get_loss_modulus(np.array([omega]), temperature=temperature)[0]
                     E_storage = self.material.get_storage_modulus(np.array([omega]), temperature=temperature)[0]
                     E_loss_linear[i, j] = E_loss
+                    E_storage_matrix[i, j] = E_storage
 
                     # Estimate local strain
                     if method == 'fixed':
@@ -4783,13 +4790,20 @@ $\begin{array}{lcc}
                     strain = np.clip(strain, 0.0, 1.0)
                     strain_matrix[i, j] = strain
 
-                    # Apply g(ε) correction for nonlinear E''
+                    # Apply f(ε), g(ε) correction for nonlinear E', E''
                     if self.g_interpolator is not None:
                         g_val = self.g_interpolator(strain)
                         g_val = np.clip(g_val, 0.0, 1.0)
                         E_loss_nonlinear[i, j] = E_loss * g_val
                     else:
                         E_loss_nonlinear[i, j] = E_loss
+
+                    if self.f_interpolator is not None:
+                        f_val = self.f_interpolator(strain)
+                        f_val = np.clip(f_val, 0.0, 1.0)
+                        E_storage_nonlinear[i, j] = E_storage * f_val
+                    else:
+                        E_storage_nonlinear[i, j] = E_storage
 
                     count += 1
                     if count % (total // 20 + 1) == 0:
@@ -4801,6 +4815,8 @@ $\begin{array}{lcc}
                 'q': q_array,
                 'v': v_array,
                 'strain': strain_matrix,
+                'E_storage': E_storage_matrix,
+                'E_storage_nonlinear': E_storage_nonlinear,
                 'E_loss_linear': E_loss_linear,
                 'E_loss_nonlinear': E_loss_nonlinear
             }
@@ -4824,8 +4840,9 @@ $\begin{array}{lcc}
         q = self.strain_map_results['q']
         v = self.strain_map_results['v']
         strain = self.strain_map_results['strain']
-        E_linear = self.strain_map_results['E_loss_linear']
-        E_nonlinear = self.strain_map_results['E_loss_nonlinear']
+        E_storage = self.strain_map_results['E_storage']
+        E_storage_nl = self.strain_map_results['E_storage_nonlinear']
+        E_loss_nl = self.strain_map_results['E_loss_nonlinear']
 
         # Create meshgrid for pcolormesh
         log_v = np.log10(v)
@@ -4833,7 +4850,6 @@ $\begin{array}{lcc}
         V, Q = np.meshgrid(log_v, log_q)
 
         # CRITICAL: Remove existing colorbars before creating new ones
-        # This prevents colorbar duplication on repeated button clicks
         if hasattr(self, '_strain_map_colorbars'):
             for cbar in self._strain_map_colorbars:
                 try:
@@ -4843,79 +4859,92 @@ $\begin{array}{lcc}
         self._strain_map_colorbars = []
 
         # Clear all axes
-        for ax in [self.ax_strain_linear, self.ax_strain_nonlinear,
-                   self.ax_modulus_linear, self.ax_modulus_nonlinear]:
+        for ax in [self.ax_strain_contour, self.ax_E_storage,
+                   self.ax_E_loss_nonlinear, self.ax_E_storage_nonlinear]:
             ax.clear()
 
         # Color maps
         strain_cmap = 'YlOrRd'  # Yellow to Red for strain
         modulus_cmap = 'viridis'  # Viridis for modulus
 
-        # Plot 1: Local Strain map
-        im1 = self.ax_strain_linear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
-        self.ax_strain_linear.set_title('Local Strain ε(q,v) [%]', fontweight='bold', fontsize=10)
-        self.ax_strain_linear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_strain_linear.set_ylabel('log₁₀(q) [1/m]')
-        cbar1 = self.fig_strain_map.colorbar(im1, ax=self.ax_strain_linear, label='ε [%]')
+        # Plot 1: Local Strain with contours (top-left)
+        im1 = self.ax_strain_contour.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
+        self.ax_strain_contour.set_title('Local Strain (q,v) [%]', fontweight='bold', fontsize=10)
+        self.ax_strain_contour.set_xlabel('log10(v) [m/s]')
+        self.ax_strain_contour.set_ylabel('log10(q) [1/m]')
+        cbar1 = self.fig_strain_map.colorbar(im1, ax=self.ax_strain_contour, label='strain [%]')
         self._strain_map_colorbars.append(cbar1)
 
-        # Plot 2: Strain with contour annotations
-        im2 = self.ax_strain_nonlinear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
-        self.ax_strain_nonlinear.set_title('Local Strain ε(q,v) - 등고선 [%]', fontweight='bold', fontsize=10)
-        self.ax_strain_nonlinear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_strain_nonlinear.set_ylabel('log₁₀(q) [1/m]')
-        cbar2 = self.fig_strain_map.colorbar(im2, ax=self.ax_strain_nonlinear, label='ε [%]')
-        self._strain_map_colorbars.append(cbar2)
-
-        # Add contour lines with visible labels
+        # Add contour lines
         try:
             contour_levels = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-            cs = self.ax_strain_nonlinear.contour(V, Q, strain * 100, levels=contour_levels, colors='black', linewidths=0.8)
-            self.ax_strain_nonlinear.clabel(cs, inline=True, fontsize=8, fmt='%.1f%%', colors='black')
+            cs = self.ax_strain_contour.contour(V, Q, strain * 100, levels=contour_levels, colors='black', linewidths=0.8)
+            self.ax_strain_contour.clabel(cs, inline=True, fontsize=8, fmt='%.1f%%', colors='black')
         except:
             pass
 
-        # Plot 3: Linear E''
-        E_linear_safe = np.maximum(E_linear, 1e-10)
-        im3 = self.ax_modulus_linear.pcolormesh(V, Q, np.log10(E_linear_safe), cmap=modulus_cmap, shading='auto')
-        self.ax_modulus_linear.set_title("E''(ω=qv) - 선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
-        self.ax_modulus_linear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_modulus_linear.set_ylabel('log₁₀(q) [1/m]')
-        cbar3 = self.fig_strain_map.colorbar(im3, ax=self.ax_modulus_linear, label="log₁₀(E'') [Pa]")
+        # Add strain statistics
+        strain_mean = np.mean(strain) * 100
+        strain_max = np.max(strain) * 100
+        strain_min = np.min(strain) * 100
+        self.ax_strain_contour.text(
+            0.02, 0.98, f'Mean: {strain_mean:.2f}%\nMax: {strain_max:.2f}%\nMin: {strain_min:.2f}%',
+            transform=self.ax_strain_contour.transAxes,
+            fontsize=9, verticalalignment='top', fontweight='bold',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
+        )
+
+        # Plot 2: E' Storage Modulus (top-right)
+        E_storage_safe = np.maximum(E_storage, 1e-10)
+        im2 = self.ax_E_storage.pcolormesh(V, Q, np.log10(E_storage_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_E_storage.set_title("E' Storage Modulus [log10 Pa]", fontweight='bold', fontsize=10)
+        self.ax_E_storage.set_xlabel('log10(v) [m/s]')
+        self.ax_E_storage.set_ylabel('log10(q) [1/m]')
+        cbar2 = self.fig_strain_map.colorbar(im2, ax=self.ax_E_storage, label="log10(E') [Pa]")
+        self._strain_map_colorbars.append(cbar2)
+
+        # Plot 3: E'' * g(e) - Nonlinear Loss Modulus (bottom-left)
+        E_loss_nl_safe = np.maximum(E_loss_nl, 1e-10)
+        im3 = self.ax_E_loss_nonlinear.pcolormesh(V, Q, np.log10(E_loss_nl_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_E_loss_nonlinear.set_title("E''*g(e) Loss Modulus [log10 Pa]", fontweight='bold', fontsize=10)
+        self.ax_E_loss_nonlinear.set_xlabel('log10(v) [m/s]')
+        self.ax_E_loss_nonlinear.set_ylabel('log10(q) [1/m]')
+        cbar3 = self.fig_strain_map.colorbar(im3, ax=self.ax_E_loss_nonlinear, label="log10(E''*g) [Pa]")
         self._strain_map_colorbars.append(cbar3)
 
-        # Plot 4: Nonlinear E'' (with g(ε) correction)
-        E_nonlinear_safe = np.maximum(E_nonlinear, 1e-10)
-        im4 = self.ax_modulus_nonlinear.pcolormesh(V, Q, np.log10(E_nonlinear_safe), cmap=modulus_cmap, shading='auto')
-        self.ax_modulus_nonlinear.set_title("E''·g(ε) - 비선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
-        self.ax_modulus_nonlinear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_modulus_nonlinear.set_ylabel('log₁₀(q) [1/m]')
-        cbar4 = self.fig_strain_map.colorbar(im4, ax=self.ax_modulus_nonlinear, label="log₁₀(E''·g) [Pa]")
-        self._strain_map_colorbars.append(cbar4)
-
-        # Add text showing reduction ratio with better visibility
+        # Add g(e) reduction info
         if self.g_interpolator is not None:
-            # Calculate average reduction
-            ratio = E_nonlinear / np.maximum(E_linear, 1e-10)
-            avg_ratio = np.mean(ratio)
-            min_ratio = np.min(ratio)
-            self.ax_modulus_nonlinear.text(
-                0.02, 0.98, f'평균 감소율: {avg_ratio:.2%}\n최소 감소율: {min_ratio:.2%}',
-                transform=self.ax_modulus_nonlinear.transAxes,
+            E_loss_linear = self.strain_map_results['E_loss_linear']
+            ratio_g = E_loss_nl / np.maximum(E_loss_linear, 1e-10)
+            avg_g = np.mean(ratio_g)
+            min_g = np.min(ratio_g)
+            self.ax_E_loss_nonlinear.text(
+                0.02, 0.98, f'Avg g: {avg_g:.2%}\nMin g: {min_g:.2%}',
+                transform=self.ax_E_loss_nonlinear.transAxes,
                 fontsize=9, verticalalignment='top', fontweight='bold',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
             )
 
-        # Add strain statistics to strain plots
-        strain_mean = np.mean(strain) * 100
-        strain_max = np.max(strain) * 100
-        strain_min = np.min(strain) * 100
-        self.ax_strain_linear.text(
-            0.02, 0.98, f'평균: {strain_mean:.2f}%\n최대: {strain_max:.2f}%\n최소: {strain_min:.2f}%',
-            transform=self.ax_strain_linear.transAxes,
-            fontsize=9, verticalalignment='top', fontweight='bold',
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
-        )
+        # Plot 4: E' * f(e) - Nonlinear Storage Modulus (bottom-right)
+        E_storage_nl_safe = np.maximum(E_storage_nl, 1e-10)
+        im4 = self.ax_E_storage_nonlinear.pcolormesh(V, Q, np.log10(E_storage_nl_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_E_storage_nonlinear.set_title("E'*f(e) Storage Modulus [log10 Pa]", fontweight='bold', fontsize=10)
+        self.ax_E_storage_nonlinear.set_xlabel('log10(v) [m/s]')
+        self.ax_E_storage_nonlinear.set_ylabel('log10(q) [1/m]')
+        cbar4 = self.fig_strain_map.colorbar(im4, ax=self.ax_E_storage_nonlinear, label="log10(E'*f) [Pa]")
+        self._strain_map_colorbars.append(cbar4)
+
+        # Add f(e) reduction info
+        if self.f_interpolator is not None:
+            ratio_f = E_storage_nl / np.maximum(E_storage, 1e-10)
+            avg_f = np.mean(ratio_f)
+            min_f = np.min(ratio_f)
+            self.ax_E_storage_nonlinear.text(
+                0.02, 0.98, f'Avg f: {avg_f:.2%}\nMin f: {min_f:.2%}',
+                transform=self.ax_E_storage_nonlinear.transAxes,
+                fontsize=9, verticalalignment='top', fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black')
+            )
 
         self.fig_strain_map.tight_layout()
         self.canvas_strain_map.draw()
