@@ -82,7 +82,15 @@ def get_effective_modulus(
     if strain is not None and g_interpolator is not None:
         strain = np.clip(strain, 0.0, 1.0)  # Limit to 0-100%
         g_val = g_interpolator(strain)
-        g_val = np.clip(g_val, 0.0, 1.0)  # g should be in [0, 1]
+
+        # Handle NaN or invalid g_val - fallback to linear (g=1.0)
+        if not np.isfinite(g_val):
+            g_val = 1.0  # No correction if g is invalid
+        else:
+            # Clip g to reasonable range: minimum 0.01 to prevent zero
+            # g should be > 0 for physical meaning (complete loss of modulus is unrealistic)
+            g_val = np.clip(g_val, 0.01, 1.0)
+
         ImE_eff = ImE_linear * g_val
     else:
         ImE_eff = ImE_linear

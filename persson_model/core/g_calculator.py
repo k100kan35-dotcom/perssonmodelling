@@ -180,8 +180,19 @@ class GCalculator:
         if use_nonlinear:
             # Get strain at this q
             strain_q = self._get_strain_at_q(q)
-            f_val = np.clip(self.f_interpolator(strain_q), 0.0, 1.0)
-            g_val = np.clip(self.g_interpolator(strain_q), 0.0, 1.0)
+            f_val = self.f_interpolator(strain_q)
+            g_val = self.g_interpolator(strain_q)
+
+            # Handle NaN or invalid f_val/g_val - fallback to linear (f=g=1.0)
+            if not np.isfinite(f_val):
+                f_val = 1.0  # No correction if f is invalid
+            else:
+                f_val = np.clip(f_val, 0.01, 1.0)  # Minimum 0.01 to prevent zero
+
+            if not np.isfinite(g_val):
+                g_val = 1.0  # No correction if g is invalid
+            else:
+                g_val = np.clip(g_val, 0.01, 1.0)  # Minimum 0.01 to prevent zero
 
             # Calculate |E_eff|² = (E'×f)² + (E''×g)² for each angle
             integrand = np.zeros_like(phi)

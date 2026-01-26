@@ -1020,6 +1020,10 @@ def create_fg_interpolator(
                     slope = (y[-1] - y[-2]) / (x[-1] - x[-2])
                     yq[right] = y[-1] + slope * (xq[right] - x[-1])
 
+            # Safety: replace any remaining NaN with 1.0 (no correction)
+            # This ensures interpolator always returns valid values
+            yq = np.nan_to_num(yq, nan=1.0)
+
             return float(yq[0]) if len(yq) == 1 else yq
 
         return interp_func
