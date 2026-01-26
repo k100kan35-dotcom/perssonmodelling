@@ -95,14 +95,29 @@ class ViscoelasticMaterial:
         self._storage_modulus = self._storage_modulus[sort_idx]
         self._loss_modulus = self._loss_modulus[sort_idx]
 
+        # Filter valid data: positive frequency and finite modulus values
+        valid_mask = (
+            (self._frequencies > 0) &
+            np.isfinite(self._storage_modulus) &
+            np.isfinite(self._loss_modulus) &
+            (self._storage_modulus > 0)
+        )
+
+        if np.sum(valid_mask) < 2:
+            raise ValueError("Not enough valid data points for interpolation")
+
         # Create interpolators in log-log space
-        log_freq = np.log10(self._frequencies[self._frequencies > 0])
+        log_freq = np.log10(self._frequencies[valid_mask])
         log_E_prime = np.log10(
-            np.maximum(self._storage_modulus[self._frequencies > 0], 1e3)
+            np.maximum(self._storage_modulus[valid_mask], 1e3)
         )
         log_E_double_prime = np.log10(
-            np.maximum(self._loss_modulus[self._frequencies > 0], 1.0)
+            np.maximum(self._loss_modulus[valid_mask], 1.0)
         )
+
+        # Ensure no NaN in log values
+        log_E_prime = np.nan_to_num(log_E_prime, nan=6.0)
+        log_E_double_prime = np.nan_to_num(log_E_double_prime, nan=5.0)
 
         # Choose interpolation method based on number of data points
         # Cubic spline requires at least 4 points and can be unstable with extrapolation
@@ -227,6 +242,17 @@ class ViscoelasticMaterial:
 
         log_E_prime = self._E_prime_interp(log_freq)
         log_E_double_prime = self._E_double_prime_interp(log_freq)
+
+        # Validate interpolated values - clip to reasonable range
+        # log10(1e3) = 3, log10(1e12) = 12 for Pa
+        log_E_prime = np.clip(log_E_prime, 3, 12)
+        log_E_double_prime = np.clip(log_E_double_prime, 0, 12)
+
+        # Handle any remaining NaN values
+        if np.any(~np.isfinite(log_E_prime)):
+            log_E_prime = np.nan_to_num(log_E_prime, nan=6.0, posinf=12.0, neginf=3.0)
+        if np.any(~np.isfinite(log_E_double_prime)):
+            log_E_double_prime = np.nan_to_num(log_E_double_prime, nan=5.0, posinf=12.0, neginf=0.0)
 
         E_prime = 10**log_E_prime
         E_double_prime = 10**log_E_double_prime

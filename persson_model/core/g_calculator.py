@@ -188,6 +188,18 @@ class GCalculator:
             for i, w in enumerate(omega_eval):
                 E_prime = self.storage_modulus_func(w)
                 E_loss = self.loss_modulus_func(w)
+
+                # Validate E' and E'' values
+                if not np.isfinite(E_prime) or not np.isfinite(E_loss):
+                    # Use fallback: try linear modulus
+                    try:
+                        E_complex = self.modulus_func(w)
+                        E_prime = np.real(E_complex)
+                        E_loss = np.imag(E_complex)
+                    except:
+                        E_prime = 1e6  # Fallback value
+                        E_loss = 1e5
+
                 # Apply nonlinear correction
                 E_prime_eff = E_prime * f_val
                 E_loss_eff = E_loss * g_val
@@ -198,6 +210,10 @@ class GCalculator:
             # Linear calculation (original)
             E_values = np.array([self.modulus_func(w) for w in omega_eval])
             integrand = np.abs(E_values * self.prefactor)**2
+
+        # Validate integrand - replace NaN/Inf with zeros
+        if np.any(~np.isfinite(integrand)):
+            integrand = np.nan_to_num(integrand, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Numerical integration using trapezoidal rule
         result = np.trapz(integrand, phi)

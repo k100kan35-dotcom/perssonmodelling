@@ -174,15 +174,19 @@ class FrictionCalculator:
         float or np.ndarray
             P(q) contact area ratio (0 to 1)
         """
-        G = np.asarray(G)
+        G = np.asarray(G, dtype=float)
         P = np.zeros_like(G)
 
+        # Handle NaN and negative G values - treat as full contact
+        invalid_mask = ~np.isfinite(G) | (G < 0)
+        P[invalid_mask] = 1.0
+
         # Handle G close to zero (full contact)
-        small_G_mask = G < 1e-10
+        small_G_mask = (G >= 0) & (G < 1e-10) & np.isfinite(G)
         P[small_G_mask] = 1.0
 
-        # Normal calculation for G > 0
-        valid_mask = ~small_G_mask
+        # Normal calculation for valid G > 0
+        valid_mask = np.isfinite(G) & (G >= 1e-10)
         if np.any(valid_mask):
             sqrt_G = np.sqrt(G[valid_mask])
             # Prevent overflow for very large G
