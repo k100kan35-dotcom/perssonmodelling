@@ -754,7 +754,16 @@ class PerssonModelGUI_V2:
 
         if filename:
             try:
-                q, C_q = load_psd_from_file(filename, skip_header=1)
+                # Auto-detect format (is_log_data=None)
+                q, C_q = load_psd_from_file(filename, skip_header=1, is_log_data=None)
+
+                # Validate the loaded data
+                if len(q) == 0:
+                    raise ValueError("No valid data points found in file")
+
+                if np.any(q <= 0) or np.any(C_q <= 0):
+                    raise ValueError("Invalid data: q and C must be positive after conversion")
+
                 self.psd_model = create_psd_from_data(q, C_q, interpolation_kind='log-log')
 
                 self.q_min_var.set(f"{q[0]:.2e}")
@@ -762,10 +771,18 @@ class PerssonModelGUI_V2:
                 self.psd_type_var.set("measured")
 
                 self._update_verification_plots()
-                messagebox.showinfo("Success", f"PSD data loaded: {len(q)} points")
+
+                # Show info about loaded data
+                messagebox.showinfo(
+                    "Success",
+                    f"PSD data loaded: {len(q)} points\n"
+                    f"q 범위: {q[0]:.2e} ~ {q[-1]:.2e} 1/m\n"
+                    f"C(q) 범위: {C_q.min():.2e} ~ {C_q.max():.2e} m⁴"
+                )
 
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to load PSD data:\n{str(e)}")
+                import traceback
+                messagebox.showerror("Error", f"Failed to load PSD data:\n{str(e)}\n\n{traceback.format_exc()}")
 
     def _apply_smoothing(self):
         """Apply smoothing to DMA data with current settings."""
