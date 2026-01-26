@@ -128,6 +128,7 @@ class PerssonModelGUI_V2:
         self.results = {}
         self.raw_dma_data = None  # Store raw DMA data for plotting
         self.raw_psd_data = None  # Store raw PSD data for comparison plotting
+        self.target_xi = None  # Target RMS slope from Tab 2 PSD settings
 
         # Strain/mu_visc related variables
         self.strain_data = None  # Strain sweep raw data by temperature
@@ -2022,6 +2023,10 @@ class PerssonModelGUI_V2:
             xi_squared = 2 * np.pi * np.trapezoid(integrand, q_calc)
             xi_actual = np.sqrt(xi_squared)
 
+            # Store target xi for consistency with Tab 4 (RMS Slope)
+            self.target_xi = xi_actual
+            self.psd_model.target_xi = xi_actual
+
             # Update plots
             self._update_verification_plots()
             self.status_var.set(f"PSD applied: ξ={xi_actual:.3f}, H={H:.2f}, C(q0)={C_q0:.1e}")
@@ -3260,9 +3265,11 @@ $\begin{array}{lcc}
             self.rms_progress_var.set(100)
             self.status_var.set("RMS Slope / Local Strain 계산 완료")
 
+            # Use target_xi from Tab 2 if available for consistency
+            xi_max_display = self.target_xi if self.target_xi is not None else self.rms_slope_profiles['xi'][-1]
             messagebox.showinfo("완료",
                 f"RMS Slope / Local Strain 계산 완료!\n\n"
-                f"ξ_max = {self.rms_slope_profiles['xi'][-1]:.4f}\n"
+                f"ξ_max = {xi_max_display:.4f}\n"
                 f"ε_max = {self.rms_slope_profiles['strain'][-1]*100:.2f}%\n"
                 f"h_rms = {self.rms_slope_profiles['hrms'][-1]*1e6:.2f} μm"
             )
@@ -3301,11 +3308,13 @@ $\begin{array}{lcc}
         self.ax_rms_slope.set_ylabel('ξ (RMS Slope)')
         self.ax_rms_slope.grid(True, alpha=0.3)
 
-        # Add final value annotation
+        # Add final value annotation - use target_xi from Tab 2 if available
         if len(xi) > 0 and xi[-1] > 0:
-            self.ax_rms_slope.axhline(y=xi[-1], color='r', linestyle='--', alpha=0.5)
-            self.ax_rms_slope.annotate(f'ξ_max={xi[-1]:.4f}',
-                xy=(q[-1], xi[-1]), xytext=(0.7, 0.9),
+            # Use target_xi from PSD settings (Tab 2) for consistency
+            xi_max_display = self.target_xi if self.target_xi is not None else xi[-1]
+            self.ax_rms_slope.axhline(y=xi_max_display, color='r', linestyle='--', alpha=0.5)
+            self.ax_rms_slope.annotate(f'ξ_max={xi_max_display:.4f}',
+                xy=(q[-1], xi_max_display), xytext=(0.7, 0.9),
                 textcoords='axes fraction', fontsize=9,
                 arrowprops=dict(arrowstyle='->', color='red', alpha=0.5))
 
@@ -3378,7 +3387,9 @@ $\begin{array}{lcc}
         self.rms_result_text.insert(tk.END, f"  Strain Factor: {summary['strain_factor']}\n\n")
 
         self.rms_result_text.insert(tk.END, "[RMS Slope]\n")
-        self.rms_result_text.insert(tk.END, f"  ξ_max: {summary['xi_max']:.4f}\n")
+        # Use target_xi from Tab 2 if available for consistency
+        xi_max_display = self.target_xi if self.target_xi is not None else summary['xi_max']
+        self.rms_result_text.insert(tk.END, f"  ξ_max: {xi_max_display:.4f}\n")
         self.rms_result_text.insert(tk.END, f"  ξ(q_max): {summary['xi_at_qmax']:.4f}\n\n")
 
         self.rms_result_text.insert(tk.END, "[Local Strain]\n")
