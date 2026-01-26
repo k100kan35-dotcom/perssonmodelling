@@ -347,6 +347,12 @@ class PerssonModelGUI_V2:
         dma_frame = ttk.LabelFrame(settings_container, text="DMA Smoothing/Extrapolation", padding=5)
         dma_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
 
+        # Load DMA button row (inside labelframe, at top)
+        dma_load_row = ttk.Frame(dma_frame)
+        dma_load_row.pack(fill=tk.X, pady=(0, 3))
+        ttk.Button(dma_load_row, text="Load DMA", command=self._load_material, width=10).pack(side=tk.LEFT)
+        ttk.Button(dma_load_row, text="Load PSD", command=self._load_psd, width=10).pack(side=tk.LEFT, padx=(5, 0))
+
         # Smoothing row
         smooth_row = ttk.Frame(dma_frame)
         smooth_row.pack(fill=tk.X, pady=1)
@@ -385,15 +391,27 @@ class PerssonModelGUI_V2:
         self.psd_q1_var = tk.StringVar(value="1e8")
         ttk.Entry(q_row, textvariable=self.psd_q1_var, width=8).pack(side=tk.LEFT, padx=2)
 
-        # H, C(q0) row
-        hc_row = ttk.Frame(psd_frame)
-        hc_row.pack(fill=tk.X, pady=1)
-        ttk.Label(hc_row, text="H (Hurst):", font=('Arial', 8)).pack(side=tk.LEFT)
+        # H row
+        h_row = ttk.Frame(psd_frame)
+        h_row.pack(fill=tk.X, pady=1)
+        ttk.Label(h_row, text="H (Hurst):", font=('Arial', 8)).pack(side=tk.LEFT)
         self.psd_H_var = tk.StringVar(value="0.8")
-        ttk.Entry(hc_row, textvariable=self.psd_H_var, width=6).pack(side=tk.LEFT, padx=2)
-        ttk.Label(hc_row, text="C(q0):", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Entry(h_row, textvariable=self.psd_H_var, width=6).pack(side=tk.LEFT, padx=2)
+
+        # ξ target row - specify RMS slope to auto-calculate C(q0)
+        xi_row = ttk.Frame(psd_frame)
+        xi_row.pack(fill=tk.X, pady=1)
+        ttk.Label(xi_row, text="ξ (RMS slope):", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.psd_xi_var = tk.StringVar(value="1.3")
+        ttk.Entry(xi_row, textvariable=self.psd_xi_var, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(xi_row, text="→ C(q0) 계산", command=self._calc_Cq0_from_xi, width=10).pack(side=tk.LEFT, padx=(5, 0))
+
+        # C(q0) row (can be manually overridden)
+        cq_row = ttk.Frame(psd_frame)
+        cq_row.pack(fill=tk.X, pady=1)
+        ttk.Label(cq_row, text="C(q0):", font=('Arial', 8)).pack(side=tk.LEFT)
         self.psd_Cq0_var = tk.StringVar(value="1e-18")
-        ttk.Entry(hc_row, textvariable=self.psd_Cq0_var, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Entry(cq_row, textvariable=self.psd_Cq0_var, width=12).pack(side=tk.LEFT, padx=2)
 
         # Apply PSD button
         ttk.Button(psd_frame, text="Apply PSD", command=self._apply_psd_settings, width=12).pack(pady=2)
@@ -1825,6 +1843,48 @@ class PerssonModelGUI_V2:
             import traceback
             traceback.print_exc()
 
+    def _calc_Cq0_from_xi(self):
+        """Calculate C(q0) from target RMS slope (ξ).
+
+        Formula derivation:
+        ξ² = 2π ∫[q0→q1] q³ C(q) dq
+        For power-law PSD: C(q) = C(q0) * (q/q0)^(-2(H+1))
+
+        ξ² = 2π * C(q0) * q0^(2(H+1)) * [q^(2-2H) / (2-2H)]_{q0}^{q1}
+           = 2π * C(q0) * q0^(2(H+1)) * (q1^(2-2H) - q0^(2-2H)) / (2-2H)
+
+        Therefore:
+        C(q0) = ξ² * (2-2H) / (2π * q0^(2(H+1)) * (q1^(2-2H) - q0^(2-2H)))
+        """
+        try:
+            q0 = float(self.psd_q0_var.get())
+            q1 = float(self.psd_q1_var.get())
+            H = float(self.psd_H_var.get())
+            xi_target = float(self.psd_xi_var.get())
+
+            if q1 <= q0:
+                messagebox.showerror("Error", "q1 must be greater than q0")
+                return
+
+            # Calculate C(q0) from target ξ
+            exp_factor = 2 - 2 * H
+            if abs(exp_factor) < 1e-10:
+                # Special case H ≈ 1
+                integral_factor = np.log(q1 / q0)
+            else:
+                integral_factor = (q1**exp_factor - q0**exp_factor) / exp_factor
+
+            # ξ² = 2π * C(q0) * q0^(2(H+1)) * integral_factor
+            # C(q0) = ξ² / (2π * q0^(2(H+1)) * integral_factor)
+            C_q0 = xi_target**2 / (2 * np.pi * q0**(2*(H+1)) * integral_factor)
+
+            # Update C(q0) entry
+            self.psd_Cq0_var.set(f"{C_q0:.3e}")
+            self.status_var.set(f"C(q0) = {C_q0:.3e} calculated for ξ = {xi_target}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"C(q0) 계산 실패:\n{str(e)}")
+
     def _apply_psd_settings(self):
         """Apply PSD power-law settings from user input."""
         try:
@@ -1876,15 +1936,24 @@ class PerssonModelGUI_V2:
             self.q_min_var.set(str(q0))
             self.q_max_var.set(str(q1))
 
+            # Calculate actual RMS slope from the PSD
+            # ξ² = 2π ∫ q³ C(q) dq
+            q_calc = np.logspace(np.log10(q0), np.log10(q1), 1000)
+            C_calc = psd_model(q_calc)
+            integrand = q_calc**3 * C_calc
+            xi_squared = 2 * np.pi * np.trapezoid(integrand, q_calc)
+            xi_actual = np.sqrt(xi_squared)
+
             # Update plots
             self._update_verification_plots()
-            self.status_var.set(f"PSD applied: q0={q0:.1e}, q1={q1:.1e}, H={H:.2f}, C(q0)={C_q0:.1e}")
+            self.status_var.set(f"PSD applied: ξ={xi_actual:.3f}, H={H:.2f}, C(q0)={C_q0:.1e}")
 
             messagebox.showinfo("Complete", f"PSD model applied:\n"
                               f"- q range: {q0:.1e} ~ {q1:.1e} 1/m\n"
                               f"- Hurst exponent H: {H:.3f}\n"
                               f"- C(q0): {C_q0:.1e} m^4\n"
-                              f"- Power law: C(q) = C(q0)*(q/q0)^{exponent:.2f}")
+                              f"- Power law: C(q) = C(q0)*(q/q0)^{exponent:.2f}\n"
+                              f"- RMS slope ξ = {xi_actual:.4f}")
 
         except Exception as e:
             messagebox.showerror("Error", f"PSD settings failed:\n{str(e)}")
