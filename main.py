@@ -454,6 +454,21 @@ class PerssonModelGUI_V2:
                   text="optimize: 수치 최적화 / theoretical: T/Tref 공식",
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
+        # Optimization target selection
+        row3 = ttk.Frame(settings_frame)
+        row3.pack(fill=tk.X, pady=2)
+        ttk.Label(row3, text="최적화 대상:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.mc_target_var = tk.StringVar(value="E_storage")
+        target_combo = ttk.Combobox(
+            row3, textvariable=self.mc_target_var,
+            values=["E_storage", "E_loss", "tan_delta"],
+            width=12, state="readonly"
+        )
+        target_combo.pack(side=tk.RIGHT)
+        ttk.Label(settings_frame,
+                  text="E_storage: E' / E_loss: E'' / tan_delta: tanδ",
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
         # 4. Calculate button
         calc_frame = ttk.Frame(settings_frame)
         calc_frame.pack(fill=tk.X, pady=5)
@@ -713,6 +728,7 @@ class PerssonModelGUI_V2:
             T_ref = float(self.mc_tref_var.get())
             use_bT = self.mc_use_bt_var.get()
             bT_mode = self.mc_bt_mode_var.get()
+            target = self.mc_target_var.get()
 
             # Create master curve generator
             self.master_curve_gen = MasterCurveGenerator(T_ref=T_ref)
@@ -731,6 +747,7 @@ class PerssonModelGUI_V2:
             self.master_curve_gen.optimize_shift_factors(
                 use_bT=use_bT,
                 bT_mode=bT_mode,
+                target=target,
                 verbose=False
             )
 
@@ -752,10 +769,10 @@ class PerssonModelGUI_V2:
             self.root.update_idletasks()
 
             # Update plots
-            self._update_mc_plots(master_curve, wlf_result)
+            self._update_mc_plots(master_curve, wlf_result, target)
 
             # Update results text
-            self._update_mc_results(wlf_result)
+            self._update_mc_results(wlf_result, target)
 
             # Update shift factor table
             self._update_mc_shift_table()
@@ -769,7 +786,7 @@ class PerssonModelGUI_V2:
         finally:
             self.mc_calc_btn.config(state='normal')
 
-    def _update_mc_plots(self, master_curve, wlf_result):
+    def _update_mc_plots(self, master_curve, wlf_result, target='E_storage'):
         """Update master curve plots."""
         # Clear all axes except raw data
         self.ax_mc_master.clear()
@@ -782,11 +799,19 @@ class PerssonModelGUI_V2:
         bT = self.master_curve_gen.bT
         T_ref = self.master_curve_gen.T_ref
 
+        # Target display name
+        target_names = {
+            'E_storage': "E'",
+            'E_loss': "E''",
+            'tan_delta': "tanδ"
+        }
+        target_display = target_names.get(target, target)
+
         # Colors for temperatures
         colors = plt.cm.coolwarm(np.linspace(0, 1, len(temps)))
 
         # Plot 1: Master curve with shifted data
-        self.ax_mc_master.set_title(f'마스터 커브 (Tref={T_ref}°C)', fontweight='bold')
+        self.ax_mc_master.set_title(f'마스터 커브 (Tref={T_ref}°C, 최적화: {target_display})', fontweight='bold')
         self.ax_mc_master.set_xlabel('Reduced Frequency (Hz)')
         self.ax_mc_master.set_ylabel('E\', E\'\' (MPa)')
         self.ax_mc_master.set_xscale('log')
@@ -848,15 +873,24 @@ class PerssonModelGUI_V2:
         self.fig_mc.tight_layout()
         self.canvas_mc.draw()
 
-    def _update_mc_results(self, wlf_result):
+    def _update_mc_results(self, wlf_result, target='E_storage'):
         """Update master curve results text."""
         self.mc_result_text.delete('1.0', tk.END)
 
         T_ref = self.master_curve_gen.T_ref
         temps = self.master_curve_gen.temperatures
 
+        # Target display name
+        target_names = {
+            'E_storage': "E' (Storage Modulus)",
+            'E_loss': "E'' (Loss Modulus)",
+            'tan_delta': "tanδ (Loss Factor)"
+        }
+        target_display = target_names.get(target, target)
+
         text = f"=== 마스터 커브 생성 결과 ===\n\n"
         text += f"기준 온도 Tref: {T_ref}°C\n"
+        text += f"최적화 대상: {target_display}\n"
         text += f"온도 범위: {temps.min():.1f} ~ {temps.max():.1f}°C\n"
         text += f"온도 개수: {len(temps)}개\n\n"
 

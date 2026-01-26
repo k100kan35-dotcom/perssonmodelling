@@ -110,8 +110,6 @@ class MasterCurveGenerator:
 
         bT = T * rho(T) / (T_ref * rho(T_ref)) ≈ T / T_ref (in Kelvin)
 
-        For glassy region, bT approaches 1.
-
         Parameters
         ----------
         T : float
@@ -125,73 +123,117 @@ class MasterCurveGenerator:
         T_K = T + 273.15
         return T_K / self.T_ref_K
 
-    def _overlap_error(self, params, T1, T2, use_bT=True):
+    def _calculate_overlap_error(self, log_aT_rel, T_neighbor, T_current,
+                                  target='E_storage', bT_current=1.0):
         """
-        Calculate overlap error between two temperature curves.
+        Calculate MSE between two temperature curves in overlap region.
+
+        The goal is to find log_aT_rel such that T_current's data, when shifted,
+        overlaps smoothly with T_neighbor's data.
 
         Parameters
         ----------
-        params : tuple
-            (log_aT, bT) or (log_aT,) depending on use_bT
-        T1 : float
-            First temperature (reference, already shifted)
-        T2 : float
-            Second temperature (to be shifted)
-        use_bT : bool
-            Whether to optimize bT as well
+        log_aT_rel : float
+            Log10 of the RELATIVE shift factor (between adjacent temps)
+        T_neighbor : float
+            Adjacent temperature (already has accumulated aT assigned)
+        T_current : float
+            Current temperature being optimized
+        target : str
+            Which modulus to use: 'E_storage', 'E_loss', or 'tan_delta'
+        bT_current : float
+            Vertical shift for current temperature
 
         Returns
         -------
         float
-            Mean squared error in overlap region
+            Mean squared error in log space
         """
-        if use_bT:
-            log_aT_rel, bT = params
-        else:
-            log_aT_rel = params[0]
-            bT = self.calculate_theoretical_bT(T2)
-
-        # Relative shift factor (multiplied by neighbor's accumulated shift)
         aT_rel = 10**log_aT_rel
 
-        # Get data from neighbor (T1) - already shifted
-        f1 = self.raw_data[T1]['f'] * self.aT[T1]
-        E1 = self.raw_data[T1]['E_storage'] / self.bT[T1]
+        # Get neighbor's data (already shifted to master curve)
+        f_neighbor = self.raw_data[T_neighbor]['f'] * self.aT[T_neighbor]
 
-        # Get data from current temp (T2) - apply total shift (relative * neighbor's accumulated)
-        aT_total = aT_rel * self.aT[T1]
-        f2 = self.raw_data[T2]['f'] * aT_total
-        E2 = self.raw_data[T2]['E_storage'] / bT
+        if target == 'E_storage':
+            E_neighbor = self.raw_data[T_neighbor]['E_storage'] / self.bT[T_neighbor]
+        elif target == 'E_loss':
+            E_neighbor = self.raw_data[T_neighbor]['E_loss'] / self.bT[T_neighbor]
+        else:  # tan_delta
+            E_neighbor = (self.raw_data[T_neighbor]['E_loss'] /
+                         self.raw_data[T_neighbor]['E_storage'])
 
-        # Find overlap region
-        f_min_overlap = max(f1.min(), f2.min())
-        f_max_overlap = min(f1.max(), f2.max())
+        # Get current temp's data with TOTAL shift
+        aT_total = aT_rel * self.aT[T_neighbor]
+        f_current = self.raw_data[T_current]['f'] * aT_total
 
-        if f_min_overlap >= f_max_overlap:
-            return 1e10  # No overlap
+        if target == 'E_storage':
+            E_current = self.raw_data[T_current]['E_storage'] / bT_current
+        elif target == 'E_loss':
+            E_current = self.raw_data[T_current]['E_loss'] / bT_current
+        else:  # tan_delta
+            E_current = (self.raw_data[T_current]['E_loss'] /
+                        self.raw_data[T_current]['E_storage'])
 
-        # Interpolate in overlap region
-        n_points = 20
-        f_overlap = np.logspace(np.log10(f_min_overlap), np.log10(f_max_overlap), n_points)
+        # Find overlap region in reduced frequency
+        f_min_overlap = max(f_neighbor.min(), f_current.min())
+        f_max_overlap = min(f_neighbor.max(), f_current.max())
 
-        # Log-log interpolation
+        # Check for valid overlap
+        if f_min_overlap >= f_max_overlap * 0.99:
+            # No overlap - penalize heavily
+            return 1e6
+
+        # Create common frequency grid in overlap region
+        n_points = min(20, len(f_neighbor), len(f_current))
+        f_common = np.logspace(np.log10(f_min_overlap * 1.01),
+                               np.log10(f_max_overlap * 0.99), n_points)
+
         try:
-            interp1 = interpolate.interp1d(np.log10(f1), np.log10(E1),
-                                            kind='linear', fill_value='extrapolate')
-            interp2 = interpolate.interp1d(np.log10(f2), np.log10(E2),
-                                            kind='linear', fill_value='extrapolate')
+            # Interpolate both curves to common grid (log-log space)
+            # Make sure arrays are sorted and unique
+            sort_idx_n = np.argsort(f_neighbor)
+            f_neighbor_sorted = f_neighbor[sort_idx_n]
+            E_neighbor_sorted = E_neighbor[sort_idx_n]
 
-            log_E1_interp = interp1(np.log10(f_overlap))
-            log_E2_interp = interp2(np.log10(f_overlap))
+            sort_idx_c = np.argsort(f_current)
+            f_current_sorted = f_current[sort_idx_c]
+            E_current_sorted = E_current[sort_idx_c]
+
+            # Remove any non-positive values
+            valid_n = (f_neighbor_sorted > 0) & (E_neighbor_sorted > 0)
+            valid_c = (f_current_sorted > 0) & (E_current_sorted > 0)
+
+            if np.sum(valid_n) < 2 or np.sum(valid_c) < 2:
+                return 1e6
+
+            interp_neighbor = interpolate.interp1d(
+                np.log10(f_neighbor_sorted[valid_n]),
+                np.log10(E_neighbor_sorted[valid_n]),
+                kind='linear', fill_value='extrapolate', bounds_error=False
+            )
+            interp_current = interpolate.interp1d(
+                np.log10(f_current_sorted[valid_c]),
+                np.log10(E_current_sorted[valid_c]),
+                kind='linear', fill_value='extrapolate', bounds_error=False
+            )
+
+            log_E_neighbor = interp_neighbor(np.log10(f_common))
+            log_E_current = interp_current(np.log10(f_common))
+
+            # Check for invalid interpolation results
+            if np.any(np.isnan(log_E_neighbor)) or np.any(np.isnan(log_E_current)):
+                return 1e6
 
             # MSE in log space
-            mse = np.mean((log_E1_interp - log_E2_interp)**2)
-        except:
-            mse = 1e10
+            mse = np.mean((log_E_neighbor - log_E_current)**2)
 
-        return mse
+            return mse
 
-    def optimize_shift_factors(self, use_bT=True, bT_mode='optimize', verbose=False):
+        except Exception as e:
+            return 1e6
+
+    def optimize_shift_factors(self, use_bT=True, bT_mode='theoretical',
+                               target='E_storage', verbose=False):
         """
         Optimize shift factors aT and bT for all temperatures.
 
@@ -202,6 +244,8 @@ class MasterCurveGenerator:
         bT_mode : str
             'optimize': numerically optimize bT
             'theoretical': use T/T_ref formula
+        target : str
+            Which to optimize: 'E_storage', 'E_loss', 'tan_delta'
         verbose : bool
             Print optimization progress
 
@@ -219,85 +263,89 @@ class MasterCurveGenerator:
         # Find index of reference temperature (or closest)
         ref_idx = np.argmin(np.abs(temps_sorted - self.T_ref))
         T_ref_actual = temps_sorted[ref_idx]
+        self.T_ref = T_ref_actual  # Update to actual reference
 
         # Set reference to 1.0
         self.aT[T_ref_actual] = 1.0
         self.bT[T_ref_actual] = 1.0
 
         if verbose:
-            print(f"Reference temperature: {T_ref_actual}°C")
+            print(f"Reference temperature: {T_ref_actual}°C (index {ref_idx})")
+            print(f"Target: {target}")
 
-        # Shift temperatures below reference (working downward - colder temps)
-        # For colder temperatures, aT > 1 (positive log_aT)
+        # Process temperatures below reference (colder -> need aT > 1)
         for i in range(ref_idx - 1, -1, -1):
             T_current = temps_sorted[i]
             T_neighbor = temps_sorted[i + 1]
 
-            # WLF-based initial guess (typical C1=17.44, C2=51.6)
-            dT = T_current - T_ref_actual
-            log_aT_init = 17.44 * (-dT) / (51.6 + abs(dT)) if abs(dT) < 51.6 else 1.0
-            bT_init = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
-
-            if use_bT and bT_mode == 'optimize':
-                # Optimize both aT and bT
-                result = optimize.minimize(
-                    self._overlap_error,
-                    x0=[log_aT_init, bT_init],
-                    args=(T_neighbor, T_current, True),
-                    method='Powell',
-                    options={'maxiter': 1000}
-                )
-                self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
-                self.bT[T_current] = max(0.5, min(2.0, result.x[1]))  # Bound bT
+            # Calculate bT
+            if use_bT:
+                if bT_mode == 'theoretical':
+                    self.bT[T_current] = self.calculate_theoretical_bT(T_current)
+                else:
+                    # For now, use theoretical as starting point
+                    self.bT[T_current] = self.calculate_theoretical_bT(T_current)
             else:
-                # Optimize only aT
-                self.bT[T_current] = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
-                result = optimize.minimize(
-                    self._overlap_error,
-                    x0=[log_aT_init],
-                    args=(T_neighbor, T_current, False),
-                    method='Powell',
-                    options={'maxiter': 1000}
-                )
-                self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
+                self.bT[T_current] = 1.0
+
+            # Initial guess for relative shift (small positive value for colder temps)
+            # Adjacent temps should have small relative shifts
+            dT = T_current - T_neighbor  # negative for colder
+            log_aT_init = -0.1 * dT / 10.0  # Rough estimate: 0.1 decades per 10°C
+
+            # Optimize with bounded search
+            # For colder temp than neighbor, aT_rel should be > 1 (positive log)
+            result = optimize.minimize_scalar(
+                self._calculate_overlap_error,
+                args=(T_neighbor, T_current, target, self.bT[T_current]),
+                bounds=(-0.5, 3.0),  # Reasonable range for relative shift
+                method='bounded',
+                options={'maxiter': 100}
+            )
+
+            log_aT_rel = result.x
+            self.aT[T_current] = 10**log_aT_rel * self.aT[T_neighbor]
 
             if verbose:
-                print(f"T={T_current}°C: aT={self.aT[T_current]:.4e}, bT={self.bT[T_current]:.4f}")
+                print(f"T={T_current:.1f}°C: aT={self.aT[T_current]:.4e}, "
+                      f"bT={self.bT[T_current]:.4f}, log_aT_rel={log_aT_rel:.4f}, "
+                      f"error={result.fun:.4e}")
 
-        # Shift temperatures above reference (working upward - hotter temps)
-        # For hotter temperatures, aT < 1 (negative log_aT)
+        # Process temperatures above reference (hotter -> need aT < 1)
         for i in range(ref_idx + 1, len(temps_sorted)):
             T_current = temps_sorted[i]
             T_neighbor = temps_sorted[i - 1]
 
-            # WLF-based initial guess
-            dT = T_current - T_ref_actual
-            log_aT_init = -17.44 * dT / (51.6 + abs(dT)) if abs(dT) < 51.6 else -1.0
-            bT_init = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
-
-            if use_bT and bT_mode == 'optimize':
-                result = optimize.minimize(
-                    self._overlap_error,
-                    x0=[log_aT_init, bT_init],
-                    args=(T_neighbor, T_current, True),
-                    method='Powell',
-                    options={'maxiter': 1000}
-                )
-                self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
-                self.bT[T_current] = max(0.5, min(2.0, result.x[1]))
+            # Calculate bT
+            if use_bT:
+                if bT_mode == 'theoretical':
+                    self.bT[T_current] = self.calculate_theoretical_bT(T_current)
+                else:
+                    self.bT[T_current] = self.calculate_theoretical_bT(T_current)
             else:
-                self.bT[T_current] = self.calculate_theoretical_bT(T_current) if use_bT else 1.0
-                result = optimize.minimize(
-                    self._overlap_error,
-                    x0=[log_aT_init],
-                    args=(T_neighbor, T_current, False),
-                    method='Powell',
-                    options={'maxiter': 1000}
-                )
-                self.aT[T_current] = 10**result.x[0] * self.aT[T_neighbor]
+                self.bT[T_current] = 1.0
+
+            # Initial guess for relative shift (small negative value for hotter temps)
+            dT = T_current - T_neighbor  # positive for hotter
+            log_aT_init = -0.1 * dT / 10.0  # Rough estimate
+
+            # Optimize with bounded search
+            # For hotter temp than neighbor, aT_rel should be < 1 (negative log)
+            result = optimize.minimize_scalar(
+                self._calculate_overlap_error,
+                args=(T_neighbor, T_current, target, self.bT[T_current]),
+                bounds=(-3.0, 0.5),  # Reasonable range for relative shift
+                method='bounded',
+                options={'maxiter': 100}
+            )
+
+            log_aT_rel = result.x
+            self.aT[T_current] = 10**log_aT_rel * self.aT[T_neighbor]
 
             if verbose:
-                print(f"T={T_current}°C: aT={self.aT[T_current]:.4e}, bT={self.bT[T_current]:.4f}")
+                print(f"T={T_current:.1f}°C: aT={self.aT[T_current]:.4e}, "
+                      f"bT={self.bT[T_current]:.4f}, log_aT_rel={log_aT_rel:.4f}, "
+                      f"error={result.fun:.4e}")
 
         return {'aT': self.aT.copy(), 'bT': self.bT.copy()}
 
@@ -363,35 +411,27 @@ class MasterCurveGenerator:
         E_storage_valid = all_E_storage_shifted[valid_mask]
         E_loss_valid = all_E_loss_shifted[valid_mask]
 
-        # Use spline interpolation in log space
+        # Use linear interpolation in log space (more robust)
         try:
-            interp_storage = interpolate.UnivariateSpline(
-                np.log10(f_valid), np.log10(E_storage_valid), s=len(f_valid)*0.01, k=3
+            interp_storage = interpolate.interp1d(
+                np.log10(f_valid), np.log10(E_storage_valid),
+                kind='linear', fill_value='extrapolate', bounds_error=False
             )
-            interp_loss = interpolate.UnivariateSpline(
-                np.log10(f_valid), np.log10(E_loss_valid), s=len(f_valid)*0.01, k=3
+            interp_loss = interpolate.interp1d(
+                np.log10(f_valid), np.log10(E_loss_valid),
+                kind='linear', fill_value='extrapolate', bounds_error=False
             )
 
             log_E_storage = interp_storage(np.log10(self.master_f))
             log_E_loss = interp_loss(np.log10(self.master_f))
-        except:
-            # Fallback to linear interpolation
-            interp_storage = interpolate.interp1d(
-                np.log10(f_valid), np.log10(E_storage_valid),
-                kind='linear', fill_value='extrapolate'
-            )
-            interp_loss = interpolate.interp1d(
-                np.log10(f_valid), np.log10(E_loss_valid),
-                kind='linear', fill_value='extrapolate'
-            )
-            log_E_storage = interp_storage(np.log10(self.master_f))
-            log_E_loss = interp_loss(np.log10(self.master_f))
+        except Exception as e:
+            raise ValueError(f"Interpolation failed: {e}")
 
         self.master_E_storage = 10**log_E_storage
         self.master_E_loss = 10**log_E_loss
 
         # Apply smoothing if requested
-        if smooth and window_length > 3:
+        if smooth and window_length > 3 and len(self.master_f) > window_length:
             try:
                 self.master_E_storage = savgol_filter(self.master_E_storage, window_length, 2)
                 self.master_E_loss = savgol_filter(self.master_E_loss, window_length, 2)
@@ -432,17 +472,20 @@ class MasterCurveGenerator:
         # WLF equation: log(aT) = -C1*(T-Tref)/(C2+(T-Tref))
         def wlf_func(T, C1, C2):
             dT = T - self.T_ref
-            return -C1 * dT / (C2 + dT)
+            # Avoid division by zero
+            denom = C2 + dT
+            denom = np.where(np.abs(denom) < 0.1, np.sign(denom) * 0.1, denom)
+            return -C1 * dT / denom
 
         # Initial guess
-        C1_init = 17.44
-        C2_init = 51.6
+        C1_init = 10.0
+        C2_init = 50.0
 
         try:
             popt, pcov = optimize.curve_fit(
                 wlf_func, temps, log_aT,
                 p0=[C1_init, C2_init],
-                bounds=([0, 0], [100, 500]),
+                bounds=([0.1, 1], [50, 300]),
                 maxfev=5000
             )
             self.C1, self.C2 = popt
