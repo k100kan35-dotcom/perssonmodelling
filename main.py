@@ -1548,19 +1548,31 @@ class PerssonModelGUI_V2:
 
             # Plot applied PSD model (power law or loaded)
             if has_psd_model:
-                q_min = float(self.q_min_var.get())
-                q_max = float(self.q_max_var.get())
-                q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
-                C_q = self.psd_model(q_plot)
-
                 # Check if this is a power-law model (has q_data attribute from _apply_psd_settings)
                 is_power_law = hasattr(self.psd_model, 'q_data')
 
                 if is_power_law:
+                    # Determine plot range: include plateau region if raw PSD data exists
+                    if has_raw_psd:
+                        q_plot_min = min(self.raw_psd_data['q'])
+                    elif hasattr(self.psd_model, 'q0'):
+                        q_plot_min = self.psd_model.q0 / 10
+                    else:
+                        q_plot_min = float(self.q_min_var.get())
+
+                    q_plot_max = float(self.q_max_var.get())
+                    q_plot = np.logspace(np.log10(q_plot_min), np.log10(q_plot_max), 300)
+                    C_q = self.psd_model(q_plot)
+
                     # Plot power law model with different color
                     self.ax_psd.loglog(q_plot, C_q, 'r-', linewidth=2.5,
                                       label='적용된 PSD (Power Law)', alpha=0.9, zorder=2)
                 else:
+                    q_min = float(self.q_min_var.get())
+                    q_max = float(self.q_max_var.get())
+                    q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
+                    C_q = self.psd_model(q_plot)
+
                     # Plot loaded/interpolated PSD
                     self.ax_psd.loglog(q_plot, C_q, 'b-', linewidth=2,
                                       label='적용된 PSD (보간)', alpha=0.9, zorder=2)
@@ -1938,33 +1950,65 @@ class PerssonModelGUI_V2:
             # Power law exponent: -2(H+1)
             exponent = -2 * (H + 1)
 
-            # Create q array
-            q_array = np.logspace(np.log10(q0), np.log10(q1), 500)
-            C_array = C_q0 * (q_array / q0) ** exponent
+            # Create q array for power law region (q0 to q1)
+            q_powerlaw = np.logspace(np.log10(q0), np.log10(q1), 500)
+            C_powerlaw = C_q0 * (q_powerlaw / q0) ** exponent
+
+            # Determine minimum q for plateau region
+            # Use raw PSD data range if available, otherwise use q0/100
+            if self.raw_psd_data is not None:
+                q_min_plateau = min(self.raw_psd_data['q'])
+            else:
+                q_min_plateau = q0 / 100
+
+            # Create plateau region (q < q0) with constant C(q0)
+            if q_min_plateau < q0:
+                q_plateau = np.logspace(np.log10(q_min_plateau), np.log10(q0), 100)[:-1]  # exclude q0 to avoid duplicate
+                C_plateau = np.full_like(q_plateau, C_q0)
+
+                # Combine plateau and power law regions
+                q_array = np.concatenate([q_plateau, q_powerlaw])
+                C_array = np.concatenate([C_plateau, C_powerlaw])
+            else:
+                q_array = q_powerlaw
+                C_array = C_powerlaw
 
             # Create interpolator for PSD model
             log_q = np.log10(q_array)
             log_C = np.log10(C_array)
 
+            # Store q0 and C_q0 for the model function
+            _q0 = q0
+            _C_q0 = C_q0
+            _exponent = exponent
+
             def psd_model(q_input):
-                """Power-law PSD model with hold extrapolation."""
+                """Power-law PSD model with plateau for q < q0."""
                 q_input = np.atleast_1d(q_input)
-                log_q_input = np.log10(np.maximum(q_input, 1e-10))
 
-                # Interpolate in log-log space
-                log_C_out = np.interp(log_q_input, log_q, log_C)
+                C_out = np.empty_like(q_input)
 
-                # Hold extrapolation at boundaries
-                log_C_out[log_q_input < log_q[0]] = log_C[0]
-                log_C_out[log_q_input > log_q[-1]] = log_C[-1]
+                # q < q0: plateau at C(q0)
+                mask_plateau = q_input < _q0
+                C_out[mask_plateau] = _C_q0
 
-                return 10 ** log_C_out
+                # q >= q0: power law
+                mask_powerlaw = ~mask_plateau
+                C_out[mask_powerlaw] = _C_q0 * (q_input[mask_powerlaw] / _q0) ** _exponent
+
+                return C_out
 
             # Store the PSD model with q_data and C_data attributes for RMS slope calculation
             self.psd_model = psd_model
             # Add attributes to function object so RMS slope calculation uses correct q range
-            self.psd_model.q_data = q_array.copy()
-            self.psd_model.C_data = C_array.copy()
+            # Note: q_data/C_data only store the power law region for RMS slope calculation
+            self.psd_model.q_data = q_powerlaw.copy()
+            self.psd_model.C_data = C_powerlaw.copy()
+            # Also store full range for plotting
+            self.psd_model.q_full = q_array.copy()
+            self.psd_model.C_full = C_array.copy()
+            self.psd_model.q0 = q0
+            self.psd_model.C_q0 = C_q0
 
             # Store q range for calculations
             self.q_min_var.set(str(q0))
