@@ -4200,112 +4200,132 @@ $\begin{array}{lcc}
 
     def _update_mu_visc_plots(self, v, mu_array, details, use_nonlinear=False):
         """Update mu_visc plots."""
-        # Clear all subplots
-        self.ax_mu_v.clear()
-        self.ax_mu_cumulative.clear()
+        try:
+            # Sanitize input arrays - replace NaN/Inf with safe values
+            mu_array = np.nan_to_num(mu_array, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Remove any existing twin axes from ax_ps
-        for ax in self.fig_mu_visc.axes:
-            if ax is not self.ax_fg_curves and ax is not self.ax_mu_v and \
-               ax is not self.ax_mu_cumulative and ax is not self.ax_ps:
-                ax.remove()
-        self.ax_ps.clear()
+            # Clear all subplots
+            self.ax_mu_v.clear()
+            self.ax_mu_cumulative.clear()
 
-        # Helper function for smart formatting
-        def smart_format(val, threshold=0.001):
-            if abs(val) < threshold and val != 0:
-                return f'{val:.2e}'
-            return f'{val:.4f}'
+            # Remove any existing twin axes from ax_ps
+            for ax in self.fig_mu_visc.axes:
+                if ax is not self.ax_fg_curves and ax is not self.ax_mu_v and \
+                   ax is not self.ax_mu_cumulative and ax is not self.ax_ps:
+                    ax.remove()
+            self.ax_ps.clear()
 
-        # Plot 1: mu_visc vs velocity (handle NaN values)
-        valid_mask = np.isfinite(mu_array)
-        if np.any(valid_mask):
-            self.ax_mu_v.semilogx(v[valid_mask], mu_array[valid_mask], 'b-', linewidth=2.5, marker='o', markersize=4)
-        else:
-            self.ax_mu_v.semilogx(v, np.zeros_like(v), 'b-', linewidth=2.5, marker='o', markersize=4)
-        self.ax_mu_v.set_title('μ_visc(v) 곡선', fontweight='bold')
-        self.ax_mu_v.set_xlabel('속도 v (m/s)')
-        self.ax_mu_v.set_ylabel('마찰 계수 μ_visc')
-        self.ax_mu_v.grid(True, alpha=0.3)
+            # Helper function for smart formatting
+            def smart_format(val, threshold=0.001):
+                if abs(val) < threshold and val != 0:
+                    return f'{val:.2e}'
+                return f'{val:.4f}'
 
-        # Find peak (handle NaN values)
-        mu_for_peak = np.where(np.isfinite(mu_array), mu_array, -np.inf)
-        peak_idx = np.argmax(mu_for_peak)
-        peak_mu = mu_array[peak_idx] if np.isfinite(mu_array[peak_idx]) else 0.0
-        peak_v = v[peak_idx]
-        self.ax_mu_v.plot(peak_v, peak_mu, 'r*', markersize=15,
-                         label=f'최대값: μ={smart_format(peak_mu)} @ v={peak_v:.4f} m/s')
-        self.ax_mu_v.legend(loc='upper left', fontsize=7)
+            # Plot 1: mu_visc vs velocity (handle NaN values)
+            valid_mask = np.isfinite(mu_array)
+            if np.any(valid_mask):
+                self.ax_mu_v.semilogx(v[valid_mask], mu_array[valid_mask], 'b-', linewidth=2.5, marker='o', markersize=4)
+            else:
+                self.ax_mu_v.semilogx(v, np.zeros_like(v), 'b-', linewidth=2.5, marker='o', markersize=4)
+            self.ax_mu_v.set_title('μ_visc(v) 곡선', fontweight='bold')
+            self.ax_mu_v.set_xlabel('속도 v (m/s)')
+            self.ax_mu_v.set_ylabel('마찰 계수 μ_visc')
+            self.ax_mu_v.grid(True, alpha=0.3)
 
-        # Plot 2: Real Contact Area Ratio A/A₀ = P(q_max) vs velocity
-        # P(q_max) is the true contact area ratio at the finest resolution
-        # G(q_max) is the full cumulative integral, so P(q_max) = erf(1/(2√G_total))
-        # This should match Tab 3's contact area plot
-        P_qmax_array = np.zeros(len(v))
+            # Find peak (handle NaN values)
+            mu_for_peak = np.where(np.isfinite(mu_array), mu_array, -np.inf)
+            peak_idx = np.argmax(mu_for_peak)
+            peak_mu = mu_array[peak_idx] if np.isfinite(mu_array[peak_idx]) else 0.0
+            peak_v = v[peak_idx]
+            self.ax_mu_v.plot(peak_v, peak_mu, 'r*', markersize=15,
+                             label=f'최대값: μ={smart_format(peak_mu)} @ v={peak_v:.4f} m/s')
+            self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
-        for i, det in enumerate(details['details']):
-            P = det.get('P', np.zeros(1))
-            # P at q_max = A/A₀ (true real contact area ratio)
-            P_qmax_array[i] = P[-1] if len(P) > 0 else 0
+            # Plot 2: Real Contact Area Ratio A/A₀ = P(q_max) vs velocity
+            P_qmax_array = np.zeros(len(v))
 
-        # Color based on nonlinear correction
-        if use_nonlinear:
-            label_str = 'A/A₀ - 비선형 G(q)'
-            color = 'r'
-            title_suffix = ' (f,g 보정 적용)'
-        else:
-            label_str = 'A/A₀ - 선형 G(q)'
-            color = 'b'
-            title_suffix = ''
+            for i, det in enumerate(details['details']):
+                P = det.get('P', np.zeros(1))
+                P_qmax_array[i] = P[-1] if len(P) > 0 else 0
 
-        # Plot A/A₀ = P(q_max) (handle NaN values)
-        valid_P_mask = np.isfinite(P_qmax_array)
-        if np.any(valid_P_mask):
-            self.ax_mu_cumulative.semilogx(v[valid_P_mask], P_qmax_array[valid_P_mask], f'{color}-', linewidth=2,
-                                            marker='s', markersize=4, label=label_str)
-        else:
-            self.ax_mu_cumulative.semilogx(v, np.zeros_like(v), f'{color}-', linewidth=2,
+            # Sanitize P_qmax_array
+            P_qmax_array = np.nan_to_num(P_qmax_array, nan=0.0, posinf=1.0, neginf=0.0)
+
+            # Color based on nonlinear correction
+            if use_nonlinear:
+                label_str = 'A/A₀ - 비선형 G(q)'
+                color = 'r'
+                title_suffix = ' (f,g 보정 적용)'
+            else:
+                label_str = 'A/A₀ - 선형 G(q)'
+                color = 'b'
+                title_suffix = ''
+
+            # Plot A/A₀ = P(q_max)
+            self.ax_mu_cumulative.semilogx(v, P_qmax_array, f'{color}-', linewidth=2,
                                             marker='s', markersize=4, label=label_str)
 
-        self.ax_mu_cumulative.set_title(f'실접촉 면적비율 A/A₀{title_suffix}', fontweight='bold', fontsize=8)
-        self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
-        self.ax_mu_cumulative.set_ylabel('A/A₀ = P(q_max)')
-        self.ax_mu_cumulative.legend(loc='best', fontsize=7)
-        self.ax_mu_cumulative.grid(True, alpha=0.3)
-        # Set y-axis to show data with padding (handle NaN values)
-        valid_P = P_qmax_array[np.isfinite(P_qmax_array)]
-        if len(valid_P) > 0:
-            y_max = max(np.max(valid_P) * 1.2, 0.05)
-        else:
-            y_max = 1.0
-        self.ax_mu_cumulative.set_ylim(0, y_max)
+            self.ax_mu_cumulative.set_title(f'실접촉 면적비율 A/A₀{title_suffix}', fontweight='bold', fontsize=8)
+            self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
+            self.ax_mu_cumulative.set_ylabel('A/A₀ = P(q_max)')
+            self.ax_mu_cumulative.legend(loc='best', fontsize=7)
+            self.ax_mu_cumulative.grid(True, alpha=0.3)
 
-        # Plot 3: P(q), S(q) for middle velocity
-        mid_idx = len(details['details']) // 2
-        detail = details['details'][mid_idx]
-        q = detail['q']
-        P = detail['P']
-        S = detail['S']
-        cumulative = detail.get('cumulative_mu', np.zeros_like(q))
+            # Set y-axis to show data with padding
+            y_max = max(np.max(P_qmax_array) * 1.2, 0.05)
+            if not np.isfinite(y_max):
+                y_max = 1.0
+            self.ax_mu_cumulative.set_ylim(0, y_max)
 
-        # Use twin axis for cumulative
-        ax_twin = self.ax_ps.twinx()
+            # Plot 3: P(q), S(q) for middle velocity
+            mid_idx = len(details['details']) // 2
+            detail = details['details'][mid_idx]
+            q = detail['q']
+            P = detail['P']
+            S = detail['S']
+            cumulative = detail.get('cumulative_mu', np.zeros_like(q))
 
-        self.ax_ps.semilogx(q, P, 'b-', linewidth=1.5, label='P(q)')
-        self.ax_ps.semilogx(q, S, 'r--', linewidth=1.5, label='S(q)')
-        ax_twin.semilogx(q, cumulative, 'g-', linewidth=1.5, alpha=0.7, label='누적μ')
+            # Handle NaN values in P, S, cumulative
+            P = np.nan_to_num(P, nan=0.0, posinf=1.0, neginf=0.0)
+            S = np.nan_to_num(S, nan=0.0, posinf=1.0, neginf=0.0)
+            cumulative = np.nan_to_num(cumulative, nan=0.0, posinf=0.0, neginf=0.0)
 
-        self.ax_ps.set_title('P(q), S(q) / 누적 μ', fontweight='bold', fontsize=9)
-        self.ax_ps.set_xlabel('파수 q (1/m)')
-        self.ax_ps.set_ylabel('P(q), S(q)', color='blue')
-        ax_twin.set_ylabel('누적 μ', color='green')
-        self.ax_ps.legend(loc='upper left', fontsize=7)
-        ax_twin.legend(loc='upper right', fontsize=7)
-        self.ax_ps.grid(True, alpha=0.3)
-        self.ax_ps.set_ylim(0, 1.1)
+            # Use twin axis for cumulative
+            ax_twin = self.ax_ps.twinx()
 
-        self.fig_mu_visc.tight_layout()
-        self.canvas_mu_visc.draw()
+            self.ax_ps.semilogx(q, P, 'b-', linewidth=1.5, label='P(q)')
+            self.ax_ps.semilogx(q, S, 'r--', linewidth=1.5, label='S(q)')
+            ax_twin.semilogx(q, cumulative, 'g-', linewidth=1.5, alpha=0.7, label='누적μ')
+
+            self.ax_ps.set_title('P(q), S(q) / 누적 μ', fontweight='bold', fontsize=9)
+            self.ax_ps.set_xlabel('파수 q (1/m)')
+            self.ax_ps.set_ylabel('P(q), S(q)', color='blue')
+            ax_twin.set_ylabel('누적 μ', color='green')
+            self.ax_ps.legend(loc='upper left', fontsize=7)
+            ax_twin.legend(loc='upper right', fontsize=7)
+            self.ax_ps.grid(True, alpha=0.3)
+            self.ax_ps.set_ylim(0, 1.1)
+
+            # Set twin axis limits safely
+            cumulative_max = np.max(cumulative) if len(cumulative) > 0 else 0.1
+            if not np.isfinite(cumulative_max) or cumulative_max <= 0:
+                cumulative_max = 0.1
+            ax_twin.set_ylim(0, cumulative_max * 1.2)
+
+            self.fig_mu_visc.tight_layout()
+            self.canvas_mu_visc.draw()
+
+        except Exception as e:
+            # Fallback: clear plots and show error message
+            print(f"Plot update error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.ax_mu_v.clear()
+            self.ax_mu_cumulative.clear()
+            self.ax_ps.clear()
+            self.ax_mu_v.text(0.5, 0.5, f'플롯 오류: {str(e)[:50]}',
+                             ha='center', va='center', transform=self.ax_mu_v.transAxes)
+            self.canvas_mu_visc.draw()
 
     def _export_mu_visc_results(self):
         """Export mu_visc results to CSV file."""
