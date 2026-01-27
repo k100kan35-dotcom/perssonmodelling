@@ -396,24 +396,24 @@ class PerssonModelGUI_V2:
         q_row = ttk.Frame(psd_frame)
         q_row.pack(fill=tk.X, pady=1)
         ttk.Label(q_row, text="q0:", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_q0_var = tk.StringVar(value="1e2")
+        self.psd_q0_var = tk.StringVar(value="500")
         ttk.Entry(q_row, textvariable=self.psd_q0_var, width=8).pack(side=tk.LEFT, padx=2)
         ttk.Label(q_row, text="q1:", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 0))
-        self.psd_q1_var = tk.StringVar(value="1e8")
+        self.psd_q1_var = tk.StringVar(value="1e5")
         ttk.Entry(q_row, textvariable=self.psd_q1_var, width=8).pack(side=tk.LEFT, padx=2)
 
         # H row
         h_row = ttk.Frame(psd_frame)
         h_row.pack(fill=tk.X, pady=1)
         ttk.Label(h_row, text="H (Hurst):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_H_var = tk.StringVar(value="0.8")
+        self.psd_H_var = tk.StringVar(value="0.56")
         ttk.Entry(h_row, textvariable=self.psd_H_var, width=6).pack(side=tk.LEFT, padx=2)
 
         # ξ target row - specify h'rms to auto-calculate C(q0)
         xi_row = ttk.Frame(psd_frame)
         xi_row.pack(fill=tk.X, pady=1)
         ttk.Label(xi_row, text="ξ (h'rms):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_xi_var = tk.StringVar(value="1.3")
+        self.psd_xi_var = tk.StringVar(value="4.0520")
         ttk.Entry(xi_row, textvariable=self.psd_xi_var, width=6).pack(side=tk.LEFT, padx=2)
         ttk.Button(xi_row, text="→ C(q0) 계산", command=self._calc_Cq0_from_xi, width=10).pack(side=tk.LEFT, padx=(5, 0))
 
@@ -421,7 +421,7 @@ class PerssonModelGUI_V2:
         cq_row = ttk.Frame(psd_frame)
         cq_row.pack(fill=tk.X, pady=1)
         ttk.Label(cq_row, text="C(q0):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_Cq0_var = tk.StringVar(value="1e-18")
+        self.psd_Cq0_var = tk.StringVar(value="3.5e-13")
         ttk.Entry(cq_row, textvariable=self.psd_Cq0_var, width=12).pack(side=tk.LEFT, padx=2)
 
         # Apply PSD button
@@ -1366,7 +1366,7 @@ class PerssonModelGUI_V2:
         self.hrms_input_frame = ttk.Frame(mode_frame)
         self.hrms_input_frame.pack(fill=tk.X, pady=2)
         ttk.Label(self.hrms_input_frame, text="목표 h'rms (ξ):").pack(side=tk.LEFT)
-        self.target_hrms_slope_var = tk.StringVar(value="1.3")
+        self.target_hrms_slope_var = tk.StringVar(value="4.0520")
         self.hrms_entry = ttk.Entry(self.hrms_input_frame, textvariable=self.target_hrms_slope_var, width=12)
         self.hrms_entry.pack(side=tk.LEFT, padx=5)
 
@@ -1374,7 +1374,7 @@ class PerssonModelGUI_V2:
         self.q1_input_frame = ttk.Frame(mode_frame)
         self.q1_input_frame.pack(fill=tk.X, pady=2)
         ttk.Label(self.q1_input_frame, text="목표 q1 (1/m):").pack(side=tk.LEFT)
-        self.input_q1_var = tk.StringVar(value="1.0e+08")
+        self.input_q1_var = tk.StringVar(value="1.0e+05")
         self.q1_entry = ttk.Entry(self.q1_input_frame, textvariable=self.input_q1_var, width=12)
         self.q1_entry.pack(side=tk.LEFT, padx=5)
 
@@ -3353,10 +3353,10 @@ $\begin{array}{lcc}
         row1 = ttk.Frame(settings_frame)
         row1.pack(fill=tk.X, pady=2)
         ttk.Label(row1, text="Strain Factor:", font=('Arial', 9)).pack(side=tk.LEFT)
-        self.strain_factor_var = tk.StringVar(value="0.5")
+        self.strain_factor_var = tk.StringVar(value="0.67")
         ttk.Entry(row1, textvariable=self.strain_factor_var, width=8).pack(side=tk.RIGHT)
 
-        ttk.Label(settings_frame, text="(ε = factor × ξ, Persson 권장: 0.5)",
+        ttk.Label(settings_frame, text="(ε = factor × ξ, Persson 권장: 0.5~1.0)",
                   font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
 
         # q range
@@ -4031,7 +4031,7 @@ $\begin{array}{lcc}
         integ_row = ttk.Frame(mu_settings_frame)
         integ_row.pack(fill=tk.X, pady=1)
         ttk.Label(integ_row, text="γ:", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.gamma_var = tk.StringVar(value="0.5")
+        self.gamma_var = tk.StringVar(value="0.6")
         ttk.Entry(integ_row, textvariable=self.gamma_var, width=5).pack(side=tk.LEFT, padx=2)
         ttk.Label(integ_row, text="φ점:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.n_phi_var = tk.StringVar(value="144")
