@@ -5173,38 +5173,207 @@ $\begin{array}{lcc}
             self.canvas_mu_visc.draw()
 
     def _export_mu_visc_results(self):
-        """Export mu_visc results to CSV file."""
+        """Export mu_visc results to CSV files with selection dialog."""
         if self.mu_visc_results is None:
             messagebox.showwarning("경고", "먼저 μ_visc를 계산하세요.")
             return
 
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            initialfile="mu_visc_results.csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
-        )
+        # Create dialog for selecting data to export
+        dialog = tk.Toplevel(self.root)
+        dialog.title("CSV 내보내기 - μ_visc 데이터 선택")
+        dialog.geometry("450x480")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
 
-        if not filename:
-            return
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 450) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 480) // 2
+        dialog.geometry(f"+{x}+{y}")
 
-        try:
-            import csv
+        # Description
+        desc_frame = ttk.Frame(dialog, padding=10)
+        desc_frame.pack(fill=tk.X)
+        ttk.Label(desc_frame, text="내보낼 데이터를 선택하세요.\n각 데이터는 별도의 CSV 파일로 저장됩니다.",
+                  font=('Arial', 10)).pack(anchor=tk.W)
 
-            v = self.mu_visc_results['v']
-            mu = self.mu_visc_results['mu']
+        # Checkbox frame
+        check_frame = ttk.LabelFrame(dialog, text="데이터 선택", padding=10)
+        check_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(['# μ_visc 계산 결과'])
-                writer.writerow(['# 속도 (m/s)', 'μ_visc'])
-                for vi, mui in zip(v, mu):
-                    writer.writerow([f'{vi:.6e}', f'{mui:.6f}'])
+        # Data options - main results
+        main_label = ttk.Label(check_frame, text="[기본 결과 (v vs 값)]", font=('Arial', 9, 'bold'))
+        main_label.pack(anchor=tk.W, pady=(0, 5))
 
-            messagebox.showinfo("성공", f"결과 저장 완료:\n{filename}")
-            self.status_var.set(f"결과 저장: {filename}")
+        main_options = [
+            ("μ_visc(v) - 마찰계수", "mu_v", True),
+            ("μ_visc_raw(v) - 스무딩 전", "mu_raw_v", False),
+        ]
 
-        except Exception as e:
-            messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
+        # q-dependent data options
+        q_label = ttk.Label(check_frame, text="\n[q 의존성 데이터 (특정 속도)]", font=('Arial', 9, 'bold'))
+        q_label.pack(anchor=tk.W, pady=(5, 5))
+
+        q_options = [
+            ("P(q) - 접촉 면적비", "P_q", False),
+            ("S(q) - 접촉 보정 인자", "S_q", False),
+            ("G(q) - 누적 G 값", "G_q", False),
+            ("C(q) - PSD 값", "C_q", False),
+            ("Integrand(q) - μ 피적분함수", "integrand_q", False),
+            ("Cumulative μ(q) - 누적 기여", "cumulative_q", False),
+            ("Angle Integral(q) - 각도 적분", "angle_int_q", False),
+        ]
+
+        # Create checkbox variables
+        check_vars = {}
+
+        for display_name, key, default in main_options:
+            var = tk.BooleanVar(value=default)
+            check_vars[key] = var
+            cb = ttk.Checkbutton(check_frame, text=display_name, variable=var)
+            cb.pack(anchor=tk.W, pady=1)
+
+        for display_name, key, default in q_options:
+            var = tk.BooleanVar(value=default)
+            check_vars[key] = var
+            cb = ttk.Checkbutton(check_frame, text=display_name, variable=var)
+            cb.pack(anchor=tk.W, pady=1)
+
+        # Velocity selection for q-dependent data
+        v_frame = ttk.Frame(check_frame)
+        v_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(v_frame, text="q 데이터 속도 인덱스:", font=('Arial', 8)).pack(side=tk.LEFT)
+
+        v_array = self.mu_visc_results['v']
+        n_v = len(v_array)
+        # Default to index closest to 1 m/s
+        default_idx = np.argmin(np.abs(np.log10(v_array) - 0))  # log10(1) = 0
+        self.export_v_idx_var = tk.StringVar(value=str(default_idx))
+        v_spin = ttk.Spinbox(v_frame, from_=0, to=n_v-1, textvariable=self.export_v_idx_var, width=5)
+        v_spin.pack(side=tk.LEFT, padx=5)
+
+        # Show current velocity
+        def update_v_label(*args):
+            try:
+                idx = int(self.export_v_idx_var.get())
+                if 0 <= idx < n_v:
+                    v_val = v_array[idx]
+                    v_info_label.config(text=f"(v = {v_val:.2e} m/s)")
+            except:
+                pass
+
+        v_info_label = ttk.Label(v_frame, text=f"(v = {v_array[default_idx]:.2e} m/s)", font=('Arial', 8))
+        v_info_label.pack(side=tk.LEFT)
+        self.export_v_idx_var.trace('w', update_v_label)
+
+        # Select all / Deselect all buttons
+        btn_frame = ttk.Frame(dialog, padding=10)
+        btn_frame.pack(fill=tk.X)
+
+        def select_all():
+            for var in check_vars.values():
+                var.set(True)
+
+        def deselect_all():
+            for var in check_vars.values():
+                var.set(False)
+
+        ttk.Button(btn_frame, text="전체 선택", command=select_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="전체 해제", command=deselect_all).pack(side=tk.LEFT, padx=5)
+
+        # Export button frame
+        export_frame = ttk.Frame(dialog, padding=10)
+        export_frame.pack(fill=tk.X)
+
+        def do_export():
+            # Check if any data is selected
+            selected = [key for key, var in check_vars.items() if var.get()]
+            if not selected:
+                messagebox.showwarning("경고", "내보낼 데이터를 선택하세요.", parent=dialog)
+                return
+
+            # Ask for save directory
+            save_dir = filedialog.askdirectory(
+                title="CSV 파일 저장 폴더 선택",
+                parent=dialog
+            )
+            if not save_dir:
+                return
+
+            try:
+                v = self.mu_visc_results['v']
+                mu = self.mu_visc_results['mu']
+                mu_raw = self.mu_visc_results.get('mu_raw', mu)
+                details = self.mu_visc_results.get('details', {})
+
+                # Get velocity index for q-dependent data
+                v_idx = int(self.export_v_idx_var.get())
+                v_idx = max(0, min(v_idx, len(v) - 1))
+
+                exported_files = []
+
+                # Export main results (v vs value)
+                if check_vars['mu_v'].get():
+                    filename = "mu_visc_vs_velocity.csv"
+                    filepath = os.path.join(save_dir, filename)
+                    lines = ["velocity [m/s],mu_visc"]
+                    for vi, mui in zip(v, mu):
+                        lines.append(f"{vi:.6e},{mui:.6f}")
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write("\n".join(lines))
+                    exported_files.append(filename)
+
+                if check_vars['mu_raw_v'].get():
+                    filename = "mu_visc_raw_vs_velocity.csv"
+                    filepath = os.path.join(save_dir, filename)
+                    lines = ["velocity [m/s],mu_visc_raw"]
+                    for vi, mui in zip(v, mu_raw):
+                        lines.append(f"{vi:.6e},{mui:.6f}")
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write("\n".join(lines))
+                    exported_files.append(filename)
+
+                # Export q-dependent data
+                all_details = details.get('details', [])
+                if v_idx < len(all_details):
+                    det = all_details[v_idx]
+                    q_arr = det.get('q', np.array([]))
+                    v_selected = v[v_idx]
+
+                    q_data_map = {
+                        'P_q': ('P', 'P_q'),
+                        'S_q': ('S', 'S_q'),
+                        'G_q': ('G', 'G_q'),
+                        'C_q': ('C_q', 'C_q'),
+                        'integrand_q': ('integrand', 'integrand_q'),
+                        'cumulative_q': ('cumulative_mu', 'cumulative_mu_q'),
+                        'angle_int_q': ('angle_integral', 'angle_integral_q'),
+                    }
+
+                    for key, (data_key, file_suffix) in q_data_map.items():
+                        if check_vars[key].get():
+                            data = det.get(data_key)
+                            if data is not None and len(data) == len(q_arr):
+                                filename = f"{file_suffix}_v{v_idx}_{v_selected:.2e}.csv"
+                                filepath = os.path.join(save_dir, filename)
+                                lines = [f"# velocity = {v_selected:.6e} m/s", f"q [1/m],{data_key}"]
+                                for qi, di in zip(q_arr, data):
+                                    lines.append(f"{qi:.6e},{di:.6e}")
+                                with open(filepath, 'w', encoding='utf-8') as f:
+                                    f.write("\n".join(lines))
+                                exported_files.append(filename)
+
+                dialog.destroy()
+                messagebox.showinfo("완료", f"CSV 파일 내보내기 완료:\n\n" + "\n".join(exported_files) + f"\n\n저장 위치: {save_dir}")
+                self.status_var.set(f"CSV 내보내기 완료: {len(exported_files)}개 파일")
+
+            except Exception as e:
+                import traceback
+                messagebox.showerror("오류", f"내보내기 실패:\n{str(e)}\n\n{traceback.format_exc()}", parent=dialog)
+
+        ttk.Button(export_frame, text="내보내기", command=do_export).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(export_frame, text="취소", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
     def _create_strain_map_tab(self, parent):
         """Create Local Strain Map visualization tab."""
