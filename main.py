@@ -5258,6 +5258,12 @@ $\begin{array}{lcc}
             command=self._calculate_strain_map
         ).pack(side=tk.LEFT, padx=20)
 
+        # CSV Export button
+        ttk.Button(
+            ctrl_row, text="CSV 내보내기",
+            command=self._export_strain_map_csv
+        ).pack(side=tk.LEFT, padx=5)
+
         # Progress bar
         self.strain_map_progress = ttk.Progressbar(control_frame, mode='determinate')
         self.strain_map_progress.pack(fill=tk.X, pady=3)
@@ -5649,6 +5655,142 @@ $\begin{array}{lcc}
 
         self.fig_strain_map.tight_layout()
         self.canvas_strain_map.draw()
+
+    def _export_strain_map_csv(self):
+        """Export Local Strain Map data to CSV files with selection dialog."""
+        if not hasattr(self, 'strain_map_results') or self.strain_map_results is None:
+            messagebox.showwarning("경고", "먼저 계산을 실행하세요.")
+            return
+
+        # Create dialog for selecting data to export
+        dialog = tk.Toplevel(self.root)
+        dialog.title("CSV 내보내기 - 데이터 선택")
+        dialog.geometry("400x400")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 400) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Description
+        desc_frame = ttk.Frame(dialog, padding=10)
+        desc_frame.pack(fill=tk.X)
+        ttk.Label(desc_frame, text="내보낼 데이터를 선택하세요.\n각 데이터는 별도의 CSV 파일로 저장됩니다.",
+                  font=('Arial', 10)).pack(anchor=tk.W)
+
+        # Checkbox frame
+        check_frame = ttk.LabelFrame(dialog, text="데이터 선택", padding=10)
+        check_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Data options with display names and keys
+        data_options = [
+            ("Local Strain [%]", "strain", True),
+            ("E' Storage [Pa]", "E_storage", True),
+            ("E''*g Loss [Pa]", "E_loss_nonlinear", True),
+            ("E'*f Storage [Pa]", "E_storage_nonlinear", True),
+            ("G Integrand (linear)", "G_integrand_linear", True),
+            ("G Integrand (nonlinear)", "G_integrand_nonlinear", True),
+            ("A/A0 Contact (linear)", "contact_linear", True),
+            ("A/A0 Contact (nonlinear)", "contact_nonlinear", True),
+        ]
+
+        # Create checkbox variables
+        check_vars = {}
+        for display_name, key, default in data_options:
+            var = tk.BooleanVar(value=default)
+            check_vars[key] = var
+            cb = ttk.Checkbutton(check_frame, text=display_name, variable=var)
+            cb.pack(anchor=tk.W, pady=2)
+
+        # Select all / Deselect all buttons
+        btn_frame = ttk.Frame(dialog, padding=10)
+        btn_frame.pack(fill=tk.X)
+
+        def select_all():
+            for var in check_vars.values():
+                var.set(True)
+
+        def deselect_all():
+            for var in check_vars.values():
+                var.set(False)
+
+        ttk.Button(btn_frame, text="전체 선택", command=select_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="전체 해제", command=deselect_all).pack(side=tk.LEFT, padx=5)
+
+        # Export button frame
+        export_frame = ttk.Frame(dialog, padding=10)
+        export_frame.pack(fill=tk.X)
+
+        def do_export():
+            # Check if any data is selected
+            selected = [key for key, var in check_vars.items() if var.get()]
+            if not selected:
+                messagebox.showwarning("경고", "내보낼 데이터를 선택하세요.", parent=dialog)
+                return
+
+            # Ask for save directory
+            from tkinter import filedialog
+            save_dir = filedialog.askdirectory(
+                title="CSV 파일 저장 폴더 선택",
+                parent=dialog
+            )
+            if not save_dir:
+                return
+
+            try:
+                q = self.strain_map_results['q']
+                v = self.strain_map_results['v']
+
+                exported_files = []
+
+                for key in selected:
+                    data = self.strain_map_results.get(key)
+                    if data is None:
+                        continue
+
+                    # Special handling for strain (convert to %)
+                    if key == "strain":
+                        data = data * 100
+
+                    # Create filename
+                    filename = f"strain_map_{key}.csv"
+                    filepath = os.path.join(save_dir, filename)
+
+                    # Build CSV content
+                    # First row: header with v values
+                    # First column: q values
+                    # Format: rows = q, columns = v
+                    lines = []
+
+                    # Header row: empty cell + v values
+                    header = ["q \\ v"] + [f"{vi:.6e}" for vi in v]
+                    lines.append(",".join(header))
+
+                    # Data rows
+                    for i, qi in enumerate(q):
+                        row_data = [f"{qi:.6e}"] + [f"{data[i, j]:.6e}" for j in range(len(v))]
+                        lines.append(",".join(row_data))
+
+                    # Write file
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write("\n".join(lines))
+
+                    exported_files.append(filename)
+
+                dialog.destroy()
+                messagebox.showinfo("완료", f"CSV 파일 내보내기 완료:\n\n" + "\n".join(exported_files) + f"\n\n저장 위치: {save_dir}")
+                self.status_var.set(f"CSV 내보내기 완료: {len(exported_files)}개 파일")
+
+            except Exception as e:
+                import traceback
+                messagebox.showerror("오류", f"내보내기 실패:\n{str(e)}\n\n{traceback.format_exc()}", parent=dialog)
+
+        ttk.Button(export_frame, text="내보내기", command=do_export).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(export_frame, text="취소", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
     def _create_integrand_tab(self, parent):
         """Create Integrand visualization tab for G(q) and μ_visc analysis."""
