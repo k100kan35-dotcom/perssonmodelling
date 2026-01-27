@@ -1333,6 +1333,9 @@ class PerssonModelGUI_V2:
         self.target_hrms_slope_var = tk.StringVar(value="1.3")
         ttk.Entry(input_frame, textvariable=self.target_hrms_slope_var, width=15).grid(row=row, column=1, pady=5)
 
+        # Add trace to sync target_hrms_slope_var with Tab 1's psd_xi_var and Tab 4's display
+        self.target_hrms_slope_var.trace_add('write', self._on_target_hrms_changed)
+
         # Display for calculated q1 (will be updated after calculation)
         row += 1
         ttk.Label(input_frame, text="계산된 q1 (1/m):").grid(row=row, column=0, sticky=tk.W, pady=5)
@@ -1440,6 +1443,28 @@ class PerssonModelGUI_V2:
             text="계산 과정 그래프 저장",
             command=lambda: self._save_plot(self.fig_calc_progress, "calculation_progress")
         ).pack(fill=tk.X)
+
+    def _on_target_hrms_changed(self, *args):
+        """Callback when target h'rms value is changed in Tab 2.
+        Syncs the value to Tab 1's psd_xi_var and Tab 4's display."""
+        try:
+            new_value = self.target_hrms_slope_var.get()
+            # Validate it's a number
+            float(new_value)
+
+            # Sync to Tab 1's psd_xi_var
+            if hasattr(self, 'psd_xi_var'):
+                self.psd_xi_var.set(new_value)
+
+            # Update Tab 4's display if it exists
+            if hasattr(self, 'rms_target_xi_display'):
+                self.rms_target_xi_display.set(f"{float(new_value):.4f}")
+
+            # Update target_xi for calculations
+            self.target_xi = float(new_value)
+        except (ValueError, AttributeError):
+            # Invalid value or variables not yet initialized
+            pass
 
     def _create_results_tab(self, parent):
         """Create G(q,v) results tab."""
@@ -2010,12 +2035,15 @@ class PerssonModelGUI_V2:
             # Store the PSD model with q_data and C_data attributes for RMS slope calculation
             self.psd_model = psd_model
             # Add attributes to function object so RMS slope calculation uses correct q range
-            # Note: q_data/C_data only store the power law region for RMS slope calculation
-            self.psd_model.q_data = q_powerlaw.copy()
-            self.psd_model.C_data = C_powerlaw.copy()
-            # Also store full range for plotting
+            # IMPORTANT: q_data/C_data now include plateau region (q < q0) for complete integration
+            self.psd_model.q_data = q_array.copy()  # Full range including plateau
+            self.psd_model.C_data = C_array.copy()  # Full range including plateau
+            # Also store full range for plotting (same as q_data/C_data now)
             self.psd_model.q_full = q_array.copy()
             self.psd_model.C_full = C_array.copy()
+            # Store power law region separately for reference
+            self.psd_model.q_powerlaw = q_powerlaw.copy()
+            self.psd_model.C_powerlaw = C_powerlaw.copy()
             self.psd_model.q0 = q0
             self.psd_model.C_q0 = C_q0
 
@@ -3109,6 +3137,25 @@ $\begin{array}{lcc}
         ttk.Label(q_frame, text="'auto' = PSD 데이터 범위 사용",
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
+        # Target h'rms display (synced with Tab 2)
+        target_frame = ttk.LabelFrame(settings_frame, text="목표 h'rms (Tab 2 연동)", padding=3)
+        target_frame.pack(fill=tk.X, pady=3)
+
+        row_target = ttk.Frame(target_frame)
+        row_target.pack(fill=tk.X, pady=1)
+        ttk.Label(row_target, text="목표 ξ:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.rms_target_xi_display = tk.StringVar(value="(Tab 2에서 설정)")
+        self.rms_target_xi_label = ttk.Label(row_target, textvariable=self.rms_target_xi_display,
+                                             font=('Arial', 9, 'bold'), foreground='blue')
+        self.rms_target_xi_label.pack(side=tk.RIGHT)
+
+        # Refresh button for target value
+        ttk.Button(target_frame, text="Tab 2 값 불러오기", command=self._sync_target_xi_from_tab2,
+                   width=15).pack(pady=2)
+
+        ttk.Label(target_frame, text="※ Tab 2에서 '목표 h'rms' 변경 시\n   이 버튼을 눌러 동기화하세요",
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
         # Calculate button
         calc_frame = ttk.Frame(settings_frame)
         calc_frame.pack(fill=tk.X, pady=5)
@@ -3209,6 +3256,27 @@ $\begin{array}{lcc}
         toolbar = NavigationToolbar2Tk(self.canvas_rms, plot_frame)
         toolbar.update()
 
+    def _sync_target_xi_from_tab2(self):
+        """Sync target h'rms from Tab 2 to Tab 4 display and update target_xi."""
+        try:
+            # Get target h'rms from Tab 2
+            target_xi_str = self.target_hrms_slope_var.get()
+            target_xi = float(target_xi_str)
+
+            # Update Tab 4 display
+            self.rms_target_xi_display.set(f"{target_xi:.4f}")
+
+            # Update target_xi for calculations
+            self.target_xi = target_xi
+
+            # Also sync Tab 1's psd_xi_var for consistency
+            self.psd_xi_var.set(target_xi_str)
+
+            self.status_var.set(f"목표 h'rms 동기화 완료: ξ = {target_xi:.4f}")
+        except ValueError:
+            self.rms_target_xi_display.set("(유효하지 않은 값)")
+            self.status_var.set("오류: Tab 2의 목표 h'rms 값이 유효하지 않습니다.")
+
     def _calculate_rms_slope(self):
         """Calculate h'rms and Local Strain from PSD data."""
         # Check if PSD data is available
@@ -3217,6 +3285,9 @@ $\begin{array}{lcc}
             return
 
         try:
+            # Sync target_xi from Tab 2 before calculation
+            self._sync_target_xi_from_tab2()
+
             self.rms_calc_btn.config(state='disabled')
             self.rms_progress_var.set(10)
             self.root.update_idletasks()
