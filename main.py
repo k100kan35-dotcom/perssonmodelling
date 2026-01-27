@@ -128,7 +128,7 @@ class PerssonModelGUI_V2:
         self.results = {}
         self.raw_dma_data = None  # Store raw DMA data for plotting
         self.raw_psd_data = None  # Store raw PSD data for comparison plotting
-        self.target_xi = None  # Target RMS slope from Tab 2 PSD settings
+        self.target_xi = None  # Target h'rms from Tab 2 PSD settings
 
         # Strain/mu_visc related variables
         self.strain_data = None  # Strain sweep raw data by temperature
@@ -138,7 +138,7 @@ class PerssonModelGUI_V2:
         self.g_interpolator = None  # g(strain) function
         self.mu_visc_results = None  # mu_visc calculation results
 
-        # RMS Slope / Local Strain related variables
+        # h'rms / Local Strain related variables
         self.rms_slope_calculator = None  # RMSSlopeCalculator instance
         self.rms_slope_profiles = None  # Calculated profiles (q, xi, strain, hrms)
         self.local_strain_array = None  # Local strain for mu_visc calculation
@@ -266,9 +266,9 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_results, text="3. G(q,v) 결과")
         self._create_results_tab(self.tab_results)
 
-        # Tab 4: RMS Slope / Local Strain
+        # Tab 4: h'rms / Local Strain
         self.tab_rms_slope = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_rms_slope, text="4. RMS Slope/Local Strain")
+        self.notebook.add(self.tab_rms_slope, text="4. h'rms/Local Strain")
         self._create_rms_slope_tab(self.tab_rms_slope)
 
         # Tab 5: mu_visc Calculation
@@ -404,10 +404,10 @@ class PerssonModelGUI_V2:
         self.psd_H_var = tk.StringVar(value="0.8")
         ttk.Entry(h_row, textvariable=self.psd_H_var, width=6).pack(side=tk.LEFT, padx=2)
 
-        # ξ target row - specify RMS slope to auto-calculate C(q0)
+        # ξ target row - specify h'rms to auto-calculate C(q0)
         xi_row = ttk.Frame(psd_frame)
         xi_row.pack(fill=tk.X, pady=1)
-        ttk.Label(xi_row, text="ξ (RMS slope):", font=('Arial', 8)).pack(side=tk.LEFT)
+        ttk.Label(xi_row, text="ξ (h'rms):", font=('Arial', 8)).pack(side=tk.LEFT)
         self.psd_xi_var = tk.StringVar(value="1.3")
         ttk.Entry(xi_row, textvariable=self.psd_xi_var, width=6).pack(side=tk.LEFT, padx=2)
         ttk.Button(xi_row, text="→ C(q0) 계산", command=self._calc_Cq0_from_xi, width=10).pack(side=tk.LEFT, padx=(5, 0))
@@ -1896,7 +1896,7 @@ class PerssonModelGUI_V2:
             traceback.print_exc()
 
     def _calc_Cq0_from_xi(self):
-        """Calculate C(q0) from target RMS slope (ξ).
+        """Calculate C(q0) from target h'rms (ξ).
 
         Formula derivation:
         ξ² = 2π ∫[q0→q1] q³ C(q) dq
@@ -2048,7 +2048,7 @@ class PerssonModelGUI_V2:
 
             # Show both target and calculated ξ for transparency
             xi_diff_pct = abs(xi_user_input - xi_actual) / xi_user_input * 100 if xi_user_input > 0 else 0
-            xi_info = f"- Target RMS slope ξ = {xi_user_input:.4f}\n- Calculated RMS slope ξ = {xi_actual:.4f}"
+            xi_info = f"- Target h'rms ξ = {xi_user_input:.4f}\n- Calculated h'rms ξ = {xi_actual:.4f}"
             if xi_diff_pct > 1:
                 xi_info += f"\n  (차이: {xi_diff_pct:.1f}% - 수치 적분 오차)"
 
@@ -2694,7 +2694,7 @@ class PerssonModelGUI_V2:
             slope_rms_cumulative = np.sqrt(slope_squared_cumulative)
 
             # Find q1 where slope_rms = target (from parameter settings)
-            target_slope_rms = float(self.target_rms_slope_var.get())
+            target_slope_rms = float(self.target_hrms_slope_var.get())
             q1_idx = np.argmax(slope_rms_cumulative >= target_slope_rms)
 
             if q1_idx > 0:
@@ -2721,12 +2721,12 @@ class PerssonModelGUI_V2:
                 q1_determined = q_parse[-1] * 1.5  # Placeholder
                 messagebox.showinfo("Info", f"Target slope {target_slope_rms} not reached. Extrapolating with H={H:.3f}")
 
-            # Plot cumulative RMS slope
-            ax6.semilogx(q_parse, slope_rms_cumulative, 'b-', linewidth=2.5, label='누적 RMS 기울기')
+            # Plot cumulative h'rms (RMS slope)
+            ax6.semilogx(q_parse, slope_rms_cumulative, 'b-', linewidth=2.5, label="누적 h'rms")
 
-            # Add horizontal line at target (1.3)
+            # Add horizontal line at target h'rms
             ax6.axhline(target_slope_rms, color='red', linestyle='--', linewidth=2,
-                       label=f'목표 RMS Slope = {target_slope_rms}', alpha=0.7, zorder=5)
+                       label=f"목표 h'rms = {target_slope_rms}", alpha=0.7, zorder=5)
 
             # Add vertical line at q1
             if q1_idx > 0:
@@ -2738,9 +2738,18 @@ class PerssonModelGUI_V2:
                         markeredgecolor='black', markeredgewidth=2, zorder=10,
                         label='교차점')
 
+                # Update calculated q1 display in Tab 3
+                self.calculated_q1_var.set(f"{q1_determined:.3e}")
+
+                # Pass q1 and hrms_slope to Tab 4 (RMS Slope tab)
+                self.rms_q_max_var.set(f"{q1_determined:.3e}")
+
+                # Store calculated q1 for other uses
+                self.calculated_q1 = q1_determined
+
             ax6.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=LABEL_FONT, labelpad=3)
-            ax6.set_ylabel('누적 RMS 기울기 √(Slope²)', fontweight='bold', fontsize=LABEL_FONT, rotation=90, labelpad=5)
-            ax6.set_title('(f) Parseval 정리: q1 자동 결정 (Target Slope=1.3)', fontweight='bold', fontsize=TITLE_FONT, pad=TITLE_PAD)
+            ax6.set_ylabel("누적 h'rms √(Slope²)", fontweight='bold', fontsize=LABEL_FONT, rotation=90, labelpad=5)
+            ax6.set_title(f"(f) Parseval 정리: q1 자동 결정 (목표 h'rms={target_slope_rms})", fontweight='bold', fontsize=TITLE_FONT, pad=TITLE_PAD)
 
             # Legend with better positioning
             ax6.legend(fontsize=LEGEND_FONT, loc='lower right', framealpha=0.9)
@@ -2749,13 +2758,13 @@ class PerssonModelGUI_V2:
 
             # Add annotation box
             if q1_idx > 0:
-                textstr = (f'파서벌 정리:\nSlope²(q) = 2π∫k³C(k)dk\n\n'
-                          f'결정된 q1 = {q1_determined:.2e} 1/m\n'
-                          f'해당 RMS Slope = {target_slope_rms:.2f}')
+                textstr = (f"파서벌 정리:\nh'rms²(q) = 2π∫k³C(k)dk\n\n"
+                          f"결정된 q1 = {q1_determined:.2e} 1/m\n"
+                          f"해당 h'rms = {target_slope_rms:.2f}")
             else:
-                textstr = (f'파서벌 정리:\nSlope²(q) = 2π∫k³C(k)dk\n\n'
-                          f'최종 RMS Slope = {slope_rms_cumulative[-1]:.3f}\n'
-                          f'(목표 {target_slope_rms} 미달)')
+                textstr = (f"파서벌 정리:\nh'rms²(q) = 2π∫k³C(k)dk\n\n"
+                          f"최종 h'rms = {slope_rms_cumulative[-1]:.3f}\n"
+                          f"(목표 {target_slope_rms} 미달)")
 
             props = dict(boxstyle='round', facecolor='lightyellow', alpha=0.8, edgecolor='black')
             ax6.text(0.02, 0.98, textstr, transform=ax6.transAxes, fontsize=8,
@@ -3042,7 +3051,7 @@ $\begin{array}{lcc}
         scrollbar.pack(side="right", fill="y")
 
     def _create_rms_slope_tab(self, parent):
-        """Create RMS Slope / Local Strain calculation tab."""
+        """Create h'rms / Local Strain calculation tab."""
         # Main container
         main_container = ttk.Frame(parent)
         main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -3059,7 +3068,7 @@ $\begin{array}{lcc}
         desc_frame.pack(fill=tk.X, pady=2, padx=3)
 
         desc_text = (
-            "PSD 데이터로부터 RMS Slope(ξ)와\n"
+            "PSD 데이터로부터 h'rms(ξ)와\n"
             "Local Strain(ε)을 계산합니다.\n\n"
             "수식:\n"
             "  ξ²(q) = 2π ∫[q₀→q] k³C(k)dk\n"
@@ -3106,7 +3115,7 @@ $\begin{array}{lcc}
 
         self.rms_calc_btn = ttk.Button(
             calc_frame,
-            text="RMS Slope / Local Strain 계산",
+            text="h'rms / Local Strain 계산",
             command=self._calculate_rms_slope
         )
         self.rms_calc_btn.pack(fill=tk.X)
@@ -3155,11 +3164,11 @@ $\begin{array}{lcc}
         # Create figure with 2x2 subplots
         self.fig_rms = Figure(figsize=(9, 7), dpi=100)
 
-        # Top-left: RMS Slope vs q
+        # Top-left: h'rms vs q
         self.ax_rms_slope = self.fig_rms.add_subplot(221)
-        self.ax_rms_slope.set_title('RMS Slope ξ(q)', fontweight='bold')
+        self.ax_rms_slope.set_title("h'rms ξ(q)", fontweight='bold')
         self.ax_rms_slope.set_xlabel('파수 q (1/m)')
-        self.ax_rms_slope.set_ylabel('ξ (RMS Slope)')
+        self.ax_rms_slope.set_ylabel("ξ (h'rms)")
         self.ax_rms_slope.set_xscale('log')
         self.ax_rms_slope.set_yscale('log')
         self.ax_rms_slope.grid(True, alpha=0.3)
@@ -3201,7 +3210,7 @@ $\begin{array}{lcc}
         toolbar.update()
 
     def _calculate_rms_slope(self):
-        """Calculate RMS Slope and Local Strain from PSD data."""
+        """Calculate h'rms and Local Strain from PSD data."""
         # Check if PSD data is available
         if self.psd_model is None:
             messagebox.showwarning("경고", "먼저 PSD 데이터를 로드하세요.")
@@ -3284,13 +3293,13 @@ $\begin{array}{lcc}
             self._update_rms_result_text()
 
             self.rms_progress_var.set(100)
-            self.status_var.set("RMS Slope / Local Strain 계산 완료")
+            self.status_var.set("h'rms / Local Strain 계산 완료")
 
             # Use target_xi from Tab 2 if available for consistency
             xi_max_display = self.target_xi if self.target_xi is not None else self.rms_slope_profiles['xi'][-1]
             messagebox.showinfo("완료",
-                f"RMS Slope / Local Strain 계산 완료!\n\n"
-                f"ξ_max = {xi_max_display:.4f}\n"
+                f"h'rms / Local Strain 계산 완료!\n\n"
+                f"ξ_max (h'rms) = {xi_max_display:.4f}\n"
                 f"ε_max = {self.rms_slope_profiles['strain'][-1]*100:.2f}%\n"
                 f"h_rms = {self.rms_slope_profiles['hrms'][-1]*1e6:.2f} μm"
             )
@@ -3320,13 +3329,13 @@ $\begin{array}{lcc}
         self.ax_rms_height.clear()
         self.ax_psd_ref.clear()
 
-        # Plot 1: RMS Slope
+        # Plot 1: h'rms
         valid_xi = xi > 0
         if np.any(valid_xi):
             self.ax_rms_slope.loglog(q[valid_xi], xi[valid_xi], 'b-', linewidth=2)
-        self.ax_rms_slope.set_title('RMS Slope ξ(q)', fontweight='bold')
+        self.ax_rms_slope.set_title("h'rms ξ(q)", fontweight='bold')
         self.ax_rms_slope.set_xlabel('파수 q (1/m)')
-        self.ax_rms_slope.set_ylabel('ξ (RMS Slope)')
+        self.ax_rms_slope.set_ylabel("ξ (h'rms)")
         self.ax_rms_slope.grid(True, alpha=0.3)
 
         # Add final value annotation - use target_xi from Tab 2 if available
@@ -3398,7 +3407,7 @@ $\begin{array}{lcc}
         profiles = self.rms_slope_profiles
 
         self.rms_result_text.insert(tk.END, "=" * 35 + "\n")
-        self.rms_result_text.insert(tk.END, "RMS Slope / Local Strain 결과\n")
+        self.rms_result_text.insert(tk.END, "h'rms / Local Strain 결과\n")
         self.rms_result_text.insert(tk.END, "=" * 35 + "\n\n")
 
         self.rms_result_text.insert(tk.END, "[입력 데이터]\n")
@@ -3407,7 +3416,7 @@ $\begin{array}{lcc}
         self.rms_result_text.insert(tk.END, f"  데이터 점: {summary['n_points']}\n")
         self.rms_result_text.insert(tk.END, f"  Strain Factor: {summary['strain_factor']}\n\n")
 
-        self.rms_result_text.insert(tk.END, "[RMS Slope]\n")
+        self.rms_result_text.insert(tk.END, "[h'rms]\n")
         # Show both target ξ (user input from Tab 2) and calculated ξ
         if self.target_xi is not None:
             self.rms_result_text.insert(tk.END, f"  ξ_target (Tab 2 입력값): {self.target_xi:.4f}\n")
@@ -3433,7 +3442,7 @@ $\begin{array}{lcc}
     def _apply_local_strain_to_mu_visc(self):
         """Apply calculated local strain to mu_visc calculation."""
         if self.local_strain_array is None or self.rms_slope_profiles is None:
-            messagebox.showwarning("경고", "먼저 RMS Slope를 계산하세요.")
+            messagebox.showwarning("경고", "먼저 h'rms를 계산하세요.")
             return
 
         # Store for use in mu_visc tab
@@ -3448,14 +3457,14 @@ $\begin{array}{lcc}
         )
 
     def _export_rms_slope_data(self):
-        """Export RMS slope data to CSV file."""
+        """Export h'rms data to CSV file."""
         if self.rms_slope_profiles is None:
-            messagebox.showwarning("경고", "먼저 RMS Slope를 계산하세요.")
+            messagebox.showwarning("경고", "먼저 h'rms를 계산하세요.")
             return
 
         filename = filedialog.asksaveasfilename(
             defaultextension=".csv",
-            initialfile="rms_slope_data.csv",
+            initialfile="hrms_slope_data.csv",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
 
@@ -3468,9 +3477,9 @@ $\begin{array}{lcc}
 
             with open(filename, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(['# RMS Slope / Local Strain Data'])
-                writer.writerow(['# q (1/m)', 'C(q) (m^4)', 'xi^2', 'xi (RMS Slope)',
-                                'strain (fraction)', 'strain (%)', 'h_rms^2 (m^2)', 'h_rms (m)'])
+                writer.writerow(["# h'rms / Local Strain Data"])
+                writer.writerow(["# q (1/m)", "C(q) (m^4)", "xi^2", "xi (h'rms)",
+                                "strain (fraction)", "strain (%)", "h_rms^2 (m^2)", "h_rms (m)"])
 
                 for i in range(len(profiles['q'])):
                     writer.writerow([
@@ -3485,7 +3494,7 @@ $\begin{array}{lcc}
                     ])
 
             messagebox.showinfo("성공", f"데이터 저장 완료:\n{filename}")
-            self.status_var.set(f"RMS Slope 데이터 저장: {filename}")
+            self.status_var.set(f"h'rms 데이터 저장: {filename}")
 
         except Exception as e:
             messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
@@ -4355,20 +4364,20 @@ $\begin{array}{lcc}
             strain_est_method = self.strain_est_method_var.get()
             fixed_strain = float(self.fixed_strain_var.get()) / 100.0  # Convert % to fraction
 
-            # Check RMS slope data if using rms_slope method
+            # Check h'rms data if using rms_slope method
             if strain_est_method == 'rms_slope':
                 if self.rms_slope_calculator is None or self.rms_slope_profiles is None:
                     messagebox.showwarning("경고",
-                        "RMS Slope 데이터가 없습니다.\n\n"
-                        "Tab 6 (RMS Slope/Local Strain)에서\n"
-                        "'RMS Slope / Local Strain 계산' 버튼을 먼저 실행하세요.")
+                        "h'rms 데이터가 없습니다.\n\n"
+                        "Tab 4 (h'rms/Local Strain)에서\n"
+                        "'h'rms / Local Strain 계산' 버튼을 먼저 실행하세요.")
                     self.mu_calc_button.config(state='normal')
                     return
                 else:
                     # Show info about strain range being used
                     strain_min = self.rms_slope_profiles['strain'][0]
                     strain_max = self.rms_slope_profiles['strain'][-1]
-                    self.status_var.set(f"RMS Slope 기반 strain 적용: {strain_min*100:.3f}% ~ {strain_max*100:.1f}%")
+                    self.status_var.set(f"h'rms 기반 strain 적용: {strain_min*100:.3f}% ~ {strain_max*100:.1f}%")
                     self.root.update()
 
             # Get G(q,v) results
@@ -5822,7 +5831,7 @@ $\begin{array}{lcc}
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-┌─ RMS Slope & Local Strain (Tab 4) ───────────────────────────────────────────┐
+┌─ h'rms & Local Strain (Tab 4) ────────────────────────────────────────────────┐
 │                                                                              │
 │  RMS 경사:    ξ²(q) = 2π ∫[q₀→q] k³ C(k) dk                                  │
 │  로컬 변형률: ε(q) = factor × ξ(q)    (factor ≈ 0.5, Persson 권장)           │
@@ -5882,7 +5891,7 @@ $\begin{array}{lcc}
   └──────────────┬───────────────┘                │
                  ▼                                │
   ┌──────────────────────────────┐                │
-  │  Tab 4: RMS Slope 계산       │                │
+  │  Tab 4: h'rms 계산           │                │
   │  - ξ(q) from PSD             │                │
   │  - ε(q) = factor × ξ(q)      │────────────────┤
   └──────────────┬───────────────┘                │
@@ -5896,7 +5905,7 @@ $\begin{array}{lcc}
   │  └─────────────────────────────────────────────┘ │
   │  ┌─────────────────────────────────────────────┐ │
   │  │ 비선형 모드:                                │ │
-  │  │   ε(q) ← Tab 4의 RMS slope 기반             │ │
+  │  │   ε(q) ← Tab 4의 h'rms 기반                  │ │
   │  │   E'_eff = E' × f(ε), E''_eff = E'' × g(ε)  │ │
   │  │   G_eff = G × |E*_eff|²/|E*_lin|²           │ │
   │  │   P(q), S(q) ← G_eff 기반 (비선형)          │ │
