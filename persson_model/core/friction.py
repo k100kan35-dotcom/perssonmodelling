@@ -1010,9 +1010,8 @@ class RMSSlopeCalculator:
             self.q_array, self.C_q_array
         )
 
-        # Local strain
+        # Local strain: ε(q) = strain_factor × ξ(q)
         self.strain = self.strain_factor * self.xi
-        self.strain = np.clip(self.strain, 0.0, 1.0)
 
         # RMS height
         self.hrms_squared, self.hrms = calculate_hrms_profile(
