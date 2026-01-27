@@ -301,6 +301,11 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_debug, text="10. 디버그 로그")
         self._create_debug_tab(self.tab_debug)
 
+        # Tab 11: Friction Factor Analysis (NEW)
+        self.tab_friction_factors = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_friction_factors, text="11. 마찰계수 영향 인자")
+        self._create_friction_factors_tab(self.tab_friction_factors)
+
         # Initialize debug log storage
         self.debug_log_messages = []
 
@@ -5063,6 +5068,22 @@ $\begin{array}{lcc}
             peak_v = v[peak_idx]
             self.ax_mu_v.plot(peak_v, peak_mu, 'r*', markersize=15,
                              label=f'최대값: μ={smart_format(peak_mu)} @ v={peak_v:.4f} m/s')
+
+            # Find and mark μ at v=1 m/s (important reference point)
+            if np.min(v) <= 1.0 <= np.max(v):
+                from scipy.interpolate import interp1d
+                # Interpolate to find μ at exactly 1 m/s
+                valid_for_interp = np.isfinite(mu_array)
+                if np.sum(valid_for_interp) >= 2:
+                    f_interp = interp1d(np.log10(v[valid_for_interp]), mu_array[valid_for_interp],
+                                       kind='linear', fill_value='extrapolate')
+                    mu_at_1ms = float(f_interp(0))  # log10(1) = 0
+                    self.ax_mu_v.plot(1.0, mu_at_1ms, 'go', markersize=12, markeredgecolor='black',
+                                     markeredgewidth=1.5, zorder=10,
+                                     label=f'v=1m/s: μ={smart_format(mu_at_1ms)}')
+                    # Add vertical line at v=1 m/s
+                    self.ax_mu_v.axvline(x=1.0, color='green', linestyle='--', alpha=0.5, linewidth=1)
+
             self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
             # Plot 2: Real Contact Area Ratio A/A₀ = P(q_max) vs velocity
@@ -6716,6 +6737,229 @@ $\begin{array}{lcc}
             self._log_debug("    계산이 정상적으로 진행되어야 합니다.")
 
         self._log_debug("\n\n진단 완료.\n")
+
+    def _create_friction_factors_tab(self, parent):
+        """Create friction factors analysis tab - explains how to increase/decrease μ_visc."""
+        # Main scrollable frame
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Mouse wheel scroll
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Title
+        title_frame = ttk.LabelFrame(scrollable_frame, text="μ_visc 영향 인자 분석 - 0.1~10 m/s 범위에서 마찰계수 조절 가이드", padding=15)
+        title_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        content = """
+════════════════════════════════════════════════════════════════════════════════
+                   μ_visc 마찰계수 영향 인자 분석
+════════════════════════════════════════════════════════════════════════════════
+
+【μ_visc 공식】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  μ_visc = (1/2) × ∫[q₀→q₁] q³ C(q) P(q) S(q) × [∫₀²π cosφ × Im[E(qv·cosφ)] dφ] / ((1-ν²)σ₀) dq
+
+  분해하면:
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │ μ_visc ∝ q³ × C(q) × P(q) × S(q) × Im[E(ω)] / σ₀                           │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+
+【영향 인자별 상세 분석】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─ 1. C(q) - PSD 표면 거칠기 ──────────────────────────────────────────────────┐
+│                                                                              │
+│  【μ 증가】 C(q) ↑                                                           │
+│  ├─ 표면이 더 거칠면 → C(q) 증가 → μ 증가                                    │
+│  ├─ C(q₀) 값 증가 (PSD 설정에서)                                             │
+│  └─ Hurst 지수 H 감소 → 고주파 성분 증가 → μ 증가                            │
+│                                                                              │
+│  【코드 위치】                                                                │
+│  ├─ Tab 1: PSD 파일 로드                                                     │
+│  └─ Tab 2: PSD 설정 (q₀, C(q₀), H)                                           │
+│                                                                              │
+│  ※ 영향도: ★★★★★ (가장 큰 영향)                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ 2. P(q) - 접촉 면적 비율 ───────────────────────────────────────────────────┐
+│                                                                              │
+│  P(q) = erf(1 / (2√G(q)))                                                    │
+│                                                                              │
+│  【μ 증가】 P(q) ↑ ← G(q) ↓                                                   │
+│  ├─ G(q)가 작으면 → P(q) ≈ 1 (완전 접촉)                                     │
+│  ├─ σ₀ (압력) ↑ → G(q) ↓ → P(q) ↑ → μ ↑                                      │
+│  │   (단, 분모의 σ₀도 증가하므로 순효과 확인 필요)                            │
+│  └─ |E*| ↓ (더 부드러운 재료) → G(q) ↓ → P(q) ↑                              │
+│                                                                              │
+│  【P(q) = 1로 단순화하면】                                                    │
+│  일부 구현에서는 P(q)=1, S(q)=1로 가정 → μ가 더 높게 계산됨!                 │
+│  → 이것이 0.43 vs 0.6 차이의 주요 원인일 수 있음                             │
+│                                                                              │
+│  ※ 영향도: ★★★★☆                                                             │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ 3. S(q) - 접촉 보정 인자 ───────────────────────────────────────────────────┐
+│                                                                              │
+│  S(q) = γ + (1-γ) × P(q)²                                                    │
+│                                                                              │
+│  【μ 증가】 S(q) ↑                                                            │
+│  ├─ γ = 1.0 설정 → S(q) = 1 (항상 최대)                                      │
+│  ├─ γ = 0.5 (기본값) → S(q) = 0.5 + 0.5×P²                                   │
+│  └─ γ = 0 설정 → S(q) = P² (최소)                                            │
+│                                                                              │
+│  【S(q) = 1로 단순화하면】                                                    │
+│  γ=1 또는 S(q)=1 가정 → μ 증가                                               │
+│                                                                              │
+│  【코드 위치】                                                                │
+│  └─ persson_model/core/friction.py: gamma 파라미터                           │
+│                                                                              │
+│  ※ 영향도: ★★★☆☆                                                             │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ 4. Im[E(ω)] - 손실 탄성률 ──────────────────────────────────────────────────┐
+│                                                                              │
+│  ω = q × v × cosφ  (주파수 = 파수 × 속도)                                    │
+│                                                                              │
+│  【μ 증가】 Im[E(ω)] = E''(ω) ↑                                               │
+│  ├─ E'' 피크가 높은 재료 → tan(δ)_max 큰 재료                                │
+│  ├─ E'' 피크 위치가 qv 범위 내에 있어야 함                                   │
+│  │   - v = 1 m/s, q = 10⁴ → ω ≈ 10⁴ rad/s → f ≈ 1600 Hz                     │
+│  │   - v = 1 m/s, q = 10⁶ → ω ≈ 10⁶ rad/s → f ≈ 160 kHz                     │
+│  └─ 마스터 커브가 이 주파수 범위를 포함해야 함                               │
+│                                                                              │
+│  【0.1~10 m/s 범위에서 μ 증가】                                               │
+│  ├─ 이 속도 범위의 ω 범위: ~10² ~ 10⁸ rad/s                                  │
+│  ├─ E'' 피크가 이 범위에 있으면 μ 증가                                       │
+│  └─ 온도 ↓ → WLF shift → E'' 피크 이동 (고주파 쪽)                           │
+│                                                                              │
+│  【코드 위치】                                                                │
+│  ├─ Tab 0: 마스터 커브 생성 (DMA 데이터)                                     │
+│  └─ Tab 2: 온도 설정 (WLF shift)                                             │
+│                                                                              │
+│  ※ 영향도: ★★★★★ (C(q)와 함께 가장 큰 영향)                                   │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ 5. σ₀ - 공칭 압력 ──────────────────────────────────────────────────────────┐
+│                                                                              │
+│  μ_visc ∝ 1/σ₀  (분모에 있음)                                                │
+│                                                                              │
+│  【μ 증가】 σ₀ ↓                                                              │
+│  ├─ 압력 감소 → μ 증가 (직접적)                                              │
+│  ├─ 단, G(q) ∝ 1/σ₀² → σ₀↓ 시 G↑ → P↓ (간접적으로 μ 감소)                   │
+│  └─ 순효과는 상황에 따라 다름                                                │
+│                                                                              │
+│  【코드 위치】                                                                │
+│  └─ Tab 2: 공칭 압력 (MPa) 설정                                              │
+│                                                                              │
+│  ※ 영향도: ★★★☆☆                                                             │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌─ 6. q 적분 범위 (q₀ ~ q₁) ───────────────────────────────────────────────────┐
+│                                                                              │
+│  【μ 증가】 적분 범위 확대                                                    │
+│  ├─ q₁ ↑ → 더 미세한 거칠기 포함 → μ 증가                                    │
+│  ├─ q₀ ↓ → 더 큰 스케일 거칠기 포함                                          │
+│  └─ q₁은 h'rms(ξ) 목표값으로 결정                                            │
+│                                                                              │
+│  【주의】                                                                     │
+│  └─ q₁이 너무 크면 PSD 데이터 범위 초과 → 외삽 필요                          │
+│                                                                              │
+│  【코드 위치】                                                                │
+│  └─ Tab 2: q_min, q_max 설정 또는 h'rms(ξ)/q₁ 모드                           │
+│                                                                              │
+│  ※ 영향도: ★★★☆☆                                                             │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+【구현 차이로 인한 μ 값 차이 원인】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  이 프로그램 μ ≈ 0.43  vs  다른 구현 μ ≈ 0.6 차이 원인:
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │ 1. P(q), S(q) 포함 여부                                                     │
+  │    ├─ 이 프로그램: P(q) = erf(...), S(q) = γ + (1-γ)P² 적용                │
+  │    └─ 단순 구현: P(q) = 1, S(q) = 1로 가정 → μ 더 높음 (약 1.3~1.5배)      │
+  │                                                                             │
+  │ 2. γ 값 차이                                                                │
+  │    ├─ 이 프로그램: γ = 0.5 (기본값)                                         │
+  │    └─ 다른 구현: γ = 1.0 → S(q) = 1                                         │
+  │                                                                             │
+  │ 3. G(q) 계산 방식                                                           │
+  │    ├─ 누적 적분 vs 단순 공식                                                │
+  │    └─ |E*|² 계산 시 평균 방식 차이                                          │
+  │                                                                             │
+  │ 4. 각도 적분 처리                                                           │
+  │    ├─ 이 프로그램: ∫cosφ × Im[E(qv·cosφ)] dφ 정확히 계산                   │
+  │    └─ 단순화: 평균값 근사 사용                                              │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+
+【0.1~10 m/s에서 μ 높이는 체크리스트】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  □ 1. PSD C(q) 증가
+     ├─ C(q₀) 값 증가
+     ├─ Hurst 지수 H 감소 (0.8 → 0.6)
+     └─ 더 거친 표면 데이터 사용
+
+  □ 2. 재료 E'' 최적화
+     ├─ tan(δ)_max가 큰 재료 선택
+     ├─ E'' 피크가 계산 주파수 범위에 있는지 확인
+     └─ 온도 조정으로 E'' 피크 이동
+
+  □ 3. 압력 σ₀ 조정
+     └─ σ₀ 감소 시도 (단, P(q) 영향 고려)
+
+  □ 4. q 범위 확대
+     └─ q₁ (목표 h'rms 또는 직접 입력) 증가
+
+  □ 5. γ 값 조정 (고급)
+     └─ friction.py에서 gamma=1.0 으로 설정 시 S(q)=1
+
+  □ 6. P(q)=1, S(q)=1 단순화 (비교용)
+     └─ 다른 구현과 비교 시 이 가정 사용
+
+
+【결론】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  μ_visc = f(C(q), P(q), S(q), E''(ω), σ₀, q범위)
+
+  • C(q)와 E''(ω)가 가장 큰 영향 (재료 및 표면 특성)
+  • P(q), S(q) 적용 여부가 구현 간 차이의 주요 원인
+  • 단순 구현 (P=1, S=1)은 μ를 과대평가할 수 있음
+
+════════════════════════════════════════════════════════════════════════════════
+"""
+
+        text_widget = tk.Text(title_frame, wrap=tk.WORD, font=('Courier New', 9), height=50, width=90)
+        text_widget.insert(tk.END, content)
+        text_widget.config(state='disabled')  # Read-only
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
 
 def main():
