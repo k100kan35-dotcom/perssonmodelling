@@ -1327,33 +1327,40 @@ class PerssonModelGUI_V2:
         self.n_q_var = tk.StringVar(value="100")
         ttk.Entry(input_frame, textvariable=self.n_q_var, width=15).grid(row=row, column=1, pady=5)
 
-        # ===== h'rms / q1 모드 선택 섹션 =====
+        # ===== h'rms (ξ) / q1 모드 선택 섹션 =====
+        # h'rms = ξ = RMS slope (경사), NOT h_rms (height)
         row += 1
-        mode_frame = ttk.LabelFrame(input_frame, text="h'rms / q1 결정 모드", padding=5)
+        mode_frame = ttk.LabelFrame(input_frame, text="h'rms (ξ, slope) / q1 결정 모드", padding=5)
         mode_frame.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=10)
 
+        # 설명 라벨
+        desc_label = ttk.Label(mode_frame,
+            text="※ h'rms = ξ = RMS slope (경사), ξ² = 2π∫k³C(k)dk",
+            font=('Arial', 7), foreground='gray')
+        desc_label.pack(fill=tk.X, pady=(0, 5))
+
         # 모드 선택 라디오 버튼
-        self.hrms_q1_mode_var = tk.StringVar(value="hrms_to_q1")  # 기본값: h'rms → q1
+        self.hrms_q1_mode_var = tk.StringVar(value="hrms_to_q1")  # 기본값: h'rms(ξ) → q1
 
         mode_row1 = ttk.Frame(mode_frame)
         mode_row1.pack(fill=tk.X, pady=2)
-        ttk.Radiobutton(mode_row1, text="모드 1: h'rms → q1 계산",
+        ttk.Radiobutton(mode_row1, text="모드 1: h'rms (ξ) → q1 계산",
                        variable=self.hrms_q1_mode_var, value="hrms_to_q1",
                        command=self._on_hrms_q1_mode_changed).pack(side=tk.LEFT)
 
         mode_row2 = ttk.Frame(mode_frame)
         mode_row2.pack(fill=tk.X, pady=2)
-        ttk.Radiobutton(mode_row2, text="모드 2: q1 → h'rms 계산",
+        ttk.Radiobutton(mode_row2, text="모드 2: q1 → h'rms (ξ) 계산",
                        variable=self.hrms_q1_mode_var, value="q1_to_hrms",
                        command=self._on_hrms_q1_mode_changed).pack(side=tk.LEFT)
 
         # 구분선
         ttk.Separator(mode_frame, orient='horizontal').pack(fill=tk.X, pady=5)
 
-        # h'rms 입력 (모드 1용)
+        # h'rms(ξ) 입력 (모드 1용)
         self.hrms_input_frame = ttk.Frame(mode_frame)
         self.hrms_input_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(self.hrms_input_frame, text="입력 h'rms:").pack(side=tk.LEFT)
+        ttk.Label(self.hrms_input_frame, text="목표 h'rms (ξ):").pack(side=tk.LEFT)
         self.target_hrms_slope_var = tk.StringVar(value="1.3")
         self.hrms_entry = ttk.Entry(self.hrms_input_frame, textvariable=self.target_hrms_slope_var, width=12)
         self.hrms_entry.pack(side=tk.LEFT, padx=5)
@@ -1361,7 +1368,7 @@ class PerssonModelGUI_V2:
         # q1 입력 (모드 2용)
         self.q1_input_frame = ttk.Frame(mode_frame)
         self.q1_input_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(self.q1_input_frame, text="입력 q1 (1/m):").pack(side=tk.LEFT)
+        ttk.Label(self.q1_input_frame, text="목표 q1 (1/m):").pack(side=tk.LEFT)
         self.input_q1_var = tk.StringVar(value="1.0e+08")
         self.q1_entry = ttk.Entry(self.q1_input_frame, textvariable=self.input_q1_var, width=12)
         self.q1_entry.pack(side=tk.LEFT, padx=5)
@@ -1389,21 +1396,22 @@ class PerssonModelGUI_V2:
         # 계산된 q1 표시 (모드 1 결과)
         q1_result_row = ttk.Frame(result_frame)
         q1_result_row.pack(fill=tk.X, pady=2)
-        ttk.Label(q1_result_row, text="계산된 q1:").pack(side=tk.LEFT)
+        ttk.Label(q1_result_row, text="→ 계산된 q1:").pack(side=tk.LEFT)
         self.calculated_q1_var = tk.StringVar(value="(계산 후 표시)")
         self.calculated_q1_label = ttk.Label(q1_result_row, textvariable=self.calculated_q1_var,
                                              font=('Arial', 9, 'bold'), foreground='blue')
         self.calculated_q1_label.pack(side=tk.LEFT, padx=5)
         ttk.Label(q1_result_row, text="(1/m)").pack(side=tk.LEFT)
 
-        # 계산된 h'rms 표시 (모드 2 결과)
+        # 계산된 h'rms(ξ) 표시 (모드 2 결과)
         hrms_result_row = ttk.Frame(result_frame)
         hrms_result_row.pack(fill=tk.X, pady=2)
-        ttk.Label(hrms_result_row, text="계산된 h'rms:").pack(side=tk.LEFT)
+        ttk.Label(hrms_result_row, text="→ 계산된 h'rms (ξ):").pack(side=tk.LEFT)
         self.calculated_hrms_var = tk.StringVar(value="(계산 후 표시)")
         self.calculated_hrms_label = ttk.Label(hrms_result_row, textvariable=self.calculated_hrms_var,
                                                font=('Arial', 9, 'bold'), foreground='green')
         self.calculated_hrms_label.pack(side=tk.LEFT, padx=5)
+        ttk.Label(hrms_result_row, text="(무차원)").pack(side=tk.LEFT)
 
         # 초기 모드에 따른 UI 상태 설정
         self._on_hrms_q1_mode_changed()
@@ -1545,7 +1553,11 @@ class PerssonModelGUI_V2:
             self.hrms_q1_calc_btn.config(text="q1 → h'rms 계산")
 
     def _calculate_hrms_q1(self):
-        """선택된 모드에 따라 h'rms 또는 q1 계산."""
+        """선택된 모드에 따라 h'rms(ξ) 또는 q1 계산.
+
+        h'rms = ξ = RMS slope (경사), 무차원
+        ξ²(q) = 2π ∫[q₀→q] k³ C(k) dk
+        """
         if self.psd_model is None:
             messagebox.showwarning("경고", "PSD 데이터를 먼저 로드해주세요!")
             return
@@ -1563,44 +1575,44 @@ class PerssonModelGUI_V2:
                 q_data = np.logspace(np.log10(q_min), np.log10(q_max), 500)
                 C_data = self.psd_model(q_data)
 
-            # 누적 h'rms 계산: h'rms²(q) = 2π∫[q0 to q] k³C(k)dk
-            hrms_squared_cumulative = np.zeros_like(q_data)
+            # 누적 h'rms(ξ) 계산: ξ²(q) = 2π∫[q0 to q] k³C(k)dk
+            xi_squared_cumulative = np.zeros_like(q_data)
             for i in range(len(q_data)):
                 q_int = q_data[:i+1]
                 C_int = C_data[:i+1]
-                hrms_squared_cumulative[i] = 2 * np.pi * np.trapezoid(q_int**3 * C_int, q_int)
-            hrms_cumulative = np.sqrt(hrms_squared_cumulative)
+                xi_squared_cumulative[i] = 2 * np.pi * np.trapezoid(q_int**3 * C_int, q_int)
+            xi_cumulative = np.sqrt(xi_squared_cumulative)  # ξ = h'rms
 
             if mode == "hrms_to_q1":
-                # 모드 1: 주어진 h'rms로 q1 계산
-                target_hrms = float(self.target_hrms_slope_var.get())
+                # 모드 1: 주어진 h'rms(ξ)로 q1 계산
+                target_xi = float(self.target_hrms_slope_var.get())
 
-                # h'rms 값이 도달 가능한지 확인
-                if target_hrms > hrms_cumulative[-1]:
+                # ξ 값이 도달 가능한지 확인
+                if target_xi > xi_cumulative[-1]:
                     messagebox.showwarning("경고",
-                        f"목표 h'rms ({target_hrms:.4f})가 최대 도달 가능한 값 ({hrms_cumulative[-1]:.4f})보다 큽니다.\n"
-                        f"q 범위를 늘리거나 목표 h'rms를 줄이세요.")
+                        f"목표 ξ ({target_xi:.4f})가 최대 도달 가능한 값 ({xi_cumulative[-1]:.4f})보다 큽니다.\n"
+                        f"q 범위를 늘리거나 목표 ξ를 줄이세요.")
                     return
 
-                # 목표 h'rms에 해당하는 q1 찾기 (보간 사용)
+                # 목표 ξ에 해당하는 q1 찾기 (보간 사용)
                 from scipy.interpolate import interp1d
-                # hrms → q 보간기 생성
-                f_interp = interp1d(hrms_cumulative, q_data, kind='linear', fill_value='extrapolate')
-                q1_calculated = float(f_interp(target_hrms))
+                f_interp = interp1d(xi_cumulative, q_data, kind='linear', fill_value='extrapolate')
+                q1_calculated = float(f_interp(target_xi))
 
                 # 결과 표시
                 self.calculated_q1_var.set(f"{q1_calculated:.3e}")
                 self.calculated_q1 = q1_calculated
-                self.target_xi = target_hrms
+                self.target_xi = target_xi
 
-                self.status_var.set(f"계산 완료: h'rms={target_hrms:.4f} → q1={q1_calculated:.3e} (1/m)")
+                self.status_var.set(f"계산 완료: ξ={target_xi:.4f} → q1={q1_calculated:.3e} (1/m)")
                 messagebox.showinfo("계산 완료",
-                    f"모드 1: h'rms → q1 계산\n\n"
-                    f"입력 h'rms: {target_hrms:.4f}\n"
-                    f"계산된 q1: {q1_calculated:.3e} (1/m)")
+                    f"모드 1: h'rms (ξ) → q1 계산\n\n"
+                    f"입력 ξ (h'rms): {target_xi:.4f}\n"
+                    f"계산된 q1: {q1_calculated:.3e} (1/m)\n\n"
+                    f"※ ξ² = 2π∫k³C(k)dk")
 
             else:
-                # 모드 2: 주어진 q1로 h'rms 계산
+                # 모드 2: 주어진 q1로 h'rms(ξ) 계산
                 target_q1 = float(self.input_q1_var.get())
 
                 # q1이 범위 내에 있는지 확인
@@ -1610,25 +1622,25 @@ class PerssonModelGUI_V2:
                         f"범위: {q_data[0]:.3e} ~ {q_data[-1]:.3e} (1/m)")
                     return
 
-                # q1에 해당하는 h'rms 찾기 (보간 사용)
+                # q1에 해당하는 ξ 찾기 (보간 사용)
                 from scipy.interpolate import interp1d
-                # q → hrms 보간기 생성
-                f_interp = interp1d(q_data, hrms_cumulative, kind='linear', fill_value='extrapolate')
-                hrms_calculated = float(f_interp(target_q1))
+                f_interp = interp1d(q_data, xi_cumulative, kind='linear', fill_value='extrapolate')
+                xi_calculated = float(f_interp(target_q1))
 
                 # 결과 표시
-                self.calculated_hrms_var.set(f"{hrms_calculated:.4f}")
+                self.calculated_hrms_var.set(f"{xi_calculated:.4f}")
                 self.calculated_q1 = target_q1
-                self.target_xi = hrms_calculated
+                self.target_xi = xi_calculated
 
-                # h'rms 입력란에도 반영
-                self.target_hrms_slope_var.set(f"{hrms_calculated:.4f}")
+                # ξ 입력란에도 반영
+                self.target_hrms_slope_var.set(f"{xi_calculated:.4f}")
 
-                self.status_var.set(f"계산 완료: q1={target_q1:.3e} → h'rms={hrms_calculated:.4f}")
+                self.status_var.set(f"계산 완료: q1={target_q1:.3e} → ξ={xi_calculated:.4f}")
                 messagebox.showinfo("계산 완료",
-                    f"모드 2: q1 → h'rms 계산\n\n"
+                    f"모드 2: q1 → h'rms (ξ) 계산\n\n"
                     f"입력 q1: {target_q1:.3e} (1/m)\n"
-                    f"계산된 h'rms: {hrms_calculated:.4f}")
+                    f"계산된 ξ (h'rms): {xi_calculated:.4f}\n\n"
+                    f"※ ξ² = 2π∫k³C(k)dk")
 
         except ValueError as e:
             messagebox.showerror("오류", f"입력값이 유효하지 않습니다: {e}")
@@ -1638,7 +1650,7 @@ class PerssonModelGUI_V2:
             traceback.print_exc()
 
     def _send_hrms_q1_to_tab4(self):
-        """계산된 h'rms와 q1을 Tab 4로 전달."""
+        """계산된 h'rms(ξ)와 q1을 Tab 4로 전달."""
         try:
             # 계산된 q1이 있으면 Tab 4의 q_max에 전달
             if hasattr(self, 'calculated_q1') and self.calculated_q1 is not None:
@@ -1654,10 +1666,10 @@ class PerssonModelGUI_V2:
             # Tab 4로 전환
             self.notebook.select(4)
 
-            self.status_var.set(f"Tab 4로 전달 완료: h'rms={self.target_xi:.4f}, q1={self.calculated_q1:.3e}")
+            self.status_var.set(f"Tab 4로 전달 완료: ξ={self.target_xi:.4f}, q1={self.calculated_q1:.3e}")
             messagebox.showinfo("전달 완료",
                 f"Tab 4로 전달되었습니다.\n\n"
-                f"h'rms: {self.target_xi:.4f}\n"
+                f"ξ (h'rms): {self.target_xi:.4f}\n"
                 f"q1: {self.calculated_q1:.3e} (1/m)\n\n"
                 f"Tab 4에서 'h'rms slope 계산' 버튼을 클릭하세요.")
 
