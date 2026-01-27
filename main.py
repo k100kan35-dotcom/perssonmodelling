@@ -143,6 +143,9 @@ class PerssonModelGUI_V2:
         self.rms_slope_profiles = None  # Calculated profiles (q, xi, strain, hrms)
         self.local_strain_array = None  # Local strain for mu_visc calculation
 
+        # Reference μ_visc data for comparison (Persson program output)
+        self._init_reference_mu_data()
+
         # Create UI
         self._create_menu()
         self._create_main_layout()
@@ -217,6 +220,325 @@ class PerssonModelGUI_V2:
             # Fallback to example material
             self.material = ViscoelasticMaterial.create_example_sbr()
             self.status_var.set("예제 재료 (SBR) 로드됨")
+
+    def _init_reference_mu_data(self):
+        """Initialize reference μ_visc data for comparison (from Persson program)."""
+        # Reference data: v (m/s) vs μ_visc
+        ref_data_str = """0.000304789	0.1991
+0.000319154	0.2001
+0.000334965	0.2011
+0.000350752	0.202
+0.000368129	0.2027
+0.000385478	0.2032
+0.000403645	0.2036
+0.000423643	0.2039
+0.000443609	0.2044
+0.000465586	0.2049
+0.000487528	0.2055
+0.000511682	0.2061
+0.000535797	0.2068
+0.000562341	0.2076
+0.000588844	0.2086
+0.000616595	0.2098
+0.000647143	0.211
+0.000677642	0.2123
+0.000711214	0.2134
+0.000744732	0.2144
+0.000781628	0.2152
+0.000818465	0.2158
+0.000857038	0.2164
+0.000899498	0.2169
+0.00094189	0.2174
+0.000988553	0.218
+0.001035142	0.2185
+0.001086426	0.2189
+0.001137627	0.2191
+0.001193988	0.2197
+0.001250259	0.2207
+0.001309182	0.2216
+0.001374042	0.2226
+0.001438799	0.2236
+0.00151008	0.2246
+0.001581248	0.2254
+0.001659587	0.2262
+0.001737801	0.2268
+0.001819701	0.2274
+0.001909853	0.228
+0.001999862	0.2286
+0.00209894	0.2295
+0.00219786	0.2304
+0.002306747	0.2314
+0.002415461	0.2326
+0.002535129	0.234
+0.002654606	0.2354
+0.002779713	0.2366
+0.002917427	0.2377
+0.003054921	0.2387
+0.003206269	0.2396
+0.003357376	0.2405
+0.003523709	0.2414
+0.003689776	0.2421
+0.003872576	0.2429
+0.004055085	0.2436
+0.004246196	0.2443
+0.004456562	0.2451
+0.004666594	0.2459
+0.004897788	0.2469
+0.005128614	0.248
+0.005382698	0.249
+0.005636377	0.2502
+0.005902011	0.2515
+0.006194411	0.2527
+0.006486344	0.2539
+0.006807694	0.2552
+0.00712853	0.2563
+0.007481695	0.2573
+0.007834296	0.2581
+0.008222426	0.2589
+0.008609938	0.2597
+0.009015711	0.2605
+0.009462372	0.2616
+0.009908319	0.2629
+0.010399202	0.2644
+0.010889301	0.2661
+0.011428783	0.2679
+0.011967405	0.2698
+0.012531412	0.2721
+0.013152248	0.2746
+0.013772095	0.2771
+0.014454398	0.2797
+0.015135612	0.2823
+0.015885467	0.285
+0.016634127	0.2877
+0.017458222	0.2902
+0.018281002	0.2927
+0.019142559	0.2952
+0.020090928	0.2976
+0.021037784	0.2999
+0.022080047	0.3022
+0.023120648	0.3044
+0.024266101	0.3066
+0.025409727	0.3088
+0.026668587	0.3116
+0.027925438	0.3149
+0.029241524	0.3184
+0.03069022	0.322
+0.032136605	0.3257
+0.033728731	0.3295
+0.035318317	0.3332
+0.037068072	0.3368
+0.038815037	0.3404
+0.040644333	0.3439
+0.042657952	0.3473
+0.044668359	0.3505
+0.046881338	0.3537
+0.049090788	0.3567
+0.051522864	0.3596
+0.053951062	0.3625
+0.056623929	0.3654
+0.059292532	0.3684
+0.062086903	0.3714
+0.065162839	0.3745
+0.068233869	0.3775
+0.071614341	0.3806
+0.074989421	0.3837
+0.078704579	0.3867
+0.082413812	0.3897
+0.086496792	0.3925
+0.09057326	0.3954
+0.094841846	0.3983
+0.099540542	0.4012
+0.104303769	0.4041
+0.109320095	0.4071
+0.114577674	0.4103
+0.120115762	0.4138
+0.125892541	0.4175
+0.131977531	0.4213
+0.138324784	0.4252
+0.144977298	0.4292
+0.151984745	0.4333
+0.159294214	0.4374
+0.166993666	0.4415
+0.175024965	0.4455
+0.183442517	0.4494
+0.192309173	0.4532
+0.201557981	0.457
+0.211300245	0.4608
+0.221462399	0.4647
+0.232113286	0.4688
+0.243332434	0.4735
+0.255035126	0.4788
+0.267362196	0.4834
+0.280220562	0.4877
+0.293697331	0.492
+0.307893131	0.4963
+0.322700769	0.5005
+0.338298444	0.5047
+0.354568377	0.5089
+0.371620788	0.5132
+0.389583002	0.5176
+0.408319386	0.5222
+0.42805542	0.5269
+0.448642074	0.532
+0.470218812	0.5374
+0.492946741	0.543
+0.516654243	0.5487
+0.541501919	0.5541
+0.567675302	0.5593
+0.594976757	0.5643
+0.623734835	0.5692
+0.653732385	0.5742
+0.68517262	0.5792
+0.718290297	0.5843
+0.752835344	0.5893
+0.789223485	0.5945
+0.827179952	0.5998
+0.86704173	0.6054
+0.908824445	0.6112
+0.952620669	0.6173
+0.998525132	0.6237
+1.046646439	0.6303
+1.0970843	0.6371
+1.14995276	0.6439
+1.20536895	0.6505
+1.263572019	0.657
+1.324341535	0.6635
+1.388033667	0.6702
+1.455123987	0.6772
+1.525105896	0.6846
+1.598821575	0.6923
+1.675714393	0.7004
+1.756305252	0.7089
+1.841195904	0.7179
+1.929745336	0.7274
+2.022553415	0.7375
+2.120313117	0.748
+2.222286254	0.7591
+2.329700002	0.7705
+2.441743273	0.7815
+2.559175091	0.7915
+2.682872291	0.8003
+2.81190083	0.8083
+2.947813477	0.8157
+3.089583948	0.8225
+3.238172647	0.829
+3.394689054	0.8353
+3.557951306	0.8413
+3.729924148	0.8473
+3.909309006	0.8533
+4.097321098	0.8595
+4.295364268	0.8658
+4.501943083	0.8724
+4.719543572	0.8791
+4.946522627	0.886
+5.184417883	0.8933
+5.435005651	0.9008
+5.696393733	0.9086
+5.971727749	0.9163
+6.258928639	0.924
+6.559942007	0.9315
+6.877015449	0.9388
+7.207754734	0.9459
+7.556140071	0.9528
+7.91954079	0.9597
+8.300418697	0.9664
+8.701617722	0.9732
+9.120108394	0.9798
+9.558725719	0.9866
+10.02305238	0.9934
+10.49542429	1
+11.0153931	1.008
+11.53453258	1.015
+12.10598134	1.023
+12.67651866	1.031
+13.30454418	1.039
+13.93156803	1.047
+14.5881426	1.054
+15.31087462	1.062
+16.03245391	1.069
+16.82674061	1.076
+17.61976046	1.083
+18.49268619	1.091
+19.36421964	1.098
+20.2768272	1.106
+21.28139046	1.115
+22.28435149	1.126
+23.38837239	1.137
+24.49063242	1.15
+25.70395783	1.163
+26.91534804	1.178
+28.24879975	1.192
+29.58012467	1.206
+30.97419299	1.219
+32.50872974	1.23
+34.04081897	1.241
+35.72728382	1.25
+37.41105883	1.258
+39.26449354	1.264
+41.11497211	1.27
+43.15190768	1.274
+45.18559444	1.279
+47.3151259	1.283
+49.65923215	1.287
+51.99959965	1.291
+54.57578611	1.295
+57.14786367	1.299
+59.97910763	1.304
+62.80583588	1.308
+65.76578374	1.312
+69.02398038	1.316
+72.27698036	1.32
+75.8577575	1.325
+79.43282347	1.329
+83.36811846	1.333
+87.29713684	1.337
+91.62204901	1.342
+95.94006315	1.346
+100.461579	1.349
+105.4386896	1.353
+110.407862	1.356
+115.8777356	1.36
+121.338885	1.363
+127.3503081	1.366
+133.3521432	1.369
+139.6368361	1.371
+146.5547841	1.374
+153.4616983	1.376
+161.0645635	1.379
+168.6553025	1.382
+177.0108958	1.384
+185.3531623	1.387
+194.5360082	1.39
+203.7042078	1.394
+213.3044913	1.399
+223.8721139	1.404
+234.4228815	1.41
+246.0367604	1.417
+257.6321157	1.425
+270.3958364	1.434
+283.1391996	1.444
+297.1666032	1.455
+311.1716337	1.466
+325.836701	1.478
+341.9794425	1.491
+358.0964371	1.505
+375.8374043	1.519
+393.5500755	1.533"""
+
+        # Parse data
+        v_list = []
+        mu_list = []
+        for line in ref_data_str.strip().split('\n'):
+            parts = line.split()
+            if len(parts) >= 2:
+                v_list.append(float(parts[0]))
+                mu_list.append(float(parts[1]))
+
+        self.reference_mu_data = {
+            'v': np.array(v_list),
+            'mu': np.array(mu_list),
+            'show': True  # Whether to show on plot
+        }
 
     def _create_menu(self):
         """Create menu bar."""
@@ -4070,6 +4392,20 @@ $\begin{array}{lcc}
         ttk.Button(export_btn_frame, text="μ CSV", command=self._export_mu_visc_results, width=10).pack(side=tk.LEFT, padx=1)
         ttk.Button(export_btn_frame, text="f,g CSV", command=self._export_fg_curves, width=10).pack(side=tk.LEFT, padx=1)
 
+        # Reference data comparison section
+        ref_frame = ttk.LabelFrame(results_frame, text="참조 데이터 비교", padding=3)
+        ref_frame.pack(fill=tk.X, pady=3)
+
+        ref_row1 = ttk.Frame(ref_frame)
+        ref_row1.pack(fill=tk.X, pady=1)
+
+        self.show_ref_mu_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ref_row1, text="참조 μ_visc 표시", variable=self.show_ref_mu_var,
+                       command=self._toggle_reference_mu).pack(side=tk.LEFT)
+
+        ttk.Button(ref_row1, text="비교 분석", command=self._analyze_mu_comparison,
+                  width=10).pack(side=tk.RIGHT, padx=2)
+
         # ============== Right Panel: Plots ==============
 
         right_panel = ttk.Frame(main_container)
@@ -5084,6 +5420,14 @@ $\begin{array}{lcc}
                     # Add vertical line at v=1 m/s
                     self.ax_mu_v.axvline(x=1.0, color='green', linestyle='--', alpha=0.5, linewidth=1)
 
+            # Plot reference μ_visc data if enabled
+            if hasattr(self, 'reference_mu_data') and hasattr(self, 'show_ref_mu_var'):
+                if self.show_ref_mu_var.get() and self.reference_mu_data is not None:
+                    ref_v = self.reference_mu_data['v']
+                    ref_mu = self.reference_mu_data['mu']
+                    self.ax_mu_v.semilogx(ref_v, ref_mu, 'r-', linewidth=1.5, alpha=0.7,
+                                         label='참조 (Persson)')
+
             self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
             # Plot 2: Real Contact Area Ratio A/A₀ = P(q_max) vs velocity
@@ -5171,6 +5515,227 @@ $\begin{array}{lcc}
             self.ax_mu_v.text(0.5, 0.5, f'플롯 오류: {str(e)[:50]}',
                              ha='center', va='center', transform=self.ax_mu_v.transAxes)
             self.canvas_mu_visc.draw()
+
+    def _toggle_reference_mu(self):
+        """Toggle reference μ_visc display and redraw plot."""
+        if self.mu_visc_results is not None:
+            v = self.mu_visc_results['v']
+            mu = self.mu_visc_results['mu']
+            details = self.mu_visc_results['details']
+            self._update_mu_visc_plots(v, mu, details)
+
+    def _analyze_mu_comparison(self):
+        """Analyze difference between calculated and reference μ_visc and provide recommendations."""
+        if self.mu_visc_results is None:
+            messagebox.showwarning("경고", "먼저 μ_visc를 계산하세요.")
+            return
+
+        if not hasattr(self, 'reference_mu_data') or self.reference_mu_data is None:
+            messagebox.showwarning("경고", "참조 데이터가 없습니다.")
+            return
+
+        # Get calculated and reference data
+        calc_v = self.mu_visc_results['v']
+        calc_mu = self.mu_visc_results['mu']
+        ref_v = self.reference_mu_data['v']
+        ref_mu = self.reference_mu_data['mu']
+
+        # Interpolate to compare at common velocity points
+        from scipy.interpolate import interp1d
+
+        # Define comparison velocity range (overlap region)
+        v_min = max(calc_v.min(), ref_v.min())
+        v_max = min(calc_v.max(), ref_v.max())
+
+        if v_min >= v_max:
+            messagebox.showwarning("경고", "계산된 속도 범위와 참조 데이터 범위가 겹치지 않습니다.")
+            return
+
+        # Create common velocity points in log space
+        n_points = 50
+        v_common = np.logspace(np.log10(v_min), np.log10(v_max), n_points)
+
+        # Interpolate both datasets
+        try:
+            calc_interp = interp1d(np.log10(calc_v), calc_mu, kind='linear', fill_value='extrapolate')
+            ref_interp = interp1d(np.log10(ref_v), ref_mu, kind='linear', fill_value='extrapolate')
+
+            calc_at_common = calc_interp(np.log10(v_common))
+            ref_at_common = ref_interp(np.log10(v_common))
+        except Exception as e:
+            messagebox.showerror("오류", f"보간 실패: {str(e)}")
+            return
+
+        # Calculate difference metrics
+        diff = calc_at_common - ref_at_common
+        abs_diff = np.abs(diff)
+        rel_diff = diff / np.maximum(ref_at_common, 0.001) * 100  # percentage
+
+        # Key velocity points
+        v_points = [0.001, 0.01, 0.1, 1.0, 10.0]
+        point_analysis = []
+
+        for v_pt in v_points:
+            if v_min <= v_pt <= v_max:
+                calc_val = float(calc_interp(np.log10(v_pt)))
+                ref_val = float(ref_interp(np.log10(v_pt)))
+                diff_val = calc_val - ref_val
+                rel_val = diff_val / max(ref_val, 0.001) * 100
+                point_analysis.append((v_pt, calc_val, ref_val, diff_val, rel_val))
+
+        # Define velocity regions
+        low_v_mask = v_common < 0.01
+        mid_v_mask = (v_common >= 0.01) & (v_common < 1.0)
+        high_v_mask = v_common >= 1.0
+
+        avg_diff_low = np.mean(diff[low_v_mask]) if np.any(low_v_mask) else 0
+        avg_diff_mid = np.mean(diff[mid_v_mask]) if np.any(mid_v_mask) else 0
+        avg_diff_high = np.mean(diff[high_v_mask]) if np.any(high_v_mask) else 0
+
+        # Create analysis dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("μ_visc 비교 분석")
+        dialog.geometry("650x700")
+        dialog.transient(self.root)
+
+        # Center dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 650) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 700) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Text widget for analysis
+        text_frame = ttk.Frame(dialog, padding=10)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+
+        text = tk.Text(text_frame, wrap=tk.WORD, font=('Courier', 9))
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text.yview)
+        text.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text.pack(fill=tk.BOTH, expand=True)
+
+        # Build analysis report
+        report = []
+        report.append("=" * 60)
+        report.append("         μ_visc 비교 분석 보고서")
+        report.append("=" * 60)
+        report.append("")
+
+        report.append("[1. 전체 통계]")
+        report.append(f"  분석 속도 범위: {v_min:.2e} ~ {v_max:.2e} m/s")
+        report.append(f"  평균 차이 (계산-참조): {np.mean(diff):.4f}")
+        report.append(f"  최대 차이: {np.max(abs_diff):.4f} (at v={v_common[np.argmax(abs_diff)]:.2e})")
+        report.append(f"  평균 상대 차이: {np.mean(rel_diff):.1f}%")
+        report.append("")
+
+        report.append("[2. 속도 구간별 분석]")
+        report.append(f"  저속 (v < 0.01 m/s): 평균 차이 = {avg_diff_low:+.4f}")
+        report.append(f"  중속 (0.01 ≤ v < 1 m/s): 평균 차이 = {avg_diff_mid:+.4f}")
+        report.append(f"  고속 (v ≥ 1 m/s): 평균 차이 = {avg_diff_high:+.4f}")
+        report.append("")
+
+        report.append("[3. 주요 속도에서의 비교]")
+        report.append("  속도 (m/s)    계산값    참조값    차이      상대차이")
+        report.append("  " + "-" * 55)
+        for v_pt, calc_val, ref_val, diff_val, rel_val in point_analysis:
+            report.append(f"  {v_pt:10.4f}  {calc_val:.4f}  {ref_val:.4f}  {diff_val:+.4f}  {rel_val:+.1f}%")
+        report.append("")
+
+        # Generate recommendations based on analysis
+        report.append("[4. 원인 분석 및 조언]")
+        report.append("-" * 50)
+
+        recommendations = []
+
+        # Check overall offset
+        mean_diff = np.mean(diff)
+        if mean_diff < -0.1:
+            recommendations.append(
+                "▶ 전체적으로 계산값이 참조값보다 낮습니다.\n"
+                "  가능한 원인:\n"
+                "  1. P(q), S(q) 보정 인자가 크게 적용됨\n"
+                "     → γ 값 증가 시도 (현재 γ에서 0.7~0.8로)\n"
+                "  2. 비선형 보정 (f,g)이 과도하게 적용됨\n"
+                "     → f,g 보정 해제 후 비교해 보세요\n"
+                "  3. DMA 마스터 커브의 E'' 피크가 낮음\n"
+                "     → DMA 데이터 확인 필요")
+        elif mean_diff > 0.1:
+            recommendations.append(
+                "▶ 전체적으로 계산값이 참조값보다 높습니다.\n"
+                "  가능한 원인:\n"
+                "  1. P(q)=1, S(q)=1 근사 사용 가능성\n"
+                "     → 현재 구현은 실제 P(q), S(q) 사용\n"
+                "  2. PSD C(q0) 값이 너무 큼\n"
+                "     → C(q0) 값 감소 시도")
+
+        # Check low velocity region
+        if avg_diff_low < -0.05:
+            recommendations.append(
+                "\n▶ 저속 영역 (v < 0.01 m/s)에서 차이가 큽니다.\n"
+                "  원인: 저주파수에서 E''(ω)가 작아 μ가 낮아짐\n"
+                "  조언:\n"
+                "  1. DMA 마스터 커브가 저주파수까지 커버하는지 확인\n"
+                "  2. 참조 프로그램이 μ_adh (adhesion)를 포함할 수 있음\n"
+                "  3. WLF 시프트 파라미터 (C1, C2) 확인 필요")
+
+        # Check high velocity region
+        if avg_diff_high < -0.1:
+            recommendations.append(
+                "\n▶ 고속 영역 (v ≥ 1 m/s)에서 차이가 큽니다.\n"
+                "  원인: 고주파수 영역에서 계산 차이\n"
+                "  조언:\n"
+                "  1. q1 (상한 파수) 값 확인 - 더 높은 q1 필요할 수 있음\n"
+                "  2. PSD의 고주파수 기여도 확인\n"
+                "  3. 각도 적분 점의 개수 증가 시도")
+
+        # Check curve shape
+        slope_calc = np.polyfit(np.log10(v_common), calc_at_common, 1)[0]
+        slope_ref = np.polyfit(np.log10(v_common), ref_at_common, 1)[0]
+
+        if abs(slope_calc - slope_ref) > 0.02:
+            recommendations.append(
+                f"\n▶ 곡선 기울기가 다릅니다.\n"
+                f"  계산 기울기: {slope_calc:.4f}\n"
+                f"  참조 기울기: {slope_ref:.4f}\n"
+                "  원인: 마스터 커브 형태 또는 PSD 파라미터 차이\n"
+                "  조언:\n"
+                "  1. Hurst exponent (H) 값 조정 시도\n"
+                "  2. DMA 마스터 커브의 전이 영역 확인")
+
+        if not recommendations:
+            recommendations.append(
+                "▶ 계산값과 참조값이 비교적 잘 일치합니다!\n"
+                "  미세 조정이 필요하면:\n"
+                "  1. γ 값 미세 조정\n"
+                "  2. strain factor 값 조정\n"
+                "  3. q 범위 (q0, q1) 미세 조정")
+
+        for rec in recommendations:
+            report.append(rec)
+
+        report.append("")
+        report.append("=" * 60)
+        report.append("[5. 파라미터 조정 가이드]")
+        report.append("=" * 60)
+        report.append("")
+        report.append("μ를 높이려면:")
+        report.append("  • γ 증가 (0.5 → 0.7)")
+        report.append("  • Strain factor 감소")
+        report.append("  • f,g 비선형 보정 해제")
+        report.append("  • q1 증가 (고주파수 기여 증가)")
+        report.append("")
+        report.append("μ를 낮추려면:")
+        report.append("  • γ 감소 (0.5 → 0.3)")
+        report.append("  • f,g 비선형 보정 적용")
+        report.append("  • q1 감소")
+        report.append("")
+
+        # Insert report
+        text.insert(tk.END, "\n".join(report))
+        text.config(state=tk.DISABLED)
+
+        # Close button
+        ttk.Button(dialog, text="닫기", command=dialog.destroy).pack(pady=10)
 
     def _export_mu_visc_results(self):
         """Export mu_visc results to CSV files with selection dialog."""
