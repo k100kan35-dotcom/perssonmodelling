@@ -127,6 +127,8 @@ class PerssonModelGUI_V2:
         self.g_calculator = None
         self.results = {}
         self.raw_dma_data = None  # Store raw DMA data for plotting
+        self.raw_psd_data = None  # Store raw PSD data for comparison plotting
+        self.target_xi = None  # Target h'rms from Tab 2 PSD settings
 
         # Strain/mu_visc related variables
         self.strain_data = None  # Strain sweep raw data by temperature
@@ -136,7 +138,7 @@ class PerssonModelGUI_V2:
         self.g_interpolator = None  # g(strain) function
         self.mu_visc_results = None  # mu_visc calculation results
 
-        # RMS Slope / Local Strain related variables
+        # h'rms / Local Strain related variables
         self.rms_slope_calculator = None  # RMSSlopeCalculator instance
         self.rms_slope_profiles = None  # Calculated profiles (q, xi, strain, hrms)
         self.local_strain_array = None  # Local strain for mu_visc calculation
@@ -264,9 +266,9 @@ class PerssonModelGUI_V2:
         self.notebook.add(self.tab_results, text="3. G(q,v) 결과")
         self._create_results_tab(self.tab_results)
 
-        # Tab 4: RMS Slope / Local Strain
+        # Tab 4: h'rms / Local Strain
         self.tab_rms_slope = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_rms_slope, text="4. RMS Slope/Local Strain")
+        self.notebook.add(self.tab_rms_slope, text="4. h'rms/Local Strain")
         self._create_rms_slope_tab(self.tab_rms_slope)
 
         # Tab 5: mu_visc Calculation
@@ -338,6 +340,87 @@ class PerssonModelGUI_V2:
             font=('Arial', 9),
             foreground='gray'
         ).grid(row=0, column=1, sticky=tk.W, padx=10, pady=3)
+
+        # Two-column layout for DMA and PSD settings
+        settings_container = ttk.Frame(parent)
+        settings_container.pack(fill=tk.X, padx=10, pady=5)
+
+        # Left column: DMA Smoothing/Extrapolation (compact)
+        dma_frame = ttk.LabelFrame(settings_container, text="DMA Smoothing/Extrapolation", padding=5)
+        dma_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        # Load DMA button row (inside labelframe, at top)
+        dma_load_row = ttk.Frame(dma_frame)
+        dma_load_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(dma_load_row, text="Load DMA", command=self._load_material, width=10).pack(side=tk.LEFT)
+
+        # Smoothing row
+        smooth_row = ttk.Frame(dma_frame)
+        smooth_row.pack(fill=tk.X, pady=1)
+        self.verify_smooth_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(smooth_row, text="Smooth", variable=self.verify_smooth_var).pack(side=tk.LEFT)
+        ttk.Label(smooth_row, text="Window:", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 2))
+        self.verify_smooth_window_var = tk.IntVar(value=11)
+        ttk.Entry(smooth_row, textvariable=self.verify_smooth_window_var, width=4).pack(side=tk.LEFT)
+
+        # Extrapolation row with range
+        extrap_row = ttk.Frame(dma_frame)
+        extrap_row.pack(fill=tk.X, pady=1)
+        self.verify_extrap_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(extrap_row, text="Extrapolate", variable=self.verify_extrap_var).pack(side=tk.LEFT)
+        ttk.Label(extrap_row, text="f_min:", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 2))
+        self.dma_extrap_fmin_var = tk.StringVar(value="1e-2")
+        ttk.Entry(extrap_row, textvariable=self.dma_extrap_fmin_var, width=6).pack(side=tk.LEFT)
+        ttk.Label(extrap_row, text="f_max:", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 2))
+        self.dma_extrap_fmax_var = tk.StringVar(value="1e12")
+        ttk.Entry(extrap_row, textvariable=self.dma_extrap_fmax_var, width=6).pack(side=tk.LEFT)
+
+        # Apply DMA button
+        ttk.Button(dma_frame, text="Apply DMA", command=self._apply_dma_smoothing_extrapolation, width=12).pack(pady=2)
+
+        # Right column: PSD Settings
+        psd_frame = ttk.LabelFrame(settings_container, text="PSD Settings (Power Law)", padding=5)
+        psd_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        # Load PSD button row (at top of PSD frame)
+        psd_load_row = ttk.Frame(psd_frame)
+        psd_load_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(psd_load_row, text="Load PSD", command=self._load_psd_data, width=10).pack(side=tk.LEFT)
+
+        # q0, q1 row
+        q_row = ttk.Frame(psd_frame)
+        q_row.pack(fill=tk.X, pady=1)
+        ttk.Label(q_row, text="q0:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.psd_q0_var = tk.StringVar(value="1e2")
+        ttk.Entry(q_row, textvariable=self.psd_q0_var, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Label(q_row, text="q1:", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 0))
+        self.psd_q1_var = tk.StringVar(value="1e8")
+        ttk.Entry(q_row, textvariable=self.psd_q1_var, width=8).pack(side=tk.LEFT, padx=2)
+
+        # H row
+        h_row = ttk.Frame(psd_frame)
+        h_row.pack(fill=tk.X, pady=1)
+        ttk.Label(h_row, text="H (Hurst):", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.psd_H_var = tk.StringVar(value="0.8")
+        ttk.Entry(h_row, textvariable=self.psd_H_var, width=6).pack(side=tk.LEFT, padx=2)
+
+        # ξ target row - specify h'rms to auto-calculate C(q0)
+        xi_row = ttk.Frame(psd_frame)
+        xi_row.pack(fill=tk.X, pady=1)
+        ttk.Label(xi_row, text="ξ (h'rms):", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.psd_xi_var = tk.StringVar(value="1.3")
+        ttk.Entry(xi_row, textvariable=self.psd_xi_var, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Button(xi_row, text="→ C(q0) 계산", command=self._calc_Cq0_from_xi, width=10).pack(side=tk.LEFT, padx=(5, 0))
+
+        # C(q0) row (can be manually overridden)
+        cq_row = ttk.Frame(psd_frame)
+        cq_row.pack(fill=tk.X, pady=1)
+        ttk.Label(cq_row, text="C(q0):", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.psd_Cq0_var = tk.StringVar(value="1e-18")
+        ttk.Entry(cq_row, textvariable=self.psd_Cq0_var, width=12).pack(side=tk.LEFT, padx=2)
+
+        # Apply PSD button
+        ttk.Button(psd_frame, text="Apply PSD", command=self._apply_psd_settings, width=12).pack(pady=2)
 
         # Plot area
         plot_frame = ttk.Frame(parent)
@@ -1244,11 +1327,86 @@ class PerssonModelGUI_V2:
         self.n_q_var = tk.StringVar(value="100")
         ttk.Entry(input_frame, textvariable=self.n_q_var, width=15).grid(row=row, column=1, pady=5)
 
-        # Target RMS Slope (for q1 determination)
+        # ===== h'rms / q1 모드 선택 섹션 =====
         row += 1
-        ttk.Label(input_frame, text="목표 RMS Slope (q1 결정):").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.target_rms_slope_var = tk.StringVar(value="1.3")
-        ttk.Entry(input_frame, textvariable=self.target_rms_slope_var, width=15).grid(row=row, column=1, pady=5)
+        mode_frame = ttk.LabelFrame(input_frame, text="h'rms / q1 결정 모드", padding=5)
+        mode_frame.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=10)
+
+        # 모드 선택 라디오 버튼
+        self.hrms_q1_mode_var = tk.StringVar(value="hrms_to_q1")  # 기본값: h'rms → q1
+
+        mode_row1 = ttk.Frame(mode_frame)
+        mode_row1.pack(fill=tk.X, pady=2)
+        ttk.Radiobutton(mode_row1, text="모드 1: h'rms → q1 계산",
+                       variable=self.hrms_q1_mode_var, value="hrms_to_q1",
+                       command=self._on_hrms_q1_mode_changed).pack(side=tk.LEFT)
+
+        mode_row2 = ttk.Frame(mode_frame)
+        mode_row2.pack(fill=tk.X, pady=2)
+        ttk.Radiobutton(mode_row2, text="모드 2: q1 → h'rms 계산",
+                       variable=self.hrms_q1_mode_var, value="q1_to_hrms",
+                       command=self._on_hrms_q1_mode_changed).pack(side=tk.LEFT)
+
+        # 구분선
+        ttk.Separator(mode_frame, orient='horizontal').pack(fill=tk.X, pady=5)
+
+        # h'rms 입력 (모드 1용)
+        self.hrms_input_frame = ttk.Frame(mode_frame)
+        self.hrms_input_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(self.hrms_input_frame, text="입력 h'rms:").pack(side=tk.LEFT)
+        self.target_hrms_slope_var = tk.StringVar(value="1.3")
+        self.hrms_entry = ttk.Entry(self.hrms_input_frame, textvariable=self.target_hrms_slope_var, width=12)
+        self.hrms_entry.pack(side=tk.LEFT, padx=5)
+
+        # q1 입력 (모드 2용)
+        self.q1_input_frame = ttk.Frame(mode_frame)
+        self.q1_input_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(self.q1_input_frame, text="입력 q1 (1/m):").pack(side=tk.LEFT)
+        self.input_q1_var = tk.StringVar(value="1.0e+08")
+        self.q1_entry = ttk.Entry(self.q1_input_frame, textvariable=self.input_q1_var, width=12)
+        self.q1_entry.pack(side=tk.LEFT, padx=5)
+
+        # Add trace to sync target_hrms_slope_var with Tab 1's psd_xi_var and Tab 4's display
+        self.target_hrms_slope_var.trace_add('write', self._on_target_hrms_changed)
+
+        # 계산 버튼
+        calc_btn_frame = ttk.Frame(mode_frame)
+        calc_btn_frame.pack(fill=tk.X, pady=5)
+        self.hrms_q1_calc_btn = ttk.Button(calc_btn_frame, text="h'rms/q1 계산",
+                                           command=self._calculate_hrms_q1)
+        self.hrms_q1_calc_btn.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(calc_btn_frame, text="Tab 4로 전달",
+                  command=self._send_hrms_q1_to_tab4).pack(side=tk.LEFT, padx=5)
+
+        # 구분선
+        ttk.Separator(mode_frame, orient='horizontal').pack(fill=tk.X, pady=5)
+
+        # 결과 표시 영역
+        result_frame = ttk.Frame(mode_frame)
+        result_frame.pack(fill=tk.X, pady=2)
+
+        # 계산된 q1 표시 (모드 1 결과)
+        q1_result_row = ttk.Frame(result_frame)
+        q1_result_row.pack(fill=tk.X, pady=2)
+        ttk.Label(q1_result_row, text="계산된 q1:").pack(side=tk.LEFT)
+        self.calculated_q1_var = tk.StringVar(value="(계산 후 표시)")
+        self.calculated_q1_label = ttk.Label(q1_result_row, textvariable=self.calculated_q1_var,
+                                             font=('Arial', 9, 'bold'), foreground='blue')
+        self.calculated_q1_label.pack(side=tk.LEFT, padx=5)
+        ttk.Label(q1_result_row, text="(1/m)").pack(side=tk.LEFT)
+
+        # 계산된 h'rms 표시 (모드 2 결과)
+        hrms_result_row = ttk.Frame(result_frame)
+        hrms_result_row.pack(fill=tk.X, pady=2)
+        ttk.Label(hrms_result_row, text="계산된 h'rms:").pack(side=tk.LEFT)
+        self.calculated_hrms_var = tk.StringVar(value="(계산 후 표시)")
+        self.calculated_hrms_label = ttk.Label(hrms_result_row, textvariable=self.calculated_hrms_var,
+                                               font=('Arial', 9, 'bold'), foreground='green')
+        self.calculated_hrms_label.pack(side=tk.LEFT, padx=5)
+
+        # 초기 모드에 따른 UI 상태 설정
+        self._on_hrms_q1_mode_changed()
 
         # PSD type
         row += 1
@@ -1350,6 +1508,162 @@ class PerssonModelGUI_V2:
             command=lambda: self._save_plot(self.fig_calc_progress, "calculation_progress")
         ).pack(fill=tk.X)
 
+    def _on_target_hrms_changed(self, *args):
+        """Callback when target h'rms value is changed in Tab 2.
+        Syncs the value to Tab 1's psd_xi_var and Tab 4's display."""
+        try:
+            new_value = self.target_hrms_slope_var.get()
+            # Validate it's a number
+            float(new_value)
+
+            # Sync to Tab 1's psd_xi_var
+            if hasattr(self, 'psd_xi_var'):
+                self.psd_xi_var.set(new_value)
+
+            # Update Tab 4's display if it exists
+            if hasattr(self, 'rms_target_xi_display'):
+                self.rms_target_xi_display.set(f"{float(new_value):.4f}")
+
+            # Update target_xi for calculations
+            self.target_xi = float(new_value)
+        except (ValueError, AttributeError):
+            # Invalid value or variables not yet initialized
+            pass
+
+    def _on_hrms_q1_mode_changed(self):
+        """모드 변경 시 UI 상태 업데이트."""
+        mode = self.hrms_q1_mode_var.get()
+        if mode == "hrms_to_q1":
+            # 모드 1: h'rms 입력 활성화, q1 입력 비활성화
+            self.hrms_entry.config(state='normal')
+            self.q1_entry.config(state='disabled')
+            self.hrms_q1_calc_btn.config(text="h'rms → q1 계산")
+        else:
+            # 모드 2: q1 입력 활성화, h'rms 입력 비활성화
+            self.hrms_entry.config(state='disabled')
+            self.q1_entry.config(state='normal')
+            self.hrms_q1_calc_btn.config(text="q1 → h'rms 계산")
+
+    def _calculate_hrms_q1(self):
+        """선택된 모드에 따라 h'rms 또는 q1 계산."""
+        if self.psd_model is None:
+            messagebox.showwarning("경고", "PSD 데이터를 먼저 로드해주세요!")
+            return
+
+        try:
+            mode = self.hrms_q1_mode_var.get()
+
+            # PSD 데이터에서 q 범위 결정
+            if hasattr(self.psd_model, 'q_data'):
+                q_data = self.psd_model.q_data
+                C_data = self.psd_model.C_data
+            else:
+                q_min = float(self.q_min_var.get())
+                q_max = float(self.q_max_var.get())
+                q_data = np.logspace(np.log10(q_min), np.log10(q_max), 500)
+                C_data = self.psd_model(q_data)
+
+            # 누적 h'rms 계산: h'rms²(q) = 2π∫[q0 to q] k³C(k)dk
+            hrms_squared_cumulative = np.zeros_like(q_data)
+            for i in range(len(q_data)):
+                q_int = q_data[:i+1]
+                C_int = C_data[:i+1]
+                hrms_squared_cumulative[i] = 2 * np.pi * np.trapezoid(q_int**3 * C_int, q_int)
+            hrms_cumulative = np.sqrt(hrms_squared_cumulative)
+
+            if mode == "hrms_to_q1":
+                # 모드 1: 주어진 h'rms로 q1 계산
+                target_hrms = float(self.target_hrms_slope_var.get())
+
+                # h'rms 값이 도달 가능한지 확인
+                if target_hrms > hrms_cumulative[-1]:
+                    messagebox.showwarning("경고",
+                        f"목표 h'rms ({target_hrms:.4f})가 최대 도달 가능한 값 ({hrms_cumulative[-1]:.4f})보다 큽니다.\n"
+                        f"q 범위를 늘리거나 목표 h'rms를 줄이세요.")
+                    return
+
+                # 목표 h'rms에 해당하는 q1 찾기 (보간 사용)
+                from scipy.interpolate import interp1d
+                # hrms → q 보간기 생성
+                f_interp = interp1d(hrms_cumulative, q_data, kind='linear', fill_value='extrapolate')
+                q1_calculated = float(f_interp(target_hrms))
+
+                # 결과 표시
+                self.calculated_q1_var.set(f"{q1_calculated:.3e}")
+                self.calculated_q1 = q1_calculated
+                self.target_xi = target_hrms
+
+                self.status_var.set(f"계산 완료: h'rms={target_hrms:.4f} → q1={q1_calculated:.3e} (1/m)")
+                messagebox.showinfo("계산 완료",
+                    f"모드 1: h'rms → q1 계산\n\n"
+                    f"입력 h'rms: {target_hrms:.4f}\n"
+                    f"계산된 q1: {q1_calculated:.3e} (1/m)")
+
+            else:
+                # 모드 2: 주어진 q1로 h'rms 계산
+                target_q1 = float(self.input_q1_var.get())
+
+                # q1이 범위 내에 있는지 확인
+                if target_q1 < q_data[0] or target_q1 > q_data[-1]:
+                    messagebox.showwarning("경고",
+                        f"입력 q1 ({target_q1:.3e})이 PSD 데이터 범위 밖입니다.\n"
+                        f"범위: {q_data[0]:.3e} ~ {q_data[-1]:.3e} (1/m)")
+                    return
+
+                # q1에 해당하는 h'rms 찾기 (보간 사용)
+                from scipy.interpolate import interp1d
+                # q → hrms 보간기 생성
+                f_interp = interp1d(q_data, hrms_cumulative, kind='linear', fill_value='extrapolate')
+                hrms_calculated = float(f_interp(target_q1))
+
+                # 결과 표시
+                self.calculated_hrms_var.set(f"{hrms_calculated:.4f}")
+                self.calculated_q1 = target_q1
+                self.target_xi = hrms_calculated
+
+                # h'rms 입력란에도 반영
+                self.target_hrms_slope_var.set(f"{hrms_calculated:.4f}")
+
+                self.status_var.set(f"계산 완료: q1={target_q1:.3e} → h'rms={hrms_calculated:.4f}")
+                messagebox.showinfo("계산 완료",
+                    f"모드 2: q1 → h'rms 계산\n\n"
+                    f"입력 q1: {target_q1:.3e} (1/m)\n"
+                    f"계산된 h'rms: {hrms_calculated:.4f}")
+
+        except ValueError as e:
+            messagebox.showerror("오류", f"입력값이 유효하지 않습니다: {e}")
+        except Exception as e:
+            messagebox.showerror("오류", f"계산 중 오류 발생: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _send_hrms_q1_to_tab4(self):
+        """계산된 h'rms와 q1을 Tab 4로 전달."""
+        try:
+            # 계산된 q1이 있으면 Tab 4의 q_max에 전달
+            if hasattr(self, 'calculated_q1') and self.calculated_q1 is not None:
+                self.rms_q_max_var.set(f"{self.calculated_q1:.3e}")
+
+            # target_xi를 Tab 4에 전달
+            if self.target_xi is not None:
+                if hasattr(self, 'rms_target_xi_display'):
+                    self.rms_target_xi_display.set(f"{self.target_xi:.4f}")
+                if hasattr(self, 'psd_xi_var'):
+                    self.psd_xi_var.set(f"{self.target_xi:.4f}")
+
+            # Tab 4로 전환
+            self.notebook.select(4)
+
+            self.status_var.set(f"Tab 4로 전달 완료: h'rms={self.target_xi:.4f}, q1={self.calculated_q1:.3e}")
+            messagebox.showinfo("전달 완료",
+                f"Tab 4로 전달되었습니다.\n\n"
+                f"h'rms: {self.target_xi:.4f}\n"
+                f"q1: {self.calculated_q1:.3e} (1/m)\n\n"
+                f"Tab 4에서 'h'rms slope 계산' 버튼을 클릭하세요.")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"Tab 4로 전달 중 오류: {e}")
+
     def _create_results_tab(self, parent):
         """Create G(q,v) results tab."""
         # Instruction
@@ -1405,7 +1719,10 @@ class PerssonModelGUI_V2:
         self.ax_psd.clear()
 
         # Plot 1: Master Curve (E', E'') - X-axis in Hz
-        omega = np.logspace(-2, 12, 200)
+        # Use material's actual frequency range for plotting (respects extrapolation settings)
+        omega_min = self.material._frequencies.min()
+        omega_max = self.material._frequencies.max()
+        omega = np.logspace(np.log10(omega_min), np.log10(omega_max), 500)
         f_Hz = omega / (2 * np.pi)  # Convert omega (rad/s) to f (Hz)
         E_storage = self.material.get_storage_modulus(omega)
         E_loss = self.material.get_loss_modulus(omega)
@@ -1449,37 +1766,69 @@ class PerssonModelGUI_V2:
         ax1.xaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
         ax1.yaxis.set_major_formatter(FuncFormatter(log_tick_formatter))
 
-        # Plot 2: PSD C(q) with Hurst exponent
-        if self.psd_model is not None:
-            q_min = float(self.q_min_var.get())
-            q_max = float(self.q_max_var.get())
-            q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
-            C_q = self.psd_model(q_plot)
+        # Plot 2: PSD C(q) - compare raw data with applied power law
+        has_raw_psd = self.raw_psd_data is not None
+        has_psd_model = self.psd_model is not None
 
-            # Calculate Hurst exponent from power law fitting
-            # C(q) = A * q^(-2(H+1)) => log(C) = log(A) - 2(H+1)*log(q)
-            # Use middle range for fitting (avoid edge artifacts)
-            fit_idx = (q_plot > q_min * 10) & (q_plot < q_max / 10)
-            if np.sum(fit_idx) > 10:
-                log_q_fit = np.log10(q_plot[fit_idx])
-                log_C_fit = np.log10(C_q[fit_idx])
-                # Linear fit: log(C) = a + b*log(q), where b = -2(H+1)
-                coeffs = np.polyfit(log_q_fit, log_C_fit, 1)
-                slope = coeffs[0]
-                intercept = coeffs[1]
-                H = -slope / 2.0 - 1.0  # Hurst exponent
+        if has_raw_psd or has_psd_model:
+            # Plot raw PSD data first (if available)
+            if has_raw_psd:
+                q_raw = self.raw_psd_data['q']
+                C_raw = self.raw_psd_data['C_q']
+                self.ax_psd.loglog(q_raw, C_raw, 'ko', markersize=3, alpha=0.5,
+                                  label='Raw PSD (측정값)', zorder=1)
 
-                # Plot fitted line
-                C_fit = 10**(intercept + slope * np.log10(q_plot))
-                self.ax_psd.loglog(q_plot, C_fit, 'r--', linewidth=1.5, alpha=0.7,
-                                  label=f'Power law fit (H={H:.3f})')
+            # Plot applied PSD model (power law or loaded)
+            if has_psd_model:
+                # Check if this is a power-law model (has q_data attribute from _apply_psd_settings)
+                is_power_law = hasattr(self.psd_model, 'q_data')
 
-            self.ax_psd.loglog(q_plot, C_q, 'b-', linewidth=2, label='로드된 PSD', alpha=0.9)
+                if is_power_law:
+                    # Determine plot range: include plateau region if raw PSD data exists
+                    if has_raw_psd:
+                        q_plot_min = min(self.raw_psd_data['q'])
+                    elif hasattr(self.psd_model, 'q0'):
+                        q_plot_min = self.psd_model.q0 / 10
+                    else:
+                        q_plot_min = float(self.q_min_var.get())
+
+                    q_plot_max = float(self.q_max_var.get())
+                    q_plot = np.logspace(np.log10(q_plot_min), np.log10(q_plot_max), 300)
+                    C_q = self.psd_model(q_plot)
+
+                    # Plot power law model with different color
+                    self.ax_psd.loglog(q_plot, C_q, 'r-', linewidth=2.5,
+                                      label='적용된 PSD (Power Law)', alpha=0.9, zorder=2)
+                else:
+                    q_min = float(self.q_min_var.get())
+                    q_max = float(self.q_max_var.get())
+                    q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
+                    C_q = self.psd_model(q_plot)
+
+                    # Plot loaded/interpolated PSD
+                    self.ax_psd.loglog(q_plot, C_q, 'b-', linewidth=2,
+                                      label='적용된 PSD (보간)', alpha=0.9, zorder=2)
+
+                    # Calculate Hurst exponent from power law fitting for display
+                    fit_idx = (q_plot > q_min * 10) & (q_plot < q_max / 10)
+                    if np.sum(fit_idx) > 10:
+                        log_q_fit = np.log10(q_plot[fit_idx])
+                        log_C_fit = np.log10(C_q[fit_idx])
+                        coeffs = np.polyfit(log_q_fit, log_C_fit, 1)
+                        slope = coeffs[0]
+                        intercept = coeffs[1]
+                        H = -slope / 2.0 - 1.0
+
+                        # Plot fitted line
+                        C_fit = 10**(intercept + slope * np.log10(q_plot))
+                        self.ax_psd.loglog(q_plot, C_fit, 'g--', linewidth=1.5, alpha=0.7,
+                                          label=f'Power law fit (H={H:.3f})')
+
             self.ax_psd.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=11, labelpad=5)
             self.ax_psd.set_ylabel('PSD C(q) (m⁴)', fontweight='bold', fontsize=11,
                                    rotation=90, labelpad=10)
-            self.ax_psd.set_title('표면 거칠기 PSD', fontweight='bold', fontsize=12, pad=10)
-            self.ax_psd.legend(fontsize=9)
+            self.ax_psd.set_title('표면 거칠기 PSD 비교', fontweight='bold', fontsize=12, pad=10)
+            self.ax_psd.legend(fontsize=8, loc='upper right')
             self.ax_psd.grid(True, alpha=0.3)
 
             # Fix axis formatter
@@ -1549,6 +1898,12 @@ class PerssonModelGUI_V2:
 
                 if np.any(q <= 0) or np.any(C_q <= 0):
                     raise ValueError("Invalid data: q and C must be positive after conversion")
+
+                # Store raw PSD data for comparison plotting
+                self.raw_psd_data = {
+                    'q': q.copy(),
+                    'C_q': C_q.copy()
+                }
 
                 self.psd_model = create_psd_from_data(q, C_q, interpolation_kind='log-log')
 
@@ -1628,6 +1983,313 @@ class PerssonModelGUI_V2:
             import traceback
             traceback.print_exc()
 
+    def _apply_dma_smoothing_extrapolation(self):
+        """Apply smoothing and/or extrapolation to DMA data in verification tab."""
+        if self.raw_dma_data is None:
+            messagebox.showwarning("경고", "먼저 DMA 데이터를 불러오세요.")
+            return
+
+        try:
+            from scipy.signal import savgol_filter
+            from scipy.interpolate import interp1d
+
+            # Get raw data
+            omega_raw = self.raw_dma_data['omega'].copy()
+            E_storage_raw = self.raw_dma_data['E_storage'].copy()
+            E_loss_raw = self.raw_dma_data['E_loss'].copy()
+
+            # Sort by omega
+            sort_idx = np.argsort(omega_raw)
+            omega_sorted = omega_raw[sort_idx]
+            E_storage_sorted = E_storage_raw[sort_idx]
+            E_loss_sorted = E_loss_raw[sort_idx]
+
+            # Apply smoothing if enabled
+            if self.verify_smooth_var.get():
+                window = self.verify_smooth_window_var.get()
+                if window % 2 == 0:
+                    window += 1  # Must be odd
+                window = min(window, len(omega_sorted) - 1)
+                if window < 5:
+                    window = 5
+                if len(omega_sorted) > window:
+                    # Use log scale for smoothing
+                    log_E_storage = np.log10(np.maximum(E_storage_sorted, 1e-10))
+                    log_E_loss = np.log10(np.maximum(E_loss_sorted, 1e-10))
+                    log_E_storage_smooth = savgol_filter(log_E_storage, window, 3)
+                    log_E_loss_smooth = savgol_filter(log_E_loss, window, 3)
+                    E_storage_smooth = 10**log_E_storage_smooth
+                    E_loss_smooth = 10**log_E_loss_smooth
+                else:
+                    E_storage_smooth = E_storage_sorted
+                    E_loss_smooth = E_loss_sorted
+            else:
+                E_storage_smooth = E_storage_sorted
+                E_loss_smooth = E_loss_sorted
+
+            # Apply extrapolation if enabled
+            if self.verify_extrap_var.get():
+                # Get user-specified frequency range
+                f_min = float(self.dma_extrap_fmin_var.get())
+                f_max = float(self.dma_extrap_fmax_var.get())
+                omega_min_target = 2 * np.pi * f_min
+                omega_max_target = 2 * np.pi * f_max
+
+                # Create extended omega array
+                omega_extended = np.logspace(
+                    np.log10(omega_min_target),
+                    np.log10(omega_max_target),
+                    500
+                )
+
+                # Create interpolators (log-log space)
+                log_omega = np.log10(omega_sorted)
+                log_E_storage = np.log10(np.maximum(E_storage_smooth, 1e-10))
+                log_E_loss = np.log10(np.maximum(E_loss_smooth, 1e-10))
+
+                interp_storage = interp1d(log_omega, log_E_storage, kind='linear',
+                                         fill_value='extrapolate')
+                interp_loss = interp1d(log_omega, log_E_loss, kind='linear',
+                                      fill_value='extrapolate')
+
+                # Extrapolate
+                log_omega_ext = np.log10(omega_extended)
+                log_E_storage_ext = interp_storage(log_omega_ext)
+                log_E_loss_ext = interp_loss(log_omega_ext)
+
+                # Linear extrapolation in log-log space using edge slopes
+                # For low frequencies: extrapolate using slope from first few points
+                low_mask = log_omega_ext < log_omega.min()
+                if np.any(low_mask):
+                    # Use first 10 points (or less if not enough data) to estimate slope
+                    n_fit = min(10, len(log_omega) // 4, len(log_omega) - 1)
+                    if n_fit >= 2:
+                        slope_storage_low = (log_E_storage[n_fit] - log_E_storage[0]) / (log_omega[n_fit] - log_omega[0])
+                        slope_loss_low = (log_E_loss[n_fit] - log_E_loss[0]) / (log_omega[n_fit] - log_omega[0])
+                        delta_omega = log_omega_ext[low_mask] - log_omega[0]
+                        log_E_storage_ext[low_mask] = log_E_storage[0] + slope_storage_low * delta_omega
+                        log_E_loss_ext[low_mask] = log_E_loss[0] + slope_loss_low * delta_omega
+
+                # For high frequencies: extrapolate using slope from last few points
+                high_mask = log_omega_ext > log_omega.max()
+                if np.any(high_mask):
+                    # Use last 10 points (or less if not enough data) to estimate slope
+                    n_fit = min(10, len(log_omega) // 4, len(log_omega) - 1)
+                    if n_fit >= 2:
+                        slope_storage_high = (log_E_storage[-1] - log_E_storage[-n_fit-1]) / (log_omega[-1] - log_omega[-n_fit-1])
+                        slope_loss_high = (log_E_loss[-1] - log_E_loss[-n_fit-1]) / (log_omega[-1] - log_omega[-n_fit-1])
+                        delta_omega = log_omega_ext[high_mask] - log_omega[-1]
+                        log_E_storage_ext[high_mask] = log_E_storage[-1] + slope_storage_high * delta_omega
+                        log_E_loss_ext[high_mask] = log_E_loss[-1] + slope_loss_high * delta_omega
+
+                omega_final = omega_extended
+                E_storage_final = 10**log_E_storage_ext
+                E_loss_final = 10**log_E_loss_ext
+            else:
+                omega_final = omega_sorted
+                E_storage_final = E_storage_smooth
+                E_loss_final = E_loss_smooth
+
+            # Update material
+            self.material = create_material_from_dma(
+                omega=omega_final,
+                E_storage=E_storage_final,
+                E_loss=E_loss_final,
+                material_name=self.material.name if self.material else "Processed DMA",
+                reference_temp=float(self.temperature_var.get())
+            )
+
+            # Update status
+            f_min = omega_final.min() / (2 * np.pi)
+            f_max = omega_final.max() / (2 * np.pi)
+            smooth_str = f"스무딩(w={self.verify_smooth_window_var.get()})" if self.verify_smooth_var.get() else ""
+            extrap_str = "외삽" if self.verify_extrap_var.get() else ""
+            process_str = "+".join(filter(None, [smooth_str, extrap_str])) or "원본"
+            self.dma_import_status_var.set(f"처리됨 [{process_str}] ({f_min:.1e}~{f_max:.1e} Hz)")
+
+            # Update plots
+            self._update_verification_plots()
+            self.status_var.set("DMA 스무딩/외삽 적용 완료")
+
+            messagebox.showinfo("완료", f"DMA 데이터 처리 완료\n- 스무딩: {'적용' if self.verify_smooth_var.get() else '미적용'}\n- 외삽: {'적용' if self.verify_extrap_var.get() else '미적용'}\n- 주파수 범위: {f_min:.1e} ~ {f_max:.1e} Hz")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"스무딩/외삽 적용 실패:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _calc_Cq0_from_xi(self):
+        """Calculate C(q0) from target h'rms (ξ).
+
+        Formula derivation:
+        ξ² = 2π ∫[q0→q1] q³ C(q) dq
+        For power-law PSD: C(q) = C(q0) * (q/q0)^(-2(H+1))
+
+        ξ² = 2π * C(q0) * q0^(2(H+1)) * [q^(2-2H) / (2-2H)]_{q0}^{q1}
+           = 2π * C(q0) * q0^(2(H+1)) * (q1^(2-2H) - q0^(2-2H)) / (2-2H)
+
+        Therefore:
+        C(q0) = ξ² * (2-2H) / (2π * q0^(2(H+1)) * (q1^(2-2H) - q0^(2-2H)))
+        """
+        try:
+            q0 = float(self.psd_q0_var.get())
+            q1 = float(self.psd_q1_var.get())
+            H = float(self.psd_H_var.get())
+            xi_target = float(self.psd_xi_var.get())
+
+            if q1 <= q0:
+                messagebox.showerror("Error", "q1 must be greater than q0")
+                return
+
+            # Calculate C(q0) from target ξ
+            exp_factor = 2 - 2 * H
+            if abs(exp_factor) < 1e-10:
+                # Special case H ≈ 1
+                integral_factor = np.log(q1 / q0)
+            else:
+                integral_factor = (q1**exp_factor - q0**exp_factor) / exp_factor
+
+            # ξ² = 2π * C(q0) * q0^(2(H+1)) * integral_factor
+            # C(q0) = ξ² / (2π * q0^(2(H+1)) * integral_factor)
+            C_q0 = xi_target**2 / (2 * np.pi * q0**(2*(H+1)) * integral_factor)
+
+            # Update C(q0) entry
+            self.psd_Cq0_var.set(f"{C_q0:.3e}")
+            self.status_var.set(f"C(q0) = {C_q0:.3e} calculated for ξ = {xi_target}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"C(q0) 계산 실패:\n{str(e)}")
+
+    def _apply_psd_settings(self):
+        """Apply PSD power-law settings from user input."""
+        try:
+            from scipy.interpolate import interp1d
+
+            # Get user parameters
+            q0 = float(self.psd_q0_var.get())
+            q1 = float(self.psd_q1_var.get())
+            H = float(self.psd_H_var.get())
+            C_q0 = float(self.psd_Cq0_var.get())
+
+            if q1 <= q0:
+                messagebox.showerror("Error", "q1 must be greater than q0")
+                return
+
+            if H < 0 or H > 1:
+                messagebox.showwarning("Warning", "Hurst exponent H should be between 0 and 1")
+
+            # Create power-law PSD: C(q) = C(q0) * (q/q0)^(-2(H+1))
+            # Power law exponent: -2(H+1)
+            exponent = -2 * (H + 1)
+
+            # Create q array for power law region (q0 to q1)
+            q_powerlaw = np.logspace(np.log10(q0), np.log10(q1), 500)
+            C_powerlaw = C_q0 * (q_powerlaw / q0) ** exponent
+
+            # Determine minimum q for plateau region
+            # Use raw PSD data range if available, otherwise use q0/100
+            if self.raw_psd_data is not None:
+                q_min_plateau = min(self.raw_psd_data['q'])
+            else:
+                q_min_plateau = q0 / 100
+
+            # Create plateau region (q < q0) with constant C(q0)
+            if q_min_plateau < q0:
+                q_plateau = np.logspace(np.log10(q_min_plateau), np.log10(q0), 100)[:-1]  # exclude q0 to avoid duplicate
+                C_plateau = np.full_like(q_plateau, C_q0)
+
+                # Combine plateau and power law regions
+                q_array = np.concatenate([q_plateau, q_powerlaw])
+                C_array = np.concatenate([C_plateau, C_powerlaw])
+            else:
+                q_array = q_powerlaw
+                C_array = C_powerlaw
+
+            # Create interpolator for PSD model
+            log_q = np.log10(q_array)
+            log_C = np.log10(C_array)
+
+            # Store q0 and C_q0 for the model function
+            _q0 = q0
+            _C_q0 = C_q0
+            _exponent = exponent
+
+            def psd_model(q_input):
+                """Power-law PSD model with plateau for q < q0."""
+                q_input = np.atleast_1d(q_input)
+
+                C_out = np.empty_like(q_input)
+
+                # q < q0: plateau at C(q0)
+                mask_plateau = q_input < _q0
+                C_out[mask_plateau] = _C_q0
+
+                # q >= q0: power law
+                mask_powerlaw = ~mask_plateau
+                C_out[mask_powerlaw] = _C_q0 * (q_input[mask_powerlaw] / _q0) ** _exponent
+
+                return C_out
+
+            # Store the PSD model with q_data and C_data attributes for RMS slope calculation
+            self.psd_model = psd_model
+            # Add attributes to function object so RMS slope calculation uses correct q range
+            # IMPORTANT: q_data/C_data now include plateau region (q < q0) for complete integration
+            self.psd_model.q_data = q_array.copy()  # Full range including plateau
+            self.psd_model.C_data = C_array.copy()  # Full range including plateau
+            # Also store full range for plotting (same as q_data/C_data now)
+            self.psd_model.q_full = q_array.copy()
+            self.psd_model.C_full = C_array.copy()
+            # Store power law region separately for reference
+            self.psd_model.q_powerlaw = q_powerlaw.copy()
+            self.psd_model.C_powerlaw = C_powerlaw.copy()
+            self.psd_model.q0 = q0
+            self.psd_model.C_q0 = C_q0
+
+            # Store q range for calculations
+            self.q_min_var.set(str(q0))
+            self.q_max_var.set(str(q1))
+
+            # Calculate actual RMS slope from the PSD for verification
+            # ξ² = 2π ∫ q³ C(q) dq
+            q_calc = np.logspace(np.log10(q0), np.log10(q1), 1000)
+            C_calc = psd_model(q_calc)
+            integrand = q_calc**3 * C_calc
+            xi_squared = 2 * np.pi * np.trapezoid(integrand, q_calc)
+            xi_actual = np.sqrt(xi_squared)
+
+            # Use user's input ξ value from Tab 2 directly as target_xi
+            # (The user specified ξ, calculated C(q0) from it, so target ξ is the input value)
+            try:
+                xi_user_input = float(self.psd_xi_var.get())
+            except:
+                xi_user_input = xi_actual
+
+            # Store user's target xi for consistency with Tab 4 (RMS Slope)
+            self.target_xi = xi_user_input
+            self.psd_model.target_xi = xi_user_input
+
+            # Update plots
+            self._update_verification_plots()
+            self.status_var.set(f"PSD applied: ξ(target)={xi_user_input:.3f}, ξ(calc)={xi_actual:.3f}, H={H:.2f}")
+
+            # Show both target and calculated ξ for transparency
+            xi_diff_pct = abs(xi_user_input - xi_actual) / xi_user_input * 100 if xi_user_input > 0 else 0
+            xi_info = f"- Target h'rms ξ = {xi_user_input:.4f}\n- Calculated h'rms ξ = {xi_actual:.4f}"
+            if xi_diff_pct > 1:
+                xi_info += f"\n  (차이: {xi_diff_pct:.1f}% - 수치 적분 오차)"
+
+            messagebox.showinfo("Complete", f"PSD model applied:\n"
+                              f"- q range: {q0:.1e} ~ {q1:.1e} 1/m\n"
+                              f"- Hurst exponent H: {H:.3f}\n"
+                              f"- C(q0): {C_q0:.1e} m^4\n"
+                              f"- Power law: C(q) = C(q0)*(q/q0)^{exponent:.2f}\n"
+                              f"{xi_info}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"PSD settings failed:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def _save_plot(self, fig, default_name):
         """Save matplotlib figure to file."""
         filename = filedialog.asksaveasfilename(
@@ -1695,23 +2357,48 @@ class PerssonModelGUI_V2:
                 self.ax_psd_f.clear()
 
                 # TOP SUBPLOT: Plot PSD(q) - wavenumber based (static)
+                # Include plateau region (q < q0) if available
                 if self.psd_model is not None:
-                    q_plot = np.logspace(np.log10(q_min), np.log10(q_max), 200)
+                    # Determine plot range including plateau region
+                    if hasattr(self.psd_model, 'q_data') and len(self.psd_model.q_data) > 0:
+                        # Use full q_data range which includes plateau
+                        q_plot_min = min(self.psd_model.q_data)
+                        q_plot_max = max(self.psd_model.q_data[self.psd_model.q_data <= q_max]) if np.any(self.psd_model.q_data <= q_max) else q_max
+                        q_plot_max = max(q_plot_max, q_max)
+                    elif hasattr(self.psd_model, 'q0'):
+                        # If q0 is defined, extend plot range to include plateau
+                        q_plot_min = self.psd_model.q0 / 10  # Show some plateau region
+                        q_plot_max = q_max
+                    else:
+                        q_plot_min = q_min
+                        q_plot_max = q_max
+
+                    q_plot = np.logspace(np.log10(q_plot_min), np.log10(q_plot_max), 300)
                     C_q = self.psd_model(q_plot)
 
+                    # Plot full PSD including plateau
                     self.ax_psd_q.loglog(q_plot, C_q, 'b-', linewidth=2, label='PSD C(q)')
 
-                    # Highlight the q range being used
+                    # Highlight plateau region (q < q0) if q0 is defined
+                    if hasattr(self.psd_model, 'q0'):
+                        q0_psd = self.psd_model.q0
+                        if q_plot_min < q0_psd:
+                            self.ax_psd_q.axvspan(q_plot_min, q0_psd, alpha=0.2, facecolor='yellow',
+                                                 edgecolor='orange', linewidth=1, label=f'플래토 (q < q0={q0_psd:.1e})')
+                            # Mark q0 with vertical line
+                            self.ax_psd_q.axvline(x=q0_psd, color='orange', linestyle='--', linewidth=1.5, alpha=0.7)
+
+                    # Highlight the q range being used for calculation
                     self.ax_psd_q.axvspan(q_min, q_max, alpha=0.15, facecolor='cyan',
-                                         edgecolor='blue', linewidth=1.5, label='사용 q 범위')
+                                         edgecolor='blue', linewidth=1.5, label=f'계산 q 범위')
 
                     self.ax_psd_q.set_xlabel('파수 q (1/m)', fontsize=10, fontweight='bold')
                     self.ax_psd_q.set_ylabel('PSD C(q) (m⁴)', fontsize=10, fontweight='bold')
                     self.ax_psd_q.set_xscale('log')
                     self.ax_psd_q.set_yscale('log')
                     self.ax_psd_q.grid(True, alpha=0.3)
-                    self.ax_psd_q.legend(loc='best', fontsize=8)
-                    self.ax_psd_q.set_title('PSD (파수 기준)', fontsize=11, fontweight='bold')
+                    self.ax_psd_q.legend(loc='upper right', fontsize=7)
+                    self.ax_psd_q.set_title('PSD (파수 기준) - 플래토 영역 포함', fontsize=11, fontweight='bold')
 
                 # MIDDLE SUBPLOT: Plot DMA master curve
                 if self.material is not None:
@@ -2258,7 +2945,7 @@ class PerssonModelGUI_V2:
             slope_rms_cumulative = np.sqrt(slope_squared_cumulative)
 
             # Find q1 where slope_rms = target (from parameter settings)
-            target_slope_rms = float(self.target_rms_slope_var.get())
+            target_slope_rms = float(self.target_hrms_slope_var.get())
             q1_idx = np.argmax(slope_rms_cumulative >= target_slope_rms)
 
             if q1_idx > 0:
@@ -2285,12 +2972,12 @@ class PerssonModelGUI_V2:
                 q1_determined = q_parse[-1] * 1.5  # Placeholder
                 messagebox.showinfo("Info", f"Target slope {target_slope_rms} not reached. Extrapolating with H={H:.3f}")
 
-            # Plot cumulative RMS slope
-            ax6.semilogx(q_parse, slope_rms_cumulative, 'b-', linewidth=2.5, label='누적 RMS 기울기')
+            # Plot cumulative h'rms (RMS slope)
+            ax6.semilogx(q_parse, slope_rms_cumulative, 'b-', linewidth=2.5, label="누적 h'rms")
 
-            # Add horizontal line at target (1.3)
+            # Add horizontal line at target h'rms
             ax6.axhline(target_slope_rms, color='red', linestyle='--', linewidth=2,
-                       label=f'목표 RMS Slope = {target_slope_rms}', alpha=0.7, zorder=5)
+                       label=f"목표 h'rms = {target_slope_rms}", alpha=0.7, zorder=5)
 
             # Add vertical line at q1
             if q1_idx > 0:
@@ -2302,9 +2989,18 @@ class PerssonModelGUI_V2:
                         markeredgecolor='black', markeredgewidth=2, zorder=10,
                         label='교차점')
 
+                # Update calculated q1 display in Tab 3
+                self.calculated_q1_var.set(f"{q1_determined:.3e}")
+
+                # Pass q1 and hrms_slope to Tab 4 (RMS Slope tab)
+                self.rms_q_max_var.set(f"{q1_determined:.3e}")
+
+                # Store calculated q1 for other uses
+                self.calculated_q1 = q1_determined
+
             ax6.set_xlabel('파수 q (1/m)', fontweight='bold', fontsize=LABEL_FONT, labelpad=3)
-            ax6.set_ylabel('누적 RMS 기울기 √(Slope²)', fontweight='bold', fontsize=LABEL_FONT, rotation=90, labelpad=5)
-            ax6.set_title('(f) Parseval 정리: q1 자동 결정 (Target Slope=1.3)', fontweight='bold', fontsize=TITLE_FONT, pad=TITLE_PAD)
+            ax6.set_ylabel("누적 h'rms √(Slope²)", fontweight='bold', fontsize=LABEL_FONT, rotation=90, labelpad=5)
+            ax6.set_title(f"(f) Parseval 정리: q1 자동 결정 (목표 h'rms={target_slope_rms})", fontweight='bold', fontsize=TITLE_FONT, pad=TITLE_PAD)
 
             # Legend with better positioning
             ax6.legend(fontsize=LEGEND_FONT, loc='lower right', framealpha=0.9)
@@ -2313,13 +3009,13 @@ class PerssonModelGUI_V2:
 
             # Add annotation box
             if q1_idx > 0:
-                textstr = (f'파서벌 정리:\nSlope²(q) = 2π∫k³C(k)dk\n\n'
-                          f'결정된 q1 = {q1_determined:.2e} 1/m\n'
-                          f'해당 RMS Slope = {target_slope_rms:.2f}')
+                textstr = (f"파서벌 정리:\nh'rms²(q) = 2π∫k³C(k)dk\n\n"
+                          f"결정된 q1 = {q1_determined:.2e} 1/m\n"
+                          f"해당 h'rms = {target_slope_rms:.2f}")
             else:
-                textstr = (f'파서벌 정리:\nSlope²(q) = 2π∫k³C(k)dk\n\n'
-                          f'최종 RMS Slope = {slope_rms_cumulative[-1]:.3f}\n'
-                          f'(목표 {target_slope_rms} 미달)')
+                textstr = (f"파서벌 정리:\nh'rms²(q) = 2π∫k³C(k)dk\n\n"
+                          f"최종 h'rms = {slope_rms_cumulative[-1]:.3f}\n"
+                          f"(목표 {target_slope_rms} 미달)")
 
             props = dict(boxstyle='round', facecolor='lightyellow', alpha=0.8, edgecolor='black')
             ax6.text(0.02, 0.98, textstr, transform=ax6.transAxes, fontsize=8,
@@ -2606,7 +3302,7 @@ $\begin{array}{lcc}
         scrollbar.pack(side="right", fill="y")
 
     def _create_rms_slope_tab(self, parent):
-        """Create RMS Slope / Local Strain calculation tab."""
+        """Create h'rms / Local Strain calculation tab."""
         # Main container
         main_container = ttk.Frame(parent)
         main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -2623,7 +3319,7 @@ $\begin{array}{lcc}
         desc_frame.pack(fill=tk.X, pady=2, padx=3)
 
         desc_text = (
-            "PSD 데이터로부터 RMS Slope(ξ)와\n"
+            "PSD 데이터로부터 h'rms(ξ)와\n"
             "Local Strain(ε)을 계산합니다.\n\n"
             "수식:\n"
             "  ξ²(q) = 2π ∫[q₀→q] k³C(k)dk\n"
@@ -2664,13 +3360,32 @@ $\begin{array}{lcc}
         ttk.Label(q_frame, text="'auto' = PSD 데이터 범위 사용",
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
+        # Target h'rms display (synced with Tab 2)
+        target_frame = ttk.LabelFrame(settings_frame, text="목표 h'rms (Tab 2 연동)", padding=3)
+        target_frame.pack(fill=tk.X, pady=3)
+
+        row_target = ttk.Frame(target_frame)
+        row_target.pack(fill=tk.X, pady=1)
+        ttk.Label(row_target, text="목표 ξ:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.rms_target_xi_display = tk.StringVar(value="(Tab 2에서 설정)")
+        self.rms_target_xi_label = ttk.Label(row_target, textvariable=self.rms_target_xi_display,
+                                             font=('Arial', 9, 'bold'), foreground='blue')
+        self.rms_target_xi_label.pack(side=tk.RIGHT)
+
+        # Refresh button for target value
+        ttk.Button(target_frame, text="Tab 2 값 불러오기", command=self._sync_target_xi_from_tab2,
+                   width=15).pack(pady=2)
+
+        ttk.Label(target_frame, text="※ Tab 2에서 '목표 h'rms' 변경 시\n   이 버튼을 눌러 동기화하세요",
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
         # Calculate button
         calc_frame = ttk.Frame(settings_frame)
         calc_frame.pack(fill=tk.X, pady=5)
 
         self.rms_calc_btn = ttk.Button(
             calc_frame,
-            text="RMS Slope / Local Strain 계산",
+            text="h'rms slope / Local Strain 계산",
             command=self._calculate_rms_slope
         )
         self.rms_calc_btn.pack(fill=tk.X)
@@ -2719,11 +3434,11 @@ $\begin{array}{lcc}
         # Create figure with 2x2 subplots
         self.fig_rms = Figure(figsize=(9, 7), dpi=100)
 
-        # Top-left: RMS Slope vs q
+        # Top-left: h'rms vs q
         self.ax_rms_slope = self.fig_rms.add_subplot(221)
-        self.ax_rms_slope.set_title('RMS Slope ξ(q)', fontweight='bold')
+        self.ax_rms_slope.set_title("h'rms ξ(q)", fontweight='bold')
         self.ax_rms_slope.set_xlabel('파수 q (1/m)')
-        self.ax_rms_slope.set_ylabel('ξ (RMS Slope)')
+        self.ax_rms_slope.set_ylabel("ξ (h'rms)")
         self.ax_rms_slope.set_xscale('log')
         self.ax_rms_slope.set_yscale('log')
         self.ax_rms_slope.grid(True, alpha=0.3)
@@ -2764,14 +3479,38 @@ $\begin{array}{lcc}
         toolbar = NavigationToolbar2Tk(self.canvas_rms, plot_frame)
         toolbar.update()
 
+    def _sync_target_xi_from_tab2(self):
+        """Sync target h'rms from Tab 2 to Tab 4 display and update target_xi."""
+        try:
+            # Get target h'rms from Tab 2
+            target_xi_str = self.target_hrms_slope_var.get()
+            target_xi = float(target_xi_str)
+
+            # Update Tab 4 display
+            self.rms_target_xi_display.set(f"{target_xi:.4f}")
+
+            # Update target_xi for calculations
+            self.target_xi = target_xi
+
+            # Also sync Tab 1's psd_xi_var for consistency
+            self.psd_xi_var.set(target_xi_str)
+
+            self.status_var.set(f"목표 h'rms 동기화 완료: ξ = {target_xi:.4f}")
+        except ValueError:
+            self.rms_target_xi_display.set("(유효하지 않은 값)")
+            self.status_var.set("오류: Tab 2의 목표 h'rms 값이 유효하지 않습니다.")
+
     def _calculate_rms_slope(self):
-        """Calculate RMS Slope and Local Strain from PSD data."""
+        """Calculate h'rms and Local Strain from PSD data."""
         # Check if PSD data is available
         if self.psd_model is None:
             messagebox.showwarning("경고", "먼저 PSD 데이터를 로드하세요.")
             return
 
         try:
+            # Sync target_xi from Tab 2 before calculation
+            self._sync_target_xi_from_tab2()
+
             self.rms_calc_btn.config(state='disabled')
             self.rms_progress_var.set(10)
             self.root.update_idletasks()
@@ -2848,11 +3587,13 @@ $\begin{array}{lcc}
             self._update_rms_result_text()
 
             self.rms_progress_var.set(100)
-            self.status_var.set("RMS Slope / Local Strain 계산 완료")
+            self.status_var.set("h'rms slope / Local Strain 계산 완료")
 
+            # Use target_xi from Tab 2 if available for consistency
+            xi_max_display = self.target_xi if self.target_xi is not None else self.rms_slope_profiles['xi'][-1]
             messagebox.showinfo("완료",
-                f"RMS Slope / Local Strain 계산 완료!\n\n"
-                f"ξ_max = {self.rms_slope_profiles['xi'][-1]:.4f}\n"
+                f"h'rms slope / Local Strain 계산 완료!\n\n"
+                f"ξ_max (h'rms) = {xi_max_display:.4f}\n"
                 f"ε_max = {self.rms_slope_profiles['strain'][-1]*100:.2f}%\n"
                 f"h_rms = {self.rms_slope_profiles['hrms'][-1]*1e6:.2f} μm"
             )
@@ -2882,20 +3623,22 @@ $\begin{array}{lcc}
         self.ax_rms_height.clear()
         self.ax_psd_ref.clear()
 
-        # Plot 1: RMS Slope
+        # Plot 1: h'rms
         valid_xi = xi > 0
         if np.any(valid_xi):
             self.ax_rms_slope.loglog(q[valid_xi], xi[valid_xi], 'b-', linewidth=2)
-        self.ax_rms_slope.set_title('RMS Slope ξ(q)', fontweight='bold')
+        self.ax_rms_slope.set_title("h'rms ξ(q)", fontweight='bold')
         self.ax_rms_slope.set_xlabel('파수 q (1/m)')
-        self.ax_rms_slope.set_ylabel('ξ (RMS Slope)')
+        self.ax_rms_slope.set_ylabel("ξ (h'rms)")
         self.ax_rms_slope.grid(True, alpha=0.3)
 
-        # Add final value annotation
+        # Add final value annotation - use target_xi from Tab 2 if available
         if len(xi) > 0 and xi[-1] > 0:
-            self.ax_rms_slope.axhline(y=xi[-1], color='r', linestyle='--', alpha=0.5)
-            self.ax_rms_slope.annotate(f'ξ_max={xi[-1]:.4f}',
-                xy=(q[-1], xi[-1]), xytext=(0.7, 0.9),
+            # Use target_xi from PSD settings (Tab 2) for consistency
+            xi_max_display = self.target_xi if self.target_xi is not None else xi[-1]
+            self.ax_rms_slope.axhline(y=xi_max_display, color='r', linestyle='--', alpha=0.5)
+            self.ax_rms_slope.annotate(f'ξ_max={xi_max_display:.4f}',
+                xy=(q[-1], xi_max_display), xytext=(0.7, 0.9),
                 textcoords='axes fraction', fontsize=9,
                 arrowprops=dict(arrowstyle='->', color='red', alpha=0.5))
 
@@ -2958,7 +3701,7 @@ $\begin{array}{lcc}
         profiles = self.rms_slope_profiles
 
         self.rms_result_text.insert(tk.END, "=" * 35 + "\n")
-        self.rms_result_text.insert(tk.END, "RMS Slope / Local Strain 결과\n")
+        self.rms_result_text.insert(tk.END, "h'rms slope / Local Strain 결과\n")
         self.rms_result_text.insert(tk.END, "=" * 35 + "\n\n")
 
         self.rms_result_text.insert(tk.END, "[입력 데이터]\n")
@@ -2967,8 +3710,11 @@ $\begin{array}{lcc}
         self.rms_result_text.insert(tk.END, f"  데이터 점: {summary['n_points']}\n")
         self.rms_result_text.insert(tk.END, f"  Strain Factor: {summary['strain_factor']}\n\n")
 
-        self.rms_result_text.insert(tk.END, "[RMS Slope]\n")
-        self.rms_result_text.insert(tk.END, f"  ξ_max: {summary['xi_max']:.4f}\n")
+        self.rms_result_text.insert(tk.END, "[h'rms]\n")
+        # Show both target ξ (user input from Tab 2) and calculated ξ
+        if self.target_xi is not None:
+            self.rms_result_text.insert(tk.END, f"  ξ_target (Tab 2 입력값): {self.target_xi:.4f}\n")
+        self.rms_result_text.insert(tk.END, f"  ξ_calc (적분 계산값): {summary['xi_max']:.4f}\n")
         self.rms_result_text.insert(tk.END, f"  ξ(q_max): {summary['xi_at_qmax']:.4f}\n\n")
 
         self.rms_result_text.insert(tk.END, "[Local Strain]\n")
@@ -2990,7 +3736,7 @@ $\begin{array}{lcc}
     def _apply_local_strain_to_mu_visc(self):
         """Apply calculated local strain to mu_visc calculation."""
         if self.local_strain_array is None or self.rms_slope_profiles is None:
-            messagebox.showwarning("경고", "먼저 RMS Slope를 계산하세요.")
+            messagebox.showwarning("경고", "먼저 h'rms를 계산하세요.")
             return
 
         # Store for use in mu_visc tab
@@ -3005,14 +3751,14 @@ $\begin{array}{lcc}
         )
 
     def _export_rms_slope_data(self):
-        """Export RMS slope data to CSV file."""
+        """Export h'rms data to CSV file."""
         if self.rms_slope_profiles is None:
-            messagebox.showwarning("경고", "먼저 RMS Slope를 계산하세요.")
+            messagebox.showwarning("경고", "먼저 h'rms를 계산하세요.")
             return
 
         filename = filedialog.asksaveasfilename(
             defaultextension=".csv",
-            initialfile="rms_slope_data.csv",
+            initialfile="hrms_slope_data.csv",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
 
@@ -3025,9 +3771,9 @@ $\begin{array}{lcc}
 
             with open(filename, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(['# RMS Slope / Local Strain Data'])
-                writer.writerow(['# q (1/m)', 'C(q) (m^4)', 'xi^2', 'xi (RMS Slope)',
-                                'strain (fraction)', 'strain (%)', 'h_rms^2 (m^2)', 'h_rms (m)'])
+                writer.writerow(["# h'rms slope / Local Strain Data"])
+                writer.writerow(["# q (1/m)", "C(q) (m^4)", "xi^2", "xi (h'rms)",
+                                "strain (fraction)", "strain (%)", "h_rms^2 (m^2)", "h_rms (m)"])
 
                 for i in range(len(profiles['q'])):
                     writer.writerow([
@@ -3042,7 +3788,7 @@ $\begin{array}{lcc}
                     ])
 
             messagebox.showinfo("성공", f"데이터 저장 완료:\n{filename}")
-            self.status_var.set(f"RMS Slope 데이터 저장: {filename}")
+            self.status_var.set(f"h'rms 데이터 저장: {filename}")
 
         except Exception as e:
             messagebox.showerror("오류", f"저장 실패:\n{str(e)}")
@@ -3472,9 +4218,34 @@ $\begin{array}{lcc}
                 else:
                     g_stitched[:] = 1.0  # Default
 
+            # Force monotonic decrease: after minimum, hold the minimum value
+            # (Payne effect: f,g should decrease with strain, not increase)
+            f_min_idx = np.argmin(f_stitched)
+            g_min_idx = np.argmin(g_stitched)
+            f_min_val = f_stitched[f_min_idx]
+            g_min_val = g_stitched[g_min_idx]
+
+            # After minimum, ALL values become the minimum (flat plateau)
+            f_stitched[f_min_idx:] = f_min_val
+            g_stitched[g_min_idx:] = g_min_val
+
+            # Extend to 100% strain with hold extrapolation
+            max_data_strain = grid_strain[-1]
+            original_len = len(grid_strain)  # Store original length before extension
+            if max_data_strain < 1.0:
+                # Add points up to 100% strain holding the last value
+                extend_strains = np.array([0.5, 0.7, 1.0])
+                extend_strains = extend_strains[extend_strains > max_data_strain]
+                if len(extend_strains) > 0:
+                    grid_strain = np.concatenate([grid_strain, extend_strains])
+                    f_stitched = np.concatenate([f_stitched, np.full(len(extend_strains), f_stitched[-1])])
+                    g_stitched = np.concatenate([g_stitched, np.full(len(extend_strains), g_stitched[-1])])
+                    n_eff_stitched = np.concatenate([n_eff_stitched, np.full(len(extend_strains), n_eff_stitched[-1])])
+
             # Store piecewise result
             self.piecewise_result = {
                 'strain': grid_strain.copy(),
+                'strain_original_len': original_len,  # For plotting Group A/B
                 'f_avg': f_stitched,
                 'g_avg': g_stitched,
                 'n_eff': n_eff_stitched,
@@ -3535,21 +4306,7 @@ $\begin{array}{lcc}
             s = self.piecewise_result['strain']
             split = self.piecewise_result['split']
 
-            # Group A average
-            if self.piecewise_result['result_A'] is not None:
-                f_A = self.piecewise_result['result_A']['f_avg']
-                g_A = self.piecewise_result['result_A']['g_avg']
-                self.ax_fg_curves.plot(s, f_A, 'b--', linewidth=2, alpha=0.6, label='Group A f(ε)')
-                self.ax_fg_curves.plot(s, g_A, 'r--', linewidth=2, alpha=0.6, label='Group A g(ε)')
-
-            # Group B average
-            if self.piecewise_result['result_B'] is not None:
-                f_B = self.piecewise_result['result_B']['f_avg']
-                g_B = self.piecewise_result['result_B']['g_avg']
-                self.ax_fg_curves.plot(s, f_B, 'c--', linewidth=2, alpha=0.6, label='Group B f(ε)')
-                self.ax_fg_curves.plot(s, g_B, 'm--', linewidth=2, alpha=0.6, label='Group B g(ε)')
-
-            # Stitched (final) result
+            # Stitched (final) result only - Group A/B removed
             f_final = self.piecewise_result['f_avg']
             g_final = self.piecewise_result['g_avg']
             self.ax_fg_curves.plot(s, f_final, 'b-', linewidth=3.5, label='STITCHED f(ε)')
@@ -3567,7 +4324,7 @@ $\begin{array}{lcc}
             self.ax_fg_curves.plot(s, f_avg, 'b-', linewidth=3, label='f(ε) 평균')
             self.ax_fg_curves.plot(s, g_avg, 'r-', linewidth=3, label='g(ε) 평균')
 
-        self.ax_fg_curves.set_xlim(left=0)
+        self.ax_fg_curves.set_xlim(0, 1.0)  # Always show up to 100% strain
         self.ax_fg_curves.set_ylim(0, 1.1)
         self.ax_fg_curves.legend(loc='upper right', fontsize=7, ncol=2)
 
@@ -3888,6 +4645,7 @@ $\begin{array}{lcc}
         try:
             self.status_var.set("μ_visc 계산 중...")
             self.mu_calc_button.config(state='disabled')
+            self.mu_progress_var.set(0)  # Initialize progress bar
             self.root.update()
 
             # Get parameters
@@ -3900,20 +4658,20 @@ $\begin{array}{lcc}
             strain_est_method = self.strain_est_method_var.get()
             fixed_strain = float(self.fixed_strain_var.get()) / 100.0  # Convert % to fraction
 
-            # Check RMS slope data if using rms_slope method
+            # Check h'rms data if using rms_slope method
             if strain_est_method == 'rms_slope':
                 if self.rms_slope_calculator is None or self.rms_slope_profiles is None:
                     messagebox.showwarning("경고",
-                        "RMS Slope 데이터가 없습니다.\n\n"
-                        "Tab 6 (RMS Slope/Local Strain)에서\n"
-                        "'RMS Slope / Local Strain 계산' 버튼을 먼저 실행하세요.")
+                        "h'rms 데이터가 없습니다.\n\n"
+                        "Tab 4 (h'rms/Local Strain)에서\n"
+                        "'h'rms slope / Local Strain 계산' 버튼을 먼저 실행하세요.")
                     self.mu_calc_button.config(state='normal')
                     return
                 else:
                     # Show info about strain range being used
                     strain_min = self.rms_slope_profiles['strain'][0]
                     strain_max = self.rms_slope_profiles['strain'][-1]
-                    self.status_var.set(f"RMS Slope 기반 strain 적용: {strain_min*100:.3f}% ~ {strain_max*100:.1f}%")
+                    self.status_var.set(f"h'rms 기반 strain 적용: {strain_min*100:.3f}% ~ {strain_max*100:.1f}%")
                     self.root.update()
 
             # Get G(q,v) results
@@ -4084,8 +4842,15 @@ $\begin{array}{lcc}
             )
 
             # Calculate mu_visc for all velocities
+            # Scale progress to 50-100% if nonlinear correction was applied (Stage 1 used 0-50%)
             def progress_callback(percent):
-                self.mu_progress_var.set(percent)
+                if use_fg and self.f_interpolator is not None and self.g_interpolator is not None:
+                    # Stage 2: scale 0-100% to 50-100%
+                    scaled_percent = 50 + int(percent * 0.5)
+                else:
+                    # No Stage 1, so use full 0-100%
+                    scaled_percent = percent
+                self.mu_progress_var.set(scaled_percent)
                 self.root.update()
 
             # Use strain_estimator if nonlinear correction is enabled
@@ -4438,12 +5203,12 @@ $\begin{array}{lcc}
         self.strain_map_nv_var = tk.StringVar(value="32")
         ttk.Entry(ctrl_row, textvariable=self.strain_map_nv_var, width=6).pack(side=tk.LEFT)
 
-        # Strain estimation method
+        # Strain estimation method - default to rms_slope
         ttk.Label(ctrl_row, text="  변형률 추정:").pack(side=tk.LEFT, padx=5)
-        self.strain_map_method_var = tk.StringVar(value="persson")
+        self.strain_map_method_var = tk.StringVar(value="rms_slope")
         method_combo = ttk.Combobox(
             ctrl_row, textvariable=self.strain_map_method_var,
-            values=["persson", "simple", "rms_slope", "fixed"],
+            values=["rms_slope", "persson", "simple", "fixed"],
             width=10, state="readonly"
         )
         method_combo.pack(side=tk.LEFT)
@@ -4463,17 +5228,23 @@ $\begin{array}{lcc}
         self.strain_map_progress = ttk.Progressbar(control_frame, mode='determinate')
         self.strain_map_progress.pack(fill=tk.X, pady=3)
 
-        # Plot area - 2x2 grid for 4 heatmaps
+        # Plot area - 2x4 grid for 8 heatmaps
         plot_frame = ttk.Frame(main_frame)
         plot_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.fig_strain_map = Figure(figsize=(14, 10), dpi=100)
+        self.fig_strain_map = Figure(figsize=(18, 9), dpi=100)
 
-        # 2x2 subplots
-        self.ax_strain_linear = self.fig_strain_map.add_subplot(221)
-        self.ax_strain_nonlinear = self.fig_strain_map.add_subplot(222)
-        self.ax_modulus_linear = self.fig_strain_map.add_subplot(223)
-        self.ax_modulus_nonlinear = self.fig_strain_map.add_subplot(224)
+        # 2x4 subplots layout:
+        # Row 1: Local Strain | E' Storage | E''*g Loss | E'*f Storage
+        # Row 2: G Integrand (linear) | G Integrand (nonlinear) | A/A0 (linear) | A/A0 (nonlinear)
+        self.ax_strain_contour = self.fig_strain_map.add_subplot(241)
+        self.ax_E_storage = self.fig_strain_map.add_subplot(242)
+        self.ax_E_loss_nonlinear = self.fig_strain_map.add_subplot(243)
+        self.ax_E_storage_nonlinear = self.fig_strain_map.add_subplot(244)
+        self.ax_G_integrand_linear = self.fig_strain_map.add_subplot(245)
+        self.ax_G_integrand_nonlinear = self.fig_strain_map.add_subplot(246)
+        self.ax_contact_linear = self.fig_strain_map.add_subplot(247)
+        self.ax_contact_nonlinear = self.fig_strain_map.add_subplot(248)
 
         self.canvas_strain_map = FigureCanvasTkAgg(self.fig_strain_map, plot_frame)
         self.canvas_strain_map.draw()
@@ -4488,17 +5259,21 @@ $\begin{array}{lcc}
     def _init_strain_map_plots(self):
         """Initialize strain map plots with placeholder data."""
         for ax, title in [
-            (self.ax_strain_linear, 'Local Strain ε(q,v) - 선형'),
-            (self.ax_strain_nonlinear, 'Local Strain ε(q,v) - 비선형'),
-            (self.ax_modulus_linear, "E''(q,v) [Pa] - 선형"),
-            (self.ax_modulus_nonlinear, "E''_eff(q,v) = E''·g(ε) [Pa] - 비선형")
+            (self.ax_strain_contour, 'Local Strain [%]'),
+            (self.ax_E_storage, "E' Storage [log Pa]"),
+            (self.ax_E_loss_nonlinear, "E''*g Loss [log Pa]"),
+            (self.ax_E_storage_nonlinear, "E'*f Storage [log Pa]"),
+            (self.ax_G_integrand_linear, "G Integrand (linear)"),
+            (self.ax_G_integrand_nonlinear, "G Integrand (f applied)"),
+            (self.ax_contact_linear, "A/A0 Contact (linear)"),
+            (self.ax_contact_nonlinear, "A/A0 Contact (f applied)")
         ]:
-            ax.set_title(title, fontweight='bold', fontsize=10)
-            ax.set_xlabel('log₁₀(v) [m/s]')
-            ax.set_ylabel('log₁₀(q) [1/m]')
-            ax.text(0.5, 0.5, '데이터 없음\n계산 버튼을 클릭하세요',
+            ax.set_title(title, fontweight='bold', fontsize=9)
+            ax.set_xlabel('log10(v) [m/s]', fontsize=8)
+            ax.set_ylabel('log10(q) [1/m]', fontsize=8)
+            ax.text(0.5, 0.5, 'No data',
                    ha='center', va='center', transform=ax.transAxes,
-                   fontsize=12, color='gray')
+                   fontsize=10, color='gray')
 
         self.fig_strain_map.tight_layout()
         self.canvas_strain_map.draw()
@@ -4554,8 +5329,16 @@ $\begin{array}{lcc}
 
             # Initialize matrices
             strain_matrix = np.zeros((n_q, n_v))
+            E_storage_matrix = np.zeros((n_q, n_v))  # E' storage modulus
             E_loss_linear = np.zeros((n_q, n_v))
             E_loss_nonlinear = np.zeros((n_q, n_v))
+            E_storage_nonlinear = np.zeros((n_q, n_v))  # E'·f(ε)
+
+            # NEW: G integrand and contact area matrices
+            G_integrand_linear = np.zeros((n_q, n_v))
+            G_integrand_nonlinear = np.zeros((n_q, n_v))
+            contact_linear = np.zeros((n_q, n_v))
+            contact_nonlinear = np.zeros((n_q, n_v))
 
             # Calculate for each (q, v) pair
             total = n_q * n_v
@@ -4566,10 +5349,11 @@ $\begin{array}{lcc}
                     # Characteristic frequency: ω = q * v (simplified, ignoring cos(φ))
                     omega = q * v
 
-                    # Get linear E'' at this frequency
+                    # Get linear E' and E'' at this frequency
                     E_loss = self.material.get_loss_modulus(np.array([omega]), temperature=temperature)[0]
                     E_storage = self.material.get_storage_modulus(np.array([omega]), temperature=temperature)[0]
                     E_loss_linear[i, j] = E_loss
+                    E_storage_matrix[i, j] = E_storage
 
                     # Estimate local strain
                     if method == 'fixed':
@@ -4577,6 +5361,9 @@ $\begin{array}{lcc}
                     elif method == 'rms_slope' and rms_strain_interp is not None:
                         try:
                             strain = 10 ** rms_strain_interp(np.log10(q))
+                            # Fix NaN issue
+                            if not np.isfinite(strain):
+                                strain = fixed_strain
                         except:
                             strain = fixed_strain
                     elif method == 'persson':
@@ -4589,16 +5376,55 @@ $\begin{array}{lcc}
                     else:
                         strain = fixed_strain
 
+                    # Ensure finite value
+                    if not np.isfinite(strain):
+                        strain = fixed_strain
                     strain = np.clip(strain, 0.0, 1.0)
                     strain_matrix[i, j] = strain
 
-                    # Apply g(ε) correction for nonlinear E''
+                    # Apply f(ε), g(ε) correction for nonlinear E', E''
                     if self.g_interpolator is not None:
                         g_val = self.g_interpolator(strain)
                         g_val = np.clip(g_val, 0.0, 1.0)
                         E_loss_nonlinear[i, j] = E_loss * g_val
                     else:
                         E_loss_nonlinear[i, j] = E_loss
+
+                    if self.f_interpolator is not None:
+                        f_val = self.f_interpolator(strain)
+                        f_val = np.clip(f_val, 0.0, 1.0)
+                        E_storage_nonlinear[i, j] = E_storage * f_val
+                    else:
+                        f_val = 1.0
+                        E_storage_nonlinear[i, j] = E_storage
+
+                    # Calculate G integrand: q^3 * C(q) * |E*|^2 / ((1-nu^2)*sigma0)^2
+                    # Linear: E* = E' + iE''
+                    # Nonlinear: E*_eff = E'*f + iE''*g
+                    C_val = C_q[i]
+                    prefactor = 1.0 / ((1 - poisson**2) * sigma_0)**2
+
+                    # Linear |E*|^2 = E'^2 + E''^2
+                    E_star_sq_linear = E_storage**2 + E_loss**2
+                    G_integrand_linear[i, j] = q**3 * C_val * E_star_sq_linear * prefactor
+
+                    # Nonlinear |E*_eff|^2
+                    E_prime_eff = E_storage_nonlinear[i, j]
+                    E_loss_eff = E_loss_nonlinear[i, j]
+                    E_star_sq_nonlinear = E_prime_eff**2 + E_loss_eff**2
+                    G_integrand_nonlinear[i, j] = q**3 * C_val * E_star_sq_nonlinear * prefactor
+
+                    # Calculate contact area ratio A/A0 = P(q) = erf(1/(2*sqrt(G)))
+                    # G ~ cumulative integral of q^3*C(q)*|E*|^2
+                    # Approximate G at this point for visualization
+                    from scipy.special import erf
+                    G_linear_approx = max(G_integrand_linear[i, j] * (q / n_q), 1e-20)
+                    G_nonlinear_approx = max(G_integrand_nonlinear[i, j] * (q / n_q), 1e-20)
+
+                    arg_linear = 1.0 / (2.0 * np.sqrt(G_linear_approx))
+                    arg_nonlinear = 1.0 / (2.0 * np.sqrt(G_nonlinear_approx))
+                    contact_linear[i, j] = erf(min(arg_linear, 10.0))
+                    contact_nonlinear[i, j] = erf(min(arg_nonlinear, 10.0))
 
                     count += 1
                     if count % (total // 20 + 1) == 0:
@@ -4610,8 +5436,15 @@ $\begin{array}{lcc}
                 'q': q_array,
                 'v': v_array,
                 'strain': strain_matrix,
+                'C_q': C_q,
+                'E_storage': E_storage_matrix,
+                'E_storage_nonlinear': E_storage_nonlinear,
                 'E_loss_linear': E_loss_linear,
-                'E_loss_nonlinear': E_loss_nonlinear
+                'E_loss_nonlinear': E_loss_nonlinear,
+                'G_integrand_linear': G_integrand_linear,
+                'G_integrand_nonlinear': G_integrand_nonlinear,
+                'contact_linear': contact_linear,
+                'contact_nonlinear': contact_nonlinear
             }
 
             # Update plots
@@ -4626,82 +5459,159 @@ $\begin{array}{lcc}
             self.status_var.set("오류 발생")
 
     def _update_strain_map_plots(self):
-        """Update strain map heatmap plots."""
+        """Update strain map heatmap plots (8 plots total)."""
         if not hasattr(self, 'strain_map_results') or self.strain_map_results is None:
             return
 
         q = self.strain_map_results['q']
         v = self.strain_map_results['v']
         strain = self.strain_map_results['strain']
-        E_linear = self.strain_map_results['E_loss_linear']
-        E_nonlinear = self.strain_map_results['E_loss_nonlinear']
+        E_storage = self.strain_map_results['E_storage']
+        E_storage_nl = self.strain_map_results['E_storage_nonlinear']
+        E_loss_nl = self.strain_map_results['E_loss_nonlinear']
+        G_int_lin = self.strain_map_results.get('G_integrand_linear')
+        G_int_nl = self.strain_map_results.get('G_integrand_nonlinear')
+        contact_lin = self.strain_map_results.get('contact_linear')
+        contact_nl = self.strain_map_results.get('contact_nonlinear')
 
         # Create meshgrid for pcolormesh
         log_v = np.log10(v)
         log_q = np.log10(q)
         V, Q = np.meshgrid(log_v, log_q)
 
-        # Clear all axes
-        for ax in [self.ax_strain_linear, self.ax_strain_nonlinear,
-                   self.ax_modulus_linear, self.ax_modulus_nonlinear]:
+        # Remove existing colorbars
+        if hasattr(self, '_strain_map_colorbars'):
+            for cbar in self._strain_map_colorbars:
+                try:
+                    cbar.remove()
+                except:
+                    pass
+        self._strain_map_colorbars = []
+
+        # Clear all 8 axes
+        all_axes = [self.ax_strain_contour, self.ax_E_storage,
+                    self.ax_E_loss_nonlinear, self.ax_E_storage_nonlinear,
+                    self.ax_G_integrand_linear, self.ax_G_integrand_nonlinear,
+                    self.ax_contact_linear, self.ax_contact_nonlinear]
+        for ax in all_axes:
             ax.clear()
 
         # Color maps
-        strain_cmap = 'YlOrRd'  # Yellow to Red for strain
-        modulus_cmap = 'viridis'  # Viridis for modulus
+        strain_cmap = 'YlOrRd'
+        modulus_cmap = 'viridis'
+        contact_cmap = 'plasma'
 
-        # Plot 1: Linear strain (same as nonlinear strain since strain estimation doesn't change)
-        # But we show it for comparison
-        im1 = self.ax_strain_linear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
-        self.ax_strain_linear.set_title('Local Strain ε(q,v) [%]', fontweight='bold', fontsize=10)
-        self.ax_strain_linear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_strain_linear.set_ylabel('log₁₀(q) [1/m]')
-        cbar1 = self.fig_strain_map.colorbar(im1, ax=self.ax_strain_linear, label='ε [%]')
+        # Fix NaN in strain for statistics
+        strain_valid = np.nan_to_num(strain, nan=0.0)
 
-        # Plot 2: Strain with annotations
-        im2 = self.ax_strain_nonlinear.pcolormesh(V, Q, strain * 100, cmap=strain_cmap, shading='auto')
-        self.ax_strain_nonlinear.set_title('Local Strain ε(q,v) - 상세 [%]', fontweight='bold', fontsize=10)
-        self.ax_strain_nonlinear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_strain_nonlinear.set_ylabel('log₁₀(q) [1/m]')
-        cbar2 = self.fig_strain_map.colorbar(im2, ax=self.ax_strain_nonlinear, label='ε [%]')
-
-        # Add contour lines
+        # === Row 1 ===
+        # Plot 1: Local Strain with contours
+        im1 = self.ax_strain_contour.pcolormesh(V, Q, strain_valid * 100, cmap=strain_cmap, shading='auto')
+        self.ax_strain_contour.set_title('Local Strain [%]', fontweight='bold', fontsize=9)
+        self.ax_strain_contour.set_xlabel('log10(v)', fontsize=8)
+        self.ax_strain_contour.set_ylabel('log10(q)', fontsize=8)
+        cbar1 = self.fig_strain_map.colorbar(im1, ax=self.ax_strain_contour)
+        self._strain_map_colorbars.append(cbar1)
         try:
-            contour_levels = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-            cs = self.ax_strain_nonlinear.contour(V, Q, strain * 100, levels=contour_levels, colors='white', linewidths=0.5)
-            self.ax_strain_nonlinear.clabel(cs, inline=True, fontsize=7, fmt='%.1f%%')
+            cs = self.ax_strain_contour.contour(V, Q, strain_valid * 100, levels=[1, 5, 10], colors='k', linewidths=0.5)
+            self.ax_strain_contour.clabel(cs, inline=True, fontsize=7, fmt='%.0f%%')
         except:
             pass
+        strain_mean = np.nanmean(strain) * 100
+        strain_max = np.nanmax(strain) * 100
+        self.ax_strain_contour.text(0.02, 0.98, f'Mean:{strain_mean:.1f}%\nMax:{strain_max:.1f}%',
+            transform=self.ax_strain_contour.transAxes, fontsize=7, va='top',
+            bbox=dict(boxstyle='round', fc='white', alpha=0.8))
 
-        # Plot 3: Linear E''
-        # Use log scale for modulus
-        E_linear_safe = np.maximum(E_linear, 1e-10)
-        im3 = self.ax_modulus_linear.pcolormesh(V, Q, np.log10(E_linear_safe), cmap=modulus_cmap, shading='auto')
-        self.ax_modulus_linear.set_title("E''(ω=qv) - 선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
-        self.ax_modulus_linear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_modulus_linear.set_ylabel('log₁₀(q) [1/m]')
-        cbar3 = self.fig_strain_map.colorbar(im3, ax=self.ax_modulus_linear, label="log₁₀(E'') [Pa]")
+        # Plot 2: E' Storage Modulus
+        E_s_safe = np.maximum(E_storage, 1e-10)
+        im2 = self.ax_E_storage.pcolormesh(V, Q, np.log10(E_s_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_E_storage.set_title("E' Storage [log Pa]", fontweight='bold', fontsize=9)
+        self.ax_E_storage.set_xlabel('log10(v)', fontsize=8)
+        self.ax_E_storage.set_ylabel('log10(q)', fontsize=8)
+        cbar2 = self.fig_strain_map.colorbar(im2, ax=self.ax_E_storage)
+        self._strain_map_colorbars.append(cbar2)
 
-        # Plot 4: Nonlinear E'' (with g(ε) correction)
-        E_nonlinear_safe = np.maximum(E_nonlinear, 1e-10)
-        im4 = self.ax_modulus_nonlinear.pcolormesh(V, Q, np.log10(E_nonlinear_safe), cmap=modulus_cmap, shading='auto')
-        self.ax_modulus_nonlinear.set_title("E''·g(ε) - 비선형 [log₁₀ Pa]", fontweight='bold', fontsize=10)
-        self.ax_modulus_nonlinear.set_xlabel('log₁₀(v) [m/s]')
-        self.ax_modulus_nonlinear.set_ylabel('log₁₀(q) [1/m]')
-        cbar4 = self.fig_strain_map.colorbar(im4, ax=self.ax_modulus_nonlinear, label="log₁₀(E''·g) [Pa]")
-
-        # Add text showing reduction ratio
+        # Plot 3: E''*g Loss Modulus
+        E_l_safe = np.maximum(E_loss_nl, 1e-10)
+        im3 = self.ax_E_loss_nonlinear.pcolormesh(V, Q, np.log10(E_l_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_E_loss_nonlinear.set_title("E''*g Loss [log Pa]", fontweight='bold', fontsize=9)
+        self.ax_E_loss_nonlinear.set_xlabel('log10(v)', fontsize=8)
+        self.ax_E_loss_nonlinear.set_ylabel('log10(q)', fontsize=8)
+        cbar3 = self.fig_strain_map.colorbar(im3, ax=self.ax_E_loss_nonlinear)
+        self._strain_map_colorbars.append(cbar3)
         if self.g_interpolator is not None:
-            # Calculate average reduction
-            ratio = E_nonlinear / np.maximum(E_linear, 1e-10)
-            avg_ratio = np.mean(ratio)
-            min_ratio = np.min(ratio)
-            self.ax_modulus_nonlinear.text(
-                0.02, 0.98, f'평균 감소율: {avg_ratio:.2%}\n최소 감소율: {min_ratio:.2%}',
-                transform=self.ax_modulus_nonlinear.transAxes,
-                fontsize=8, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
-            )
+            E_loss_lin = self.strain_map_results['E_loss_linear']
+            avg_g = np.mean(E_loss_nl / np.maximum(E_loss_lin, 1e-10))
+            self.ax_E_loss_nonlinear.text(0.02, 0.98, f'Avg g:{avg_g:.1%}',
+                transform=self.ax_E_loss_nonlinear.transAxes, fontsize=7, va='top',
+                bbox=dict(boxstyle='round', fc='white', alpha=0.8))
+
+        # Plot 4: E'*f Storage Modulus
+        E_snl_safe = np.maximum(E_storage_nl, 1e-10)
+        im4 = self.ax_E_storage_nonlinear.pcolormesh(V, Q, np.log10(E_snl_safe), cmap=modulus_cmap, shading='auto')
+        self.ax_E_storage_nonlinear.set_title("E'*f Storage [log Pa]", fontweight='bold', fontsize=9)
+        self.ax_E_storage_nonlinear.set_xlabel('log10(v)', fontsize=8)
+        self.ax_E_storage_nonlinear.set_ylabel('log10(q)', fontsize=8)
+        cbar4 = self.fig_strain_map.colorbar(im4, ax=self.ax_E_storage_nonlinear)
+        self._strain_map_colorbars.append(cbar4)
+        if self.f_interpolator is not None:
+            avg_f = np.mean(E_storage_nl / np.maximum(E_storage, 1e-10))
+            self.ax_E_storage_nonlinear.text(0.02, 0.98, f'Avg f:{avg_f:.1%}',
+                transform=self.ax_E_storage_nonlinear.transAxes, fontsize=7, va='top',
+                bbox=dict(boxstyle='round', fc='white', alpha=0.8))
+
+        # === Row 2 ===
+        # Plot 5: G Integrand (linear)
+        if G_int_lin is not None:
+            G_lin_safe = np.maximum(G_int_lin, 1e-30)
+            im5 = self.ax_G_integrand_linear.pcolormesh(V, Q, np.log10(G_lin_safe), cmap='inferno', shading='auto')
+            self.ax_G_integrand_linear.set_title('G Integrand (linear)', fontweight='bold', fontsize=9)
+            self.ax_G_integrand_linear.set_xlabel('log10(v)', fontsize=8)
+            self.ax_G_integrand_linear.set_ylabel('log10(q)', fontsize=8)
+            cbar5 = self.fig_strain_map.colorbar(im5, ax=self.ax_G_integrand_linear)
+            self._strain_map_colorbars.append(cbar5)
+
+        # Plot 6: G Integrand (nonlinear with f applied)
+        if G_int_nl is not None:
+            G_nl_safe = np.maximum(G_int_nl, 1e-30)
+            im6 = self.ax_G_integrand_nonlinear.pcolormesh(V, Q, np.log10(G_nl_safe), cmap='inferno', shading='auto')
+            self.ax_G_integrand_nonlinear.set_title('G Integrand (f applied)', fontweight='bold', fontsize=9)
+            self.ax_G_integrand_nonlinear.set_xlabel('log10(v)', fontsize=8)
+            self.ax_G_integrand_nonlinear.set_ylabel('log10(q)', fontsize=8)
+            cbar6 = self.fig_strain_map.colorbar(im6, ax=self.ax_G_integrand_nonlinear)
+            self._strain_map_colorbars.append(cbar6)
+            if G_int_lin is not None:
+                ratio = np.mean(G_int_nl / np.maximum(G_int_lin, 1e-30))
+                self.ax_G_integrand_nonlinear.text(0.02, 0.98, f'Ratio:{ratio:.1%}',
+                    transform=self.ax_G_integrand_nonlinear.transAxes, fontsize=7, va='top',
+                    bbox=dict(boxstyle='round', fc='white', alpha=0.8))
+
+        # Plot 7: Contact area ratio A/A0 (linear)
+        if contact_lin is not None:
+            im7 = self.ax_contact_linear.pcolormesh(V, Q, contact_lin, cmap=contact_cmap, shading='auto', vmin=0, vmax=1)
+            self.ax_contact_linear.set_title('A/A0 Contact (linear)', fontweight='bold', fontsize=9)
+            self.ax_contact_linear.set_xlabel('log10(v)', fontsize=8)
+            self.ax_contact_linear.set_ylabel('log10(q)', fontsize=8)
+            cbar7 = self.fig_strain_map.colorbar(im7, ax=self.ax_contact_linear)
+            self._strain_map_colorbars.append(cbar7)
+            avg_P = np.mean(contact_lin)
+            self.ax_contact_linear.text(0.02, 0.98, f'Avg P:{avg_P:.2f}',
+                transform=self.ax_contact_linear.transAxes, fontsize=7, va='top',
+                bbox=dict(boxstyle='round', fc='white', alpha=0.8))
+
+        # Plot 8: Contact area ratio A/A0 (nonlinear)
+        if contact_nl is not None:
+            im8 = self.ax_contact_nonlinear.pcolormesh(V, Q, contact_nl, cmap=contact_cmap, shading='auto', vmin=0, vmax=1)
+            self.ax_contact_nonlinear.set_title('A/A0 Contact (f applied)', fontweight='bold', fontsize=9)
+            self.ax_contact_nonlinear.set_xlabel('log10(v)', fontsize=8)
+            self.ax_contact_nonlinear.set_ylabel('log10(q)', fontsize=8)
+            cbar8 = self.fig_strain_map.colorbar(im8, ax=self.ax_contact_nonlinear)
+            self._strain_map_colorbars.append(cbar8)
+            avg_P_nl = np.mean(contact_nl)
+            self.ax_contact_nonlinear.text(0.02, 0.98, f'Avg P:{avg_P_nl:.2f}',
+                transform=self.ax_contact_nonlinear.transAxes, fontsize=7, va='top',
+                bbox=dict(boxstyle='round', fc='white', alpha=0.8))
 
         self.fig_strain_map.tight_layout()
         self.canvas_strain_map.draw()
@@ -5215,7 +6125,7 @@ $\begin{array}{lcc}
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-┌─ RMS Slope & Local Strain (Tab 4) ───────────────────────────────────────────┐
+┌─ h'rms & Local Strain (Tab 4) ────────────────────────────────────────────────┐
 │                                                                              │
 │  RMS 경사:    ξ²(q) = 2π ∫[q₀→q] k³ C(k) dk                                  │
 │  로컬 변형률: ε(q) = factor × ξ(q)    (factor ≈ 0.5, Persson 권장)           │
@@ -5275,7 +6185,7 @@ $\begin{array}{lcc}
   └──────────────┬───────────────┘                │
                  ▼                                │
   ┌──────────────────────────────┐                │
-  │  Tab 4: RMS Slope 계산       │                │
+  │  Tab 4: h'rms 계산           │                │
   │  - ξ(q) from PSD             │                │
   │  - ε(q) = factor × ξ(q)      │────────────────┤
   └──────────────┬───────────────┘                │
@@ -5289,7 +6199,7 @@ $\begin{array}{lcc}
   │  └─────────────────────────────────────────────┘ │
   │  ┌─────────────────────────────────────────────┐ │
   │  │ 비선형 모드:                                │ │
-  │  │   ε(q) ← Tab 4의 RMS slope 기반             │ │
+  │  │   ε(q) ← Tab 4의 h'rms 기반                  │ │
   │  │   E'_eff = E' × f(ε), E''_eff = E'' × g(ε)  │ │
   │  │   G_eff = G × |E*_eff|²/|E*_lin|²           │ │
   │  │   P(q), S(q) ← G_eff 기반 (비선형)          │ │
