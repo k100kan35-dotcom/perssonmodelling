@@ -1428,25 +1428,26 @@ class PerssonModelGUI_V2:
             width=12
         ).grid(row=row, column=1, pady=5)
 
-        # Calculate button in left panel
-        btn_frame = ttk.Frame(left_panel)
-        btn_frame.pack(fill=tk.X, pady=(0, 5))
+        # ===== G(q,v) 계산 버튼 (input_frame 내부) =====
+        row += 1
+        calc_section = ttk.Frame(input_frame)
+        calc_section.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=10)
 
         self.calc_button = ttk.Button(
-            btn_frame,
-            text="G(q,v) 계산 실행",
+            calc_section,
+            text="▶ G(q,v) 계산 실행",
             command=self._run_calculation
         )
-        self.calc_button.pack(fill=tk.X, pady=5)
+        self.calc_button.pack(fill=tk.X, pady=2)
 
         # Progress bar
         self.progress_var = tk.IntVar()
         self.progress_bar = ttk.Progressbar(
-            btn_frame,
+            calc_section,
             variable=self.progress_var,
             maximum=100
         )
-        self.progress_bar.pack(fill=tk.X, pady=5)
+        self.progress_bar.pack(fill=tk.X, pady=2)
 
         # Calculation visualization area in right panel
         viz_frame = ttk.LabelFrame(right_panel, text="계산 과정 시각화", padding=10)
