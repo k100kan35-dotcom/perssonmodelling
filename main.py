@@ -1327,11 +1327,19 @@ class PerssonModelGUI_V2:
         self.n_q_var = tk.StringVar(value="100")
         ttk.Entry(input_frame, textvariable=self.n_q_var, width=15).grid(row=row, column=1, pady=5)
 
-        # Target RMS Slope (for q1 determination)
+        # Target h'rms (hrms_slope) for q1 determination
         row += 1
-        ttk.Label(input_frame, text="목표 RMS Slope (q1 결정):").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.target_rms_slope_var = tk.StringVar(value="1.3")
-        ttk.Entry(input_frame, textvariable=self.target_rms_slope_var, width=15).grid(row=row, column=1, pady=5)
+        ttk.Label(input_frame, text="목표 h'rms (q1 결정):").grid(row=row, column=0, sticky=tk.W, pady=5)
+        self.target_hrms_slope_var = tk.StringVar(value="1.3")
+        ttk.Entry(input_frame, textvariable=self.target_hrms_slope_var, width=15).grid(row=row, column=1, pady=5)
+
+        # Display for calculated q1 (will be updated after calculation)
+        row += 1
+        ttk.Label(input_frame, text="계산된 q1 (1/m):").grid(row=row, column=0, sticky=tk.W, pady=5)
+        self.calculated_q1_var = tk.StringVar(value="(계산 후 표시)")
+        self.calculated_q1_label = ttk.Label(input_frame, textvariable=self.calculated_q1_var,
+                                             font=('Arial', 9, 'bold'), foreground='blue')
+        self.calculated_q1_label.grid(row=row, column=1, pady=5, sticky=tk.W)
 
         # PSD type
         row += 1
