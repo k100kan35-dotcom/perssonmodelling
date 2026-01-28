@@ -1120,14 +1120,14 @@ class PerssonModelGUI_V2:
         self.ax_profile_hist.set_ylabel('Count')
         self.ax_profile_hist.grid(True, alpha=0.3)
 
-        # Bottom-left: 1D PSD
-        self.ax_psd_1d = self.fig_psd_profile.add_subplot(223)
-        self.ax_psd_1d.set_title('1D PSD C_1D(q)', fontweight='bold')
-        self.ax_psd_1d.set_xlabel('Wavenumber q (1/m)')
-        self.ax_psd_1d.set_ylabel('C_1D(q) (m³)')
-        self.ax_psd_1d.set_xscale('log')
-        self.ax_psd_1d.set_yscale('log')
-        self.ax_psd_1d.grid(True, alpha=0.3, which='both')
+        # Bottom-left: h_rms (거칠기) & Parseval 검증
+        self.ax_hrms_parseval = self.fig_psd_profile.add_subplot(223)
+        self.ax_hrms_parseval.set_title('h_rms 거칠기 & Parseval 검증', fontweight='bold')
+        self.ax_hrms_parseval.set_xlabel('Wavenumber q (1/m)')
+        self.ax_hrms_parseval.set_ylabel('누적 h_rms (m)')
+        self.ax_hrms_parseval.set_xscale('log')
+        self.ax_hrms_parseval.set_yscale('log')
+        self.ax_hrms_parseval.grid(True, alpha=0.3, which='both')
 
         # Bottom-right: 2D isotropic PSD (main result)
         self.ax_psd_2d = self.fig_psd_profile.add_subplot(224)
@@ -1299,18 +1299,48 @@ class PerssonModelGUI_V2:
         C_top_1d = self.profile_psd_analyzer.C_top_1d
         C_top_2d = self.profile_psd_analyzer.C_top_2d
 
-        # Plot 1D PSD
-        self.ax_psd_1d.clear()
-        if C_full_1d is not None:
-            self.ax_psd_1d.loglog(q, C_full_1d, 'b-', linewidth=1.5, label='Full PSD', alpha=0.8)
-        if C_top_1d is not None:
-            self.ax_psd_1d.loglog(q, C_top_1d, 'r-', linewidth=1.5, label='Top PSD', alpha=0.8)
+        # Plot h_rms 거칠기 & Parseval 검증
+        self.ax_hrms_parseval.clear()
 
-        self.ax_psd_1d.set_title('1D PSD C_1D(q)', fontweight='bold')
-        self.ax_psd_1d.set_xlabel('Wavenumber q (1/m)')
-        self.ax_psd_1d.set_ylabel('C_1D(q) (m³)')
-        self.ax_psd_1d.grid(True, alpha=0.3, which='both')
-        self.ax_psd_1d.legend(fontsize=8)
+        # 누적 h_rms 계산: h_rms²(q) = 2π ∫[q0→q] k⋅C(k) dk
+        if C_full_2d is not None and len(q) > 1:
+            # 누적 적분 계산
+            hrms_sq_cumulative = np.zeros(len(q))
+            integrand = q * C_full_2d  # k × C(k)
+            for i in range(1, len(q)):
+                hrms_sq_cumulative[i] = 2 * np.pi * np.trapezoid(integrand[:i+1], q[:i+1])
+            hrms_cumulative = np.sqrt(np.maximum(hrms_sq_cumulative, 0))
+
+            # 유효한 값만 플롯
+            valid = hrms_cumulative > 0
+            if np.any(valid):
+                self.ax_hrms_parseval.loglog(q[valid], hrms_cumulative[valid]*1e6, 'b-',
+                                             linewidth=2, label='Full PSD', alpha=0.8)
+
+            # 프로파일에서 직접 계산한 h_rms 표시 (수평선)
+            if hasattr(self.profile_psd_analyzer, 'surface_params') and self.profile_psd_analyzer.surface_params is not None:
+                h_rms_direct = self.profile_psd_analyzer.surface_params.get('h_rms', None)
+                if h_rms_direct is not None and h_rms_direct > 0:
+                    self.ax_hrms_parseval.axhline(y=h_rms_direct*1e6, color='b', linestyle='--',
+                                                  alpha=0.5, label=f'프로파일 h_rms={h_rms_direct*1e6:.2f}μm')
+
+        if C_top_2d is not None and len(q) > 1:
+            hrms_sq_cumulative_top = np.zeros(len(q))
+            integrand_top = q * C_top_2d
+            for i in range(1, len(q)):
+                hrms_sq_cumulative_top[i] = 2 * np.pi * np.trapezoid(integrand_top[:i+1], q[:i+1])
+            hrms_cumulative_top = np.sqrt(np.maximum(hrms_sq_cumulative_top, 0))
+
+            valid_top = hrms_cumulative_top > 0
+            if np.any(valid_top):
+                self.ax_hrms_parseval.loglog(q[valid_top], hrms_cumulative_top[valid_top]*1e6, 'r-',
+                                             linewidth=2, label='Top PSD', alpha=0.8)
+
+        self.ax_hrms_parseval.set_title('h_rms 거칠기 & Parseval 검증', fontweight='bold')
+        self.ax_hrms_parseval.set_xlabel('Wavenumber q (1/m)')
+        self.ax_hrms_parseval.set_ylabel('누적 h_rms (μm)')
+        self.ax_hrms_parseval.grid(True, alpha=0.3, which='both')
+        self.ax_hrms_parseval.legend(fontsize=8)
 
         # Plot 2D isotropic PSD
         self.ax_psd_2d.clear()

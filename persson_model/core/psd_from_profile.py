@@ -369,9 +369,11 @@ def convert_1d_to_2d_isotropic_psd(
     Convert 1D PSD to 2D isotropic PSD.
 
     For an isotropic surface, the 2D PSD C(q) is related to 1D PSD C_1D(q) by:
-    C(q) = C_1D(q) / (pi * q)
+    C(q) = C_1D(q) / (2 * pi * q)
 
-    This assumes the surface is statistically isotropic.
+    This ensures Parseval's theorem is satisfied:
+    - 1D: h_rms² = ∫ C_1D(q) dq
+    - 2D: h_rms² = 2π ∫ q C_2D(q) dq
 
     Parameters
     ----------
@@ -386,7 +388,7 @@ def convert_1d_to_2d_isotropic_psd(
         2D isotropic PSD (m⁴)
     """
     with np.errstate(divide='ignore', invalid='ignore'):
-        C2d = C1d / (np.pi * q)
+        C2d = C1d / (2 * np.pi * q)
         C2d = np.where(np.isfinite(C2d), C2d, 0.0)
 
     return C2d
