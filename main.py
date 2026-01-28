@@ -1034,14 +1034,6 @@ class PerssonModelGUI_V2:
         ttk.Entry(q0_row, textvariable=self.param_q0_var, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Label(q0_row, text="1/m", font=('Arial', 8)).pack(side=tk.LEFT)
 
-        # C(q0) input
-        cq0_row = ttk.Frame(param_psd_frame)
-        cq0_row.pack(fill=tk.X, pady=2)
-        ttk.Label(cq0_row, text="C(q0):", font=('Arial', 9), width=10).pack(side=tk.LEFT)
-        self.param_Cq0_var = tk.StringVar(value="1e-18")
-        ttk.Entry(cq0_row, textvariable=self.param_Cq0_var, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Label(cq0_row, text="m^4", font=('Arial', 8)).pack(side=tk.LEFT)
-
         # q1 input
         q1_row = ttk.Frame(param_psd_frame)
         q1_row.pack(fill=tk.X, pady=2)
@@ -1049,6 +1041,14 @@ class PerssonModelGUI_V2:
         self.param_q1_var = tk.StringVar(value="1e9")
         ttk.Entry(q1_row, textvariable=self.param_q1_var, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Label(q1_row, text="1/m", font=('Arial', 8)).pack(side=tk.LEFT)
+
+        # h0 (h_rms) input - C(q0) will be auto-calculated
+        h0_row = ttk.Frame(param_psd_frame)
+        h0_row.pack(fill=tk.X, pady=2)
+        ttk.Label(h0_row, text="h0 (h_rms):", font=('Arial', 9), width=10).pack(side=tk.LEFT)
+        self.param_h0_var = tk.StringVar(value="1e-6")
+        ttk.Entry(h0_row, textvariable=self.param_h0_var, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Label(h0_row, text="m", font=('Arial', 8)).pack(side=tk.LEFT)
 
         # Points per decade
         ppd_row = ttk.Frame(param_psd_frame)
@@ -1529,13 +1529,17 @@ class PerssonModelGUI_V2:
             traceback.print_exc()
 
     def _generate_param_psd(self):
-        """Generate PSD from parameters (H, q0, C(q0), q1)."""
+        """Generate PSD from parameters (H, q0, q1, h0).
+
+        C(q0) is calculated from h0 (h_rms) using:
+        C(q0) = h0^2 * H / (pi * q0^2 * (1 - (q0/q1)^(2H)))
+        """
         try:
             # Get parameters
             H = float(self.param_H_var.get())
             q0 = float(self.param_q0_var.get())
-            C_q0 = float(self.param_Cq0_var.get())
             q1 = float(self.param_q1_var.get())
+            h0 = float(self.param_h0_var.get())  # h_rms in meters
             pts_per_decade = int(self.param_ppd_var.get())
 
             # Validate
@@ -1545,9 +1549,19 @@ class PerssonModelGUI_V2:
             if q0 >= q1:
                 messagebox.showwarning("경고", "q0 < q1 이어야 합니다.")
                 return
-            if C_q0 <= 0:
-                messagebox.showwarning("경고", "C(q0) > 0 이어야 합니다.")
+            if h0 <= 0:
+                messagebox.showwarning("경고", "h0 > 0 이어야 합니다.")
                 return
+
+            # Calculate C(q0) from h0
+            # h_rms^2 = 2*pi * C0 * q0^2 * (1 - (q0/q1)^(2H)) / H  (for power-law region)
+            # Therefore: C0 = h_rms^2 * H / (pi * q0^2 * (1 - (q0/q1)^(2H)))
+            q_ratio = q0 / q1
+            denom = np.pi * q0**2 * (1 - q_ratio**(2*H))
+            if denom <= 0:
+                messagebox.showwarning("경고", "파라미터 조합이 잘못되었습니다.")
+                return
+            C_q0 = h0**2 * H / denom
 
             # Generate q array
             log_q0 = np.log10(q0)
@@ -1569,19 +1583,17 @@ class PerssonModelGUI_V2:
                 'q0': q0,
                 'C_q0': C_q0,
                 'q1': q1,
+                'h0': h0,
                 'slope': slope
             }
 
-            # Calculate h_rms and h'_rms from parameter PSD
-            # h_rms^2 = 2*pi * integral(q*C(q)*dq)
-            h_rms_sq = 2 * np.pi * np.trapezoid(q_param * C_param, q_param)
-            h_rms = np.sqrt(max(h_rms_sq, 0))
-
+            # Calculate h'_rms from parameter PSD
             # h'_rms^2 = 2*pi * integral(q^3*C(q)*dq)
             slope_sq = 2 * np.pi * np.trapezoid(q_param**3 * C_param, q_param)
             h_rms_slope = np.sqrt(max(slope_sq, 0))
 
-            self.param_psd_data['h_rms'] = h_rms
+            # h_rms should match h0 (input)
+            self.param_psd_data['h_rms'] = h0
             self.param_psd_data['h_rms_slope'] = h_rms_slope
 
             # Enable display and update plot
@@ -1593,9 +1605,9 @@ class PerssonModelGUI_V2:
                 f"파라미터 PSD 생성 완료\n\n"
                 f"H = {H:.4f}\n"
                 f"q0 = {q0:.2e} 1/m\n"
-                f"C(q0) = {C_q0:.2e} m^4\n"
-                f"q1 = {q1:.2e} 1/m\n\n"
-                f"h_rms = {h_rms*1e6:.4f} um\n"
+                f"q1 = {q1:.2e} 1/m\n"
+                f"h0 (입력) = {h0*1e6:.4f} um\n\n"
+                f"계산된 C(q0) = {C_q0:.2e} m^4\n"
                 f"h'_rms (xi) = {h_rms_slope:.6f}")
 
             self.status_var.set(f"파라미터 PSD 생성: H={H:.3f}, h'_rms={h_rms_slope:.4f}")
@@ -1626,7 +1638,6 @@ class PerssonModelGUI_V2:
             # Copy values
             H = fit_result['H']
             q0 = fit_result.get('q0', self.profile_psd_analyzer.q[0])
-            C_q0 = fit_result.get('C0', self.profile_psd_analyzer.C_full_2d[0])
 
             # Get q1 from data or extrapolation setting
             if hasattr(self.profile_psd_analyzer, 'extrap_info') and self.profile_psd_analyzer.extrap_info is not None:
@@ -1634,11 +1645,21 @@ class PerssonModelGUI_V2:
             else:
                 q1 = self.profile_psd_analyzer.q[-1]
 
+            # Get h_rms from surface parameters or extrapolation
+            if hasattr(self.profile_psd_analyzer, 'extrap_params') and self.profile_psd_analyzer.extrap_params is not None:
+                h0 = self.profile_psd_analyzer.extrap_params['h_rms']
+            elif self.profile_psd_analyzer.surface_params is not None:
+                h0 = self.profile_psd_analyzer.surface_params['h_rms']
+            else:
+                # Calculate from raw profile
+                h_detrended = self.profile_psd_analyzer.h - np.mean(self.profile_psd_analyzer.h)
+                h0 = np.sqrt(np.mean(h_detrended**2))
+
             # Update UI
             self.param_H_var.set(f"{H:.4f}")
             self.param_q0_var.set(f"{q0:.2e}")
-            self.param_Cq0_var.set(f"{C_q0:.2e}")
             self.param_q1_var.set(f"{q1:.2e}")
+            self.param_h0_var.set(f"{h0:.2e}")
 
             self.status_var.set(f"피팅값 복사 완료: H={H:.4f}, q0={q0:.2e}")
 
@@ -1738,10 +1759,10 @@ class PerssonModelGUI_V2:
             lines.append(f"\n[Parameter PSD]")
             lines.append(f"  H: {pdata['H']:.4f}")
             lines.append(f"  q0: {pdata['q0']:.2e} 1/m")
-            lines.append(f"  C(q0): {pdata['C_q0']:.2e} m^4")
             lines.append(f"  q1: {pdata['q1']:.2e} 1/m")
+            lines.append(f"  h0 (input): {pdata.get('h0', pdata['h_rms'])*1e6:.4f} um")
+            lines.append(f"  C(q0) (calc): {pdata['C_q0']:.2e} m^4")
             lines.append(f"  slope: {pdata['slope']:.4f}")
-            lines.append(f"  h_rms: {pdata['h_rms']*1e6:.4f} um")
             lines.append(f"  h'_rms (xi): {pdata['h_rms_slope']:.6f}")
 
         self.psd_profile_result_text.insert(tk.END, "\n".join(lines))
