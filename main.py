@@ -1945,10 +1945,29 @@ class PerssonModelGUI_V2:
         main_container = ttk.Frame(parent)
         main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Left panel for controls (fixed width)
-        left_frame = ttk.Frame(main_container, width=380)
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
-        left_frame.pack_propagate(False)
+        # Left panel container (fixed width) with scrollable canvas
+        left_container = ttk.Frame(main_container, width=380)
+        left_container.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        left_container.pack_propagate(False)
+
+        # Create canvas and scrollbar for scrolling
+        mc_canvas = tk.Canvas(left_container, highlightthickness=0)
+        mc_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=mc_canvas.yview)
+        left_frame = ttk.Frame(mc_canvas)
+
+        # Configure scroll region when frame size changes
+        left_frame.bind("<Configure>", lambda e: mc_canvas.configure(scrollregion=mc_canvas.bbox("all")))
+
+        mc_canvas.create_window((0, 0), window=left_frame, anchor="nw", width=360)
+        mc_canvas.configure(yscrollcommand=mc_scrollbar.set)
+
+        mc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        mc_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            mc_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        mc_canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # ============== Left Panel: Controls ==============
 
