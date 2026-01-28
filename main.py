@@ -1946,28 +1946,55 @@ class PerssonModelGUI_V2:
         main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Left panel container (fixed width) with scrollable canvas
-        left_container = ttk.Frame(main_container, width=380)
+        left_container = ttk.Frame(main_container, width=400)
         left_container.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         left_container.pack_propagate(False)
 
         # Create canvas and scrollbar for scrolling
-        mc_canvas = tk.Canvas(left_container, highlightthickness=0)
+        mc_canvas = tk.Canvas(left_container, highlightthickness=0, bg='#f0f0f0')
         mc_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=mc_canvas.yview)
+
+        # Create inner frame for content
         left_frame = ttk.Frame(mc_canvas)
 
         # Configure scroll region when frame size changes
-        left_frame.bind("<Configure>", lambda e: mc_canvas.configure(scrollregion=mc_canvas.bbox("all")))
+        def _configure_scroll(event):
+            mc_canvas.configure(scrollregion=mc_canvas.bbox("all"))
+        left_frame.bind("<Configure>", _configure_scroll)
 
-        mc_canvas.create_window((0, 0), window=left_frame, anchor="nw", width=360)
+        # Create window inside canvas
+        canvas_window = mc_canvas.create_window((0, 0), window=left_frame, anchor="nw", width=375)
         mc_canvas.configure(yscrollcommand=mc_scrollbar.set)
 
+        # Pack scrollbar and canvas
         mc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         mc_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Enable mousewheel scrolling
+        # Enable mousewheel scrolling (cross-platform)
         def _on_mousewheel(event):
-            mc_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        mc_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            # Windows
+            if event.delta:
+                mc_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            # Linux scroll up
+            elif event.num == 4:
+                mc_canvas.yview_scroll(-1, "units")
+            # Linux scroll down
+            elif event.num == 5:
+                mc_canvas.yview_scroll(1, "units")
+
+        # Bind mousewheel events
+        def _bind_mousewheel(event):
+            mc_canvas.bind_all("<MouseWheel>", _on_mousewheel)  # Windows
+            mc_canvas.bind_all("<Button-4>", _on_mousewheel)    # Linux scroll up
+            mc_canvas.bind_all("<Button-5>", _on_mousewheel)    # Linux scroll down
+
+        def _unbind_mousewheel(event):
+            mc_canvas.unbind_all("<MouseWheel>")
+            mc_canvas.unbind_all("<Button-4>")
+            mc_canvas.unbind_all("<Button-5>")
+
+        mc_canvas.bind("<Enter>", _bind_mousewheel)
+        mc_canvas.bind("<Leave>", _unbind_mousewheel)
 
         # ============== Left Panel: Controls ==============
 
