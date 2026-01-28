@@ -6786,6 +6786,43 @@ $\begin{array}{lcc}
                     q3CPS = mid_detail['q3CPS']
                     self.mu_result_text.insert(tk.END, f"  q³C(q)P(q)S(q) max: {np.max(q3CPS):.2e}\n")
 
+                # === 추가: 각 항목별 기여도 분석 ===
+                self.mu_result_text.insert(tk.END, f"\n[항목별 기여도 분석]\n")
+                if 'q' in mid_detail and 'G' in mid_detail and 'P' in mid_detail:
+                    q_diag = mid_detail['q']
+                    G_diag = mid_detail['G']
+                    P_diag = mid_detail['P']
+                    S_diag = mid_detail.get('S', np.ones_like(P_diag))
+                    angle_diag = mid_detail.get('angle_integral', np.ones_like(P_diag))
+                    C_diag = mid_detail.get('C_q', self.psd_model(q_diag))
+
+                    # 중간 q 인덱스
+                    mid_idx = len(q_diag) // 2
+                    q_mid = q_diag[mid_idx]
+
+                    self.mu_result_text.insert(tk.END, f"  @ q = {q_mid:.2e} (1/m):\n")
+                    self.mu_result_text.insert(tk.END, f"    • q³ = {q_mid**3:.2e}\n")
+                    self.mu_result_text.insert(tk.END, f"    • C(q) = {C_diag[mid_idx]:.2e} m⁴\n")
+                    self.mu_result_text.insert(tk.END, f"    • G(q) = {G_diag[mid_idx]:.2e}\n")
+                    self.mu_result_text.insert(tk.END, f"    • P(q) = {P_diag[mid_idx]:.4f}  ← G가 크면 P→0!\n")
+                    self.mu_result_text.insert(tk.END, f"    • S(q) = {S_diag[mid_idx]:.4f}\n")
+                    self.mu_result_text.insert(tk.END, f"    • angle_int = {angle_diag[mid_idx]:.2e}\n")
+
+                    # 곱의 결과
+                    product = q_mid**3 * C_diag[mid_idx] * P_diag[mid_idx] * S_diag[mid_idx] * angle_diag[mid_idx]
+                    self.mu_result_text.insert(tk.END, f"    • 곱 = {product:.2e}\n")
+
+                    # P(q)가 작은 이유 분석
+                    if P_diag[mid_idx] < 0.1:
+                        self.mu_result_text.insert(tk.END, f"\n  *** P(q)가 작은 이유 ***\n")
+                        self.mu_result_text.insert(tk.END, f"    P = erf(1/(2√G)) 에서:\n")
+                        sqrt_G = np.sqrt(G_diag[mid_idx])
+                        arg = 1.0 / (2.0 * sqrt_G) if sqrt_G > 0 else 10.0
+                        self.mu_result_text.insert(tk.END, f"    √G = {sqrt_G:.2e}\n")
+                        self.mu_result_text.insert(tk.END, f"    1/(2√G) = {arg:.4f}\n")
+                        self.mu_result_text.insert(tk.END, f"    → G가 너무 크면 P→0, μ_visc→0\n")
+                        self.mu_result_text.insert(tk.END, f"    → σ₀를 높이면 G가 작아짐 (G ∝ 1/σ₀²)\n")
+
                 # C(q) - PSD values (critical for checking normalization)
                 if 'C_q' in mid_detail:
                     C_q_diag = mid_detail['C_q']
