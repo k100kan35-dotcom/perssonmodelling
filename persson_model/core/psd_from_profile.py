@@ -516,6 +516,9 @@ def find_linear_region(
     """
     Automatically find the linear region in log-log PSD plot.
 
+    Uses a fast algorithm based on local slope analysis instead of
+    exhaustive search.
+
     Parameters
     ----------
     q : np.ndarray
@@ -543,30 +546,98 @@ def find_linear_region(
     log_q = np.log10(q_valid)
     log_C = np.log10(C_valid)
 
-    best_r2 = 0
-    best_range = (0, n-1)
+    # Downsample if too many points (for speed)
+    max_points = 200
+    if n > max_points:
+        step = n // max_points
+        indices = np.arange(0, n, step)
+        log_q_ds = log_q[indices]
+        log_C_ds = log_C[indices]
+    else:
+        indices = np.arange(n)
+        log_q_ds = log_q
+        log_C_ds = log_C
 
-    # Sliding window approach
-    for window_size in range(min_points, n+1):
-        for start in range(n - window_size + 1):
-            end = start + window_size
+    n_ds = len(log_q_ds)
 
-            lq = log_q[start:end]
-            lC = log_C[start:end]
+    # Calculate local slopes using rolling window
+    window = min(15, n_ds // 4)
+    if window < 5:
+        window = 5
 
-            coeffs = np.polyfit(lq, lC, 1)
-            lC_pred = np.polyval(coeffs, lq)
+    slopes = np.zeros(n_ds)
+    for i in range(n_ds):
+        start = max(0, i - window // 2)
+        end = min(n_ds, i + window // 2 + 1)
+        if end - start >= 3:
+            coeffs = np.polyfit(log_q_ds[start:end], log_C_ds[start:end], 1)
+            slopes[i] = coeffs[0]
 
-            ss_res = np.sum((lC - lC_pred)**2)
-            ss_tot = np.sum((lC - np.mean(lC))**2)
-            r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+    # Find region with most consistent slope (lowest variance)
+    # Use rolling variance of slope
+    var_window = min(20, n_ds // 3)
+    if var_window < 5:
+        var_window = 5
 
-            # Prefer larger windows with good R²
-            if r2 >= r_squared_threshold and window_size > (best_range[1] - best_range[0]):
-                best_r2 = r2
-                best_range = (start, end-1)
+    slope_variance = np.zeros(n_ds)
+    for i in range(n_ds):
+        start = max(0, i - var_window // 2)
+        end = min(n_ds, i + var_window // 2 + 1)
+        if end - start >= 3:
+            slope_variance[i] = np.var(slopes[start:end])
+        else:
+            slope_variance[i] = np.inf
 
-    return q_valid[best_range[0]], q_valid[best_range[1]]
+    # Find contiguous region with low slope variance
+    # Threshold: variance < 10% of median slope squared
+    median_slope = np.median(slopes[slopes != 0])
+    var_threshold = 0.1 * median_slope**2
+
+    # Find longest contiguous region below threshold
+    below_threshold = slope_variance < var_threshold
+
+    # If no region found, relax threshold
+    if not np.any(below_threshold):
+        var_threshold = np.percentile(slope_variance[slope_variance > 0], 30)
+        below_threshold = slope_variance < var_threshold
+
+    # Find longest contiguous segment
+    best_start, best_end = 0, n_ds - 1
+    best_length = 0
+
+    start_idx = None
+    for i in range(n_ds):
+        if below_threshold[i]:
+            if start_idx is None:
+                start_idx = i
+        else:
+            if start_idx is not None:
+                length = i - start_idx
+                if length > best_length:
+                    best_length = length
+                    best_start = start_idx
+                    best_end = i - 1
+                start_idx = None
+
+    # Check last segment
+    if start_idx is not None:
+        length = n_ds - start_idx
+        if length > best_length:
+            best_length = length
+            best_start = start_idx
+            best_end = n_ds - 1
+
+    # Map back to original indices
+    orig_start = indices[best_start]
+    orig_end = indices[best_end]
+
+    # Ensure minimum points
+    if orig_end - orig_start < min_points:
+        # Fall back to middle 50% of data
+        orig_start = n // 4
+        orig_end = 3 * n // 4
+
+    return q_valid[orig_start], q_valid[orig_end]
 
 
 def calculate_surface_parameters(
