@@ -5799,6 +5799,179 @@ $\begin{array}{lcc}
         report.append("└─────────────────────────────────────────────────────┘")
         report.append("")
 
+        # ============================================================
+        # [7] 구체적인 파라미터 제안 계산
+        # ============================================================
+        report.append("=" * 60)
+        report.append("[7. 구체적인 파라미터 제안]")
+        report.append("=" * 60)
+        report.append("")
+
+        # Get current parameter values
+        try:
+            current_gamma = float(self.gamma_var.get())
+        except:
+            current_gamma = 0.5
+
+        try:
+            current_strain_factor = float(self.strain_factor_var.get())
+        except:
+            current_strain_factor = 0.5
+
+        try:
+            current_H = float(self.psd_H_var.get())
+        except:
+            current_H = 0.56
+
+        try:
+            current_q1 = float(self.psd_q1_var.get())
+        except:
+            current_q1 = 1e5
+
+        try:
+            current_Cq0 = float(self.psd_Cq0_var.get())
+        except:
+            current_Cq0 = 3.5e-13
+
+        report.append("┌─────────────────────────────────────────────────────┐")
+        report.append("│ 현재 파라미터 값                                    │")
+        report.append("├─────────────────────────────────────────────────────┤")
+        report.append(f"│ γ (gamma)      : {current_gamma:.3f}                              │")
+        report.append(f"│ Strain Factor  : {current_strain_factor:.3f}                              │")
+        report.append(f"│ H (Hurst)      : {current_H:.3f}                              │")
+        report.append(f"│ q1             : {current_q1:.2e}                         │")
+        report.append(f"│ C(q0)          : {current_Cq0:.2e}                         │")
+        report.append("└─────────────────────────────────────────────────────┘")
+        report.append("")
+
+        # Calculate suggested parameters based on difference analysis
+        mean_diff = np.mean(diff)
+        mean_ref = np.mean(ref_at_common)
+        rel_level_diff = mean_diff / mean_ref if mean_ref > 0 else 0
+
+        # γ adjustment: μ ∝ (roughly) γ-dependent through S(q)
+        # S(q) = γ + (1-γ)P² → higher γ → higher S → higher μ
+        # Approximate: Δμ/μ ≈ k × Δγ/(1-γ) where k is sensitivity
+        # Simplified: suggest γ change proportional to level difference
+        if abs(rel_level_diff) > 0.01:
+            # If μ is X% low, increase γ by ~X%
+            suggested_gamma = current_gamma * (1 - rel_level_diff * 0.5)
+            suggested_gamma = np.clip(suggested_gamma, 0.3, 0.9)
+        else:
+            suggested_gamma = current_gamma
+
+        # Strain factor adjustment: higher strain → lower μ (through g(ε))
+        # If μ is too high at low velocities, increase strain factor
+        if avg_diff_low > 0.02:
+            suggested_strain_factor = current_strain_factor * (1 + avg_diff_low * 0.5)
+        elif avg_diff_low < -0.02:
+            suggested_strain_factor = current_strain_factor * (1 + avg_diff_low * 0.5)
+        else:
+            suggested_strain_factor = current_strain_factor
+        suggested_strain_factor = np.clip(suggested_strain_factor, 0.3, 1.0)
+
+        # H adjustment: lower H → more high-frequency contribution → steeper slope
+        # If slope is too low (저속↑ 고속↓), decrease H
+        if slope_diff < -0.01:  # our slope is lower than reference
+            # Need steeper slope → decrease H
+            suggested_H = current_H + slope_diff * 2  # slope_diff is negative
+            suggested_H = np.clip(suggested_H, 0.3, 0.9)
+        elif slope_diff > 0.01:
+            # Need less steep slope → increase H
+            suggested_H = current_H + slope_diff * 2
+            suggested_H = np.clip(suggested_H, 0.3, 0.9)
+        else:
+            suggested_H = current_H
+
+        # q1 adjustment: higher q1 → more high-frequency contribution → higher μ at high v
+        if avg_diff_high < -0.05:
+            # μ is too low at high velocity → increase q1
+            factor = 1 - avg_diff_high * 2  # avg_diff_high is negative
+            suggested_q1 = current_q1 * factor
+        elif avg_diff_high > 0.05:
+            # μ is too high at high velocity → decrease q1
+            factor = 1 - avg_diff_high * 2
+            suggested_q1 = current_q1 * factor
+        else:
+            suggested_q1 = current_q1
+        suggested_q1 = np.clip(suggested_q1, 1e4, 1e8)
+
+        # C(q0) adjustment: higher C(q0) → higher μ overall
+        if abs(rel_level_diff) > 0.05:
+            suggested_Cq0 = current_Cq0 * (1 - rel_level_diff * 0.3)
+            suggested_Cq0 = np.clip(suggested_Cq0, 1e-15, 1e-10)
+        else:
+            suggested_Cq0 = current_Cq0
+
+        report.append("┌─────────────────────────────────────────────────────┐")
+        report.append("│ ★ 제안 파라미터 값 ★                               │")
+        report.append("├─────────────────────────────────────────────────────┤")
+
+        # γ suggestion
+        gamma_change = suggested_gamma - current_gamma
+        gamma_arrow = "→" if abs(gamma_change) < 0.01 else ("↑" if gamma_change > 0 else "↓")
+        report.append(f"│ γ (gamma)      : {suggested_gamma:.3f}  ({gamma_arrow} {abs(gamma_change):.3f})           │")
+
+        # Strain factor suggestion
+        sf_change = suggested_strain_factor - current_strain_factor
+        sf_arrow = "→" if abs(sf_change) < 0.01 else ("↑" if sf_change > 0 else "↓")
+        report.append(f"│ Strain Factor  : {suggested_strain_factor:.3f}  ({sf_arrow} {abs(sf_change):.3f})           │")
+
+        # H suggestion
+        h_change = suggested_H - current_H
+        h_arrow = "→" if abs(h_change) < 0.01 else ("↑" if h_change > 0 else "↓")
+        report.append(f"│ H (Hurst)      : {suggested_H:.3f}  ({h_arrow} {abs(h_change):.3f})           │")
+
+        # q1 suggestion
+        q1_ratio = suggested_q1 / current_q1
+        q1_arrow = "→" if abs(q1_ratio - 1) < 0.05 else ("↑" if q1_ratio > 1 else "↓")
+        report.append(f"│ q1             : {suggested_q1:.2e}  ({q1_arrow} ×{q1_ratio:.2f})     │")
+
+        # C(q0) suggestion
+        cq0_ratio = suggested_Cq0 / current_Cq0
+        cq0_arrow = "→" if abs(cq0_ratio - 1) < 0.05 else ("↑" if cq0_ratio > 1 else "↓")
+        report.append(f"│ C(q0)          : {suggested_Cq0:.2e}  ({cq0_arrow} ×{cq0_ratio:.2f})     │")
+
+        report.append("└─────────────────────────────────────────────────────┘")
+        report.append("")
+
+        # Detailed reasoning
+        report.append("┌─────────────────────────────────────────────────────┐")
+        report.append("│ 제안 근거                                           │")
+        report.append("├─────────────────────────────────────────────────────┤")
+        report.append(f"│ • 전체 레벨 차이: {rel_level_diff*100:+.1f}%                          │")
+        report.append(f"│ • 기울기 차이: {slope_diff:+.4f}                            │")
+        report.append(f"│ • 저속 영역 차이: {avg_diff_low:+.4f}                          │")
+        report.append(f"│ • 고속 영역 차이: {avg_diff_high:+.4f}                          │")
+        report.append("└─────────────────────────────────────────────────────┘")
+        report.append("")
+
+        # Priority recommendations
+        report.append("┌─────────────────────────────────────────────────────┐")
+        report.append("│ 우선 조정 권장 순서                                 │")
+        report.append("├─────────────────────────────────────────────────────┤")
+
+        priorities = []
+        if abs(slope_diff) > 0.02:
+            priorities.append(("H (Hurst)", abs(slope_diff), "기울기 보정"))
+        if abs(rel_level_diff) > 0.1:
+            priorities.append(("γ (gamma)", abs(rel_level_diff), "전체 레벨 보정"))
+        if abs(avg_diff_high) > 0.1:
+            priorities.append(("q1", abs(avg_diff_high), "고속 영역 보정"))
+        if abs(avg_diff_low) > 0.05:
+            priorities.append(("Strain Factor", abs(avg_diff_low), "저속 영역 보정"))
+
+        priorities.sort(key=lambda x: x[1], reverse=True)
+
+        if priorities:
+            for i, (param, impact, reason) in enumerate(priorities[:3], 1):
+                report.append(f"│ {i}. {param:15s} - {reason:20s}    │")
+        else:
+            report.append("│ 현재 파라미터로 충분히 일치합니다.                 │")
+
+        report.append("└─────────────────────────────────────────────────────┘")
+        report.append("")
+
         # Insert report
         text.insert(tk.END, "\n".join(report))
         text.config(state=tk.DISABLED)
