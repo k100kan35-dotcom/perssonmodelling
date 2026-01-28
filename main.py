@@ -923,6 +923,18 @@ class PerssonModelGUI_V2:
         ttk.Checkbutton(psd_type_frame, text="Top PSD",
                         variable=self.calc_top_psd_var).pack(side=tk.LEFT, padx=10)
 
+        # Logarithmic binning options
+        bin_frame = ttk.Frame(calc_frame)
+        bin_frame.pack(fill=tk.X, pady=2)
+
+        self.apply_binning_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bin_frame, text="로그 구간 평균화",
+                        variable=self.apply_binning_var).pack(side=tk.LEFT)
+
+        ttk.Label(bin_frame, text="점/decade:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 0))
+        self.points_per_decade_var = tk.StringVar(value="20")
+        ttk.Entry(bin_frame, textvariable=self.points_per_decade_var, width=4).pack(side=tk.LEFT, padx=2)
+
         # Calculate button
         ttk.Button(calc_frame, text="PSD 계산",
                    command=self._calculate_profile_psd).pack(fill=tk.X, pady=5)
@@ -1154,12 +1166,20 @@ class PerssonModelGUI_V2:
             window = self.profile_window_var.get()
             detrend = self.profile_detrend_var.get()
             calc_top = self.calc_top_psd_var.get()
+            apply_binning = self.apply_binning_var.get()
 
-            # Calculate PSD
+            try:
+                points_per_decade = int(self.points_per_decade_var.get())
+            except ValueError:
+                points_per_decade = 20
+
+            # Calculate PSD with logarithmic binning
             self.profile_psd_analyzer.calculate_psd(
                 window=window,
                 detrend_method=detrend,
-                calculate_top=calc_top
+                calculate_top=calc_top,
+                apply_binning=apply_binning,
+                points_per_decade=points_per_decade
             )
 
             # Plot results
@@ -1299,6 +1319,16 @@ class PerssonModelGUI_V2:
             lines.append(f"  전체 길이: {L*1e3:.4f} mm")
             lines.append(f"  샘플링 간격: {dx*1e6:.4f} μm")
             lines.append(f"  h_rms (raw): {np.std(h)*1e6:.4f} μm")
+
+            # Binning info
+            if self.profile_psd_analyzer.q is not None:
+                n_raw = len(self.profile_psd_analyzer.q_raw) if self.profile_psd_analyzer.q_raw is not None else 0
+                n_binned = len(self.profile_psd_analyzer.q)
+                ppd = self.profile_psd_analyzer.points_per_decade
+                if n_raw != n_binned:
+                    lines.append(f"\n[로그 구간 평균화]")
+                    lines.append(f"  Raw 점: {n_raw} → Binned 점: {n_binned}")
+                    lines.append(f"  점/decade: {ppd}")
 
         # Top PSD info
         if self.profile_psd_analyzer.phi is not None:

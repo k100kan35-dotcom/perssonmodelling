@@ -15,6 +15,69 @@ from typing import Tuple, Optional, Dict, Any
 import warnings
 
 
+def logarithmic_binning(
+    q: np.ndarray,
+    C: np.ndarray,
+    points_per_decade: int = 20
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply logarithmic binning to PSD data.
+
+    Averages PSD values within logarithmically spaced bins to produce
+    a smooth curve suitable for visualization and analysis.
+
+    Parameters
+    ----------
+    q : np.ndarray
+        Wavenumber array (1/m)
+    C : np.ndarray
+        PSD values
+    points_per_decade : int
+        Number of output points per decade of q (default: 20)
+
+    Returns
+    -------
+    q_binned : np.ndarray
+        Binned wavenumber array (geometric mean of bin)
+    C_binned : np.ndarray
+        Binned PSD values (geometric mean within bin)
+    """
+    # Filter valid data
+    valid = (q > 0) & (C > 0) & np.isfinite(q) & np.isfinite(C)
+    q = q[valid]
+    C = C[valid]
+
+    if len(q) < 2:
+        return q, C
+
+    # Sort by q
+    sort_idx = np.argsort(q)
+    q = q[sort_idx]
+    C = C[sort_idx]
+
+    # Create logarithmic bins
+    log_q_min = np.log10(q.min())
+    log_q_max = np.log10(q.max())
+
+    n_decades = log_q_max - log_q_min
+    n_bins = max(10, int(n_decades * points_per_decade))
+
+    bin_edges = np.logspace(log_q_min, log_q_max, n_bins + 1)
+
+    # Bin the data
+    q_binned = []
+    C_binned = []
+
+    for i in range(n_bins):
+        mask = (q >= bin_edges[i]) & (q < bin_edges[i + 1])
+        if np.any(mask):
+            # Geometric mean for log-spaced data
+            q_binned.append(np.exp(np.mean(np.log(q[mask]))))
+            C_binned.append(np.exp(np.mean(np.log(C[mask]))))
+
+    return np.array(q_binned), np.array(C_binned)
+
+
 def load_profile_data(
     filepath: str,
     x_col: int = 0,
@@ -715,6 +778,13 @@ class ProfilePSDAnalyzer:
     def __init__(self):
         self.x = None
         self.h = None
+        # Raw (unbinned) PSD data
+        self.q_raw = None
+        self.C_full_1d_raw = None
+        self.C_top_1d_raw = None
+        self.C_full_2d_raw = None
+        self.C_top_2d_raw = None
+        # Binned (smoothed) PSD data - used for display and fitting
         self.q = None
         self.C_full_1d = None
         self.C_top_1d = None
@@ -724,6 +794,7 @@ class ProfilePSDAnalyzer:
         self.fit_result_full = None
         self.fit_result_top = None
         self.surface_params = None
+        self.points_per_decade = 20  # Default binning resolution
 
     def load_data(
         self,
@@ -751,7 +822,9 @@ class ProfilePSDAnalyzer:
         self,
         window: str = 'hann',
         detrend_method: str = 'mean',
-        calculate_top: bool = True
+        calculate_top: bool = True,
+        apply_binning: bool = True,
+        points_per_decade: int = 20
     ):
         """
         Calculate Full and optionally Top PSD.
@@ -764,22 +837,52 @@ class ProfilePSDAnalyzer:
             Detrending method
         calculate_top : bool
             Whether to calculate Top PSD
+        apply_binning : bool
+            Apply logarithmic binning for smooth curve (default: True)
+        points_per_decade : int
+            Number of points per decade for binning (default: 20)
         """
         if self.x is None or self.h is None:
             raise ValueError("No data loaded. Call load_data() or set_data() first.")
 
-        # Full PSD
-        self.q, self.C_full_1d = calculate_1d_psd(
+        self.points_per_decade = points_per_decade
+
+        # Calculate raw (unbinned) Full PSD
+        self.q_raw, self.C_full_1d_raw = calculate_1d_psd(
             self.x, self.h, window, detrend_method
         )
-        self.C_full_2d = convert_1d_to_2d_isotropic_psd(self.q, self.C_full_1d)
+        self.C_full_2d_raw = convert_1d_to_2d_isotropic_psd(self.q_raw, self.C_full_1d_raw)
 
-        # Top PSD
+        # Calculate raw (unbinned) Top PSD
         if calculate_top:
-            _, self.C_top_1d, self.phi = calculate_top_psd(
+            _, self.C_top_1d_raw, self.phi = calculate_top_psd(
                 self.x, self.h, window, detrend_method
             )
-            self.C_top_2d = convert_1d_to_2d_isotropic_psd(self.q, self.C_top_1d)
+            self.C_top_2d_raw = convert_1d_to_2d_isotropic_psd(self.q_raw, self.C_top_1d_raw)
+
+        # Apply logarithmic binning for smooth curves
+        if apply_binning:
+            # Bin Full PSD (1D)
+            self.q, self.C_full_1d = logarithmic_binning(
+                self.q_raw, self.C_full_1d_raw, points_per_decade
+            )
+            # Convert binned 1D to 2D
+            self.C_full_2d = convert_1d_to_2d_isotropic_psd(self.q, self.C_full_1d)
+
+            # Bin Top PSD (1D)
+            if calculate_top and self.C_top_1d_raw is not None:
+                _, self.C_top_1d = logarithmic_binning(
+                    self.q_raw, self.C_top_1d_raw, points_per_decade
+                )
+                self.C_top_2d = convert_1d_to_2d_isotropic_psd(self.q, self.C_top_1d)
+        else:
+            # Use raw data directly
+            self.q = self.q_raw
+            self.C_full_1d = self.C_full_1d_raw
+            self.C_full_2d = self.C_full_2d_raw
+            if calculate_top:
+                self.C_top_1d = self.C_top_1d_raw
+                self.C_top_2d = self.C_top_2d_raw
 
         return self
 
