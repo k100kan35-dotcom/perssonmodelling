@@ -1860,13 +1860,9 @@ class PerssonModelGUI_V2:
         tab0_ready = getattr(self, 'tab0_finalized', False)
         tab1_ready = getattr(self, 'tab1_finalized', False)
 
-        if tab0_ready and tab1_ready:
-            # Disable Tab 2 when both Tab 0 and Tab 1 have finalized data
-            self.notebook.tab(2, state='disabled')
-            self.status_var.set("Tab 2 비활성화: Tab 0, 1 데이터 사용중")
-        else:
-            # Enable Tab 2
-            self.notebook.tab(2, state='normal')
+        # Tab 2 is always enabled - no need to disable it
+        # Users can use Tab 2 (계산 설정) at any time
+        self.notebook.tab(2, state='normal')
 
     def _create_master_curve_tab(self, parent):
         """Create Master Curve generation tab using Time-Temperature Superposition."""
