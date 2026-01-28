@@ -560,6 +560,7 @@ class PerssonModelGUI_V2:
         file_menu.add_separator()
         file_menu.add_command(label="Save Results (CSV)", command=self._save_detailed_csv)
         file_menu.add_command(label="Export All", command=self._export_all_results)
+        file_menu.add_command(label="Graph Data Export...", command=self._show_graph_data_export_popup)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
@@ -1094,9 +1095,11 @@ class PerssonModelGUI_V2:
                         value="full").pack(side=tk.LEFT)
         ttk.Radiobutton(apply_frame, text="Top", variable=self.apply_psd_type_var,
                         value="top").pack(side=tk.LEFT)
+        ttk.Radiobutton(apply_frame, text="Param", variable=self.apply_psd_type_var,
+                        value="param").pack(side=tk.LEFT)
 
-        ttk.Button(export_frame, text="마찰 계산에 적용 (Tab 2로 전송)",
-                   command=self._apply_profile_psd_to_calculation).pack(fill=tk.X, pady=2)
+        ttk.Button(export_frame, text="PSD 확정 → Tab 3 (계산설정)",
+                   command=self._apply_profile_psd_to_tab3).pack(fill=tk.X, pady=2)
 
         # ============== Right Panel: Plots ==============
         right_frame = ttk.Frame(main_container)
@@ -1810,66 +1813,108 @@ class PerssonModelGUI_V2:
         """Save PSD plot to file."""
         self._save_plot(self.fig_psd_profile, "profile_psd_plot")
 
-    def _apply_profile_psd_to_calculation(self):
-        """Apply calculated PSD to friction calculation."""
-        if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
-            messagebox.showwarning("경고", "먼저 PSD를 계산하세요.")
-            return
+    def _apply_profile_psd_to_tab3(self):
+        """Apply PSD data directly to Tab 3 (Calculation Settings)."""
+        psd_type = self.apply_psd_type_var.get()
 
         try:
-            use_top = self.apply_psd_type_var.get() == "top"
-
-            # Check if extrapolated data should be used
-            use_extrap = (self.enable_q1_extrap_var.get() and
-                         hasattr(self.profile_psd_analyzer, 'q_combined') and
-                         self.profile_psd_analyzer.q_combined is not None)
-
-            if use_extrap:
-                # Use extrapolated (combined) data
-                q = self.profile_psd_analyzer.q_combined.copy()
-                C = self.profile_psd_analyzer.C_combined.copy()
-                xi = self.profile_psd_analyzer.extrap_params['h_rms_slope']
-                extrap_str = " (with extrapolation)"
+            # Handle different PSD types
+            if psd_type == "param":
+                # Use parameter-generated PSD
+                if not hasattr(self, 'param_psd_data') or self.param_psd_data is None:
+                    messagebox.showwarning("경고", "먼저 파라미터 PSD를 생성하세요.")
+                    return
+                q = self.param_psd_data['q'].copy()
+                C = self.param_psd_data['C'].copy()
+                H = self.param_psd_data['H']
+                xi = self.param_psd_data['h_rms_slope']
+                h_rms = self.param_psd_data['h_rms']
+                psd_type_str = "Param PSD"
             else:
-                q, C = self.profile_psd_analyzer.get_psd_for_persson(use_top_psd=use_top)
-                params = self.profile_psd_analyzer.get_surface_parameters(use_top_psd=use_top)
-                xi = params['h_rms_slope']
-                extrap_str = ""
+                # Use profile-based PSD (Full or Top)
+                if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
+                    messagebox.showwarning("경고", "먼저 PSD를 계산하세요.")
+                    return
 
-            # Create PSD model
+                use_top = (psd_type == "top")
+
+                # Check if extrapolated data should be used
+                use_extrap = (self.enable_q1_extrap_var.get() and
+                             hasattr(self.profile_psd_analyzer, 'q_combined') and
+                             self.profile_psd_analyzer.q_combined is not None)
+
+                if use_extrap:
+                    q = self.profile_psd_analyzer.q_combined.copy()
+                    C = self.profile_psd_analyzer.C_combined.copy()
+                    xi = self.profile_psd_analyzer.extrap_params['h_rms_slope']
+                    h_rms = self.profile_psd_analyzer.extrap_params['h_rms']
+                else:
+                    q, C = self.profile_psd_analyzer.get_psd_for_persson(use_top_psd=use_top)
+                    params = self.profile_psd_analyzer.get_surface_parameters(use_top_psd=use_top)
+                    xi = params['h_rms_slope']
+                    h_rms = params['h_rms']
+
+                fit_result = self.profile_psd_analyzer.fit_result_top if use_top else self.profile_psd_analyzer.fit_result_full
+                H = fit_result['H'] if fit_result else 0.8
+                psd_type_str = "Top PSD" if use_top else "Full PSD"
+
+            # Store finalized PSD data
+            self.finalized_psd = {
+                'q': q,
+                'C': C,
+                'H': H,
+                'xi': xi,
+                'h_rms': h_rms,
+                'type': psd_type_str
+            }
+
+            # Create PSD model for calculations
             self.psd_model = MeasuredPSD(q, C)
             self.raw_psd_data = {'q': q, 'C': C}
 
-            # Get fit parameters if available
-            fit_result = self.profile_psd_analyzer.fit_result_top if use_top else self.profile_psd_analyzer.fit_result_full
-
-            if fit_result is not None:
-                H = fit_result['H']
-                # Update Tab 3 PSD settings if they exist
-                if hasattr(self, 'psd_H_var'):
-                    self.psd_H_var.set(f"{H:.4f}")
-
             # Update Tab 3 settings
+            if hasattr(self, 'psd_H_var'):
+                self.psd_H_var.set(f"{H:.4f}")
             if hasattr(self, 'psd_xi_var'):
                 self.psd_xi_var.set(f"{xi:.6f}")
 
-            psd_type_str = "Top PSD" if use_top else "Full PSD"
-            messagebox.showinfo("완료",
-                f"{psd_type_str}{extrap_str} 마찰 계산에 적용됨\n\n"
+            # Mark Tab 0 as finalized
+            self.tab0_finalized = True
+
+            # Check if Tab 2 should be disabled
+            self._update_tab2_state()
+
+            messagebox.showinfo("PSD 확정 완료",
+                f"{psd_type_str} → Tab 3 전송 완료\n\n"
                 f"q range: {q[0]:.2e} ~ {q[-1]:.2e} 1/m\n"
-                f"h'_rms (xi): {xi:.6f}\n\n"
-                f"Tab 2 (입력 데이터 검증)에서 확인하세요."
+                f"H = {H:.4f}\n"
+                f"h_rms = {h_rms*1e6:.4f} um\n"
+                f"h'_rms (xi) = {xi:.6f}\n\n"
+                f"Tab 3 (계산 설정)에서 계속하세요."
             )
 
-            # Switch to verification tab
-            self.notebook.select(2)
+            # Switch to Tab 3
+            self.notebook.select(3)
 
-            self.status_var.set(f"{psd_type_str} 적용 완료: ξ = {xi:.6f}")
+            self.status_var.set(f"PSD 확정: {psd_type_str}, ξ = {xi:.6f}")
 
         except Exception as e:
             messagebox.showerror("오류", f"적용 실패: {e}")
             import traceback
             traceback.print_exc()
+
+    def _update_tab2_state(self):
+        """Enable/disable Tab 2 based on Tab 0 and Tab 1 finalization status."""
+        tab0_ready = getattr(self, 'tab0_finalized', False)
+        tab1_ready = getattr(self, 'tab1_finalized', False)
+
+        if tab0_ready and tab1_ready:
+            # Disable Tab 2 when both Tab 0 and Tab 1 have finalized data
+            self.notebook.tab(2, state='disabled')
+            self.status_var.set("Tab 2 비활성화: Tab 0, 1 데이터 사용중")
+        else:
+            # Enable Tab 2
+            self.notebook.tab(2, state='normal')
 
     def _create_master_curve_tab(self, parent):
         """Create Master Curve generation tab using Time-Temperature Superposition."""
@@ -2054,8 +2099,8 @@ class PerssonModelGUI_V2:
         ).pack(fill=tk.X, pady=1)
 
         ttk.Button(
-            export_frame, text="마스터 커브 적용 (Tab 1로 전송)",
-            command=self._apply_master_curve_to_verification
+            export_frame, text="마스터 커브 확정 → Tab 3 (계산설정)",
+            command=self._finalize_master_curve_to_tab3
         ).pack(fill=tk.X, pady=1)
 
         # ============== Right Panel: Plots ==============
@@ -2658,6 +2703,93 @@ class PerssonModelGUI_V2:
         except Exception as e:
             import traceback
             messagebox.showerror("오류", f"적용 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def _finalize_master_curve_to_tab3(self):
+        """Finalize master curve and send to Tab 3 (Calculation Settings)."""
+        if self.master_curve_gen is None or self.master_curve_gen.master_f is None:
+            messagebox.showwarning("경고", "먼저 마스터 커브를 생성하세요.")
+            return
+
+        try:
+            # Get master curve data
+            omega = 2 * np.pi * self.master_curve_gen.master_f
+            E_storage = self.master_curve_gen.master_E_storage * 1e6  # MPa to Pa
+            E_loss = self.master_curve_gen.master_E_loss * 1e6  # MPa to Pa
+            T_ref = self.master_curve_gen.T_ref
+
+            # Create material from master curve
+            self.material = create_material_from_dma(
+                omega=omega,
+                E_storage=E_storage,
+                E_loss=E_loss,
+                material_name=f"Master Curve (Tref={T_ref}°C)",
+                reference_temp=T_ref
+            )
+
+            # Store raw data
+            self.raw_dma_data = {
+                'omega': omega,
+                'E_storage': E_storage,
+                'E_loss': E_loss
+            }
+
+            # Store shift factor data
+            self.master_curve_shift_factors = {
+                'aT': self.master_curve_gen.aT.copy(),
+                'bT': self.master_curve_gen.bT.copy(),
+                'T_ref': T_ref,
+                'C1': self.master_curve_gen.C1,
+                'C2': self.master_curve_gen.C2,
+                'temperatures': list(self.master_curve_gen.temperatures)
+            }
+
+            # Store finalized master curve data
+            self.finalized_master_curve = {
+                'omega': omega,
+                'E_storage': E_storage,
+                'E_loss': E_loss,
+                'T_ref': T_ref,
+                'f_min': self.master_curve_gen.master_f.min(),
+                'f_max': self.master_curve_gen.master_f.max(),
+                'C1': self.master_curve_gen.C1,
+                'C2': self.master_curve_gen.C2
+            }
+
+            # Update temperature in Tab 3
+            self.temperature_var.set(str(T_ref))
+
+            # Mark Tab 1 as finalized
+            self.tab1_finalized = True
+
+            # Update Tab 2 state
+            self._update_tab2_state()
+
+            # Build info message
+            f_min = self.master_curve_gen.master_f.min()
+            f_max = self.master_curve_gen.master_f.max()
+
+            info_msg = f"마스터 커브 확정 → Tab 3 전송 완료\n\n"
+            info_msg += f"기준 온도 (Tref): {T_ref}°C\n"
+            info_msg += f"주파수 범위: {f_min:.2e} ~ {f_max:.2e} Hz\n"
+            info_msg += f"데이터 점 수: {len(omega)}\n\n"
+
+            if self.master_curve_gen.C1 is not None:
+                info_msg += f"WLF 파라미터:\n"
+                info_msg += f"  C1 = {self.master_curve_gen.C1:.2f}\n"
+                info_msg += f"  C2 = {self.master_curve_gen.C2:.2f}°C\n\n"
+
+            info_msg += "Tab 3 (계산 설정)에서 계속하세요."
+
+            messagebox.showinfo("마스터 커브 확정 완료", info_msg)
+
+            # Switch to Tab 3
+            self.notebook.select(3)
+
+            self.status_var.set(f"마스터 커브 확정: Tref={T_ref}°C, {f_min:.1e}~{f_max:.1e} Hz")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"확정 실패:\n{str(e)}\n\n{traceback.format_exc()}")
 
     def _create_parameters_tab(self, parent):
         """Create calculation parameters tab."""
@@ -4485,6 +4617,198 @@ class PerssonModelGUI_V2:
         output_dir = filedialog.askdirectory(title="Select output directory")
         if output_dir:
             messagebox.showinfo("Info", "Export functionality to be implemented")
+
+    def _show_graph_data_export_popup(self):
+        """Show popup window for exporting all graph data to txt files."""
+        popup = tk.Toplevel(self.root)
+        popup.title("Graph Data Export")
+        popup.geometry("600x500")
+        popup.transient(self.root)
+
+        # Main frame
+        main_frame = ttk.Frame(popup, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title
+        ttk.Label(main_frame, text="Available Graph Data", font=('Arial', 12, 'bold')).pack(anchor=tk.W)
+        ttk.Label(main_frame, text="Select data to export as txt files", font=('Arial', 9)).pack(anchor=tk.W)
+
+        # Listbox with scrollbar
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.graph_data_listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE,
+                                              yscrollcommand=scrollbar.set, height=15)
+        self.graph_data_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.graph_data_listbox.yview)
+
+        # Collect available data
+        self.available_graph_data = {}
+
+        # Tab 0: PSD data
+        if hasattr(self, 'profile_psd_analyzer') and self.profile_psd_analyzer is not None:
+            if self.profile_psd_analyzer.q is not None and self.profile_psd_analyzer.C_full_2d is not None:
+                name = "PSD_Full_2D"
+                self.available_graph_data[name] = {
+                    'q': self.profile_psd_analyzer.q,
+                    'C': self.profile_psd_analyzer.C_full_2d,
+                    'header': 'q(1/m)\tC(q)(m^4)',
+                    'description': 'Full PSD (2D isotropic)'
+                }
+            if self.profile_psd_analyzer.C_top_2d is not None:
+                name = "PSD_Top_2D"
+                self.available_graph_data[name] = {
+                    'q': self.profile_psd_analyzer.q,
+                    'C': self.profile_psd_analyzer.C_top_2d,
+                    'header': 'q(1/m)\tC(q)(m^4)',
+                    'description': 'Top PSD (2D isotropic)'
+                }
+
+        # Parameter PSD
+        if hasattr(self, 'param_psd_data') and self.param_psd_data is not None:
+            name = "PSD_Param"
+            self.available_graph_data[name] = {
+                'q': self.param_psd_data['q'],
+                'C': self.param_psd_data['C'],
+                'header': 'q(1/m)\tC(q)(m^4)',
+                'description': f"Param PSD (H={self.param_psd_data['H']:.4f})"
+            }
+
+        # Finalized PSD
+        if hasattr(self, 'finalized_psd') and self.finalized_psd is not None:
+            name = "PSD_Finalized"
+            self.available_graph_data[name] = {
+                'q': self.finalized_psd['q'],
+                'C': self.finalized_psd['C'],
+                'header': 'q(1/m)\tC(q)(m^4)',
+                'description': f"Finalized PSD ({self.finalized_psd['type']})"
+            }
+
+        # Tab 1: Master Curve
+        if hasattr(self, 'master_curve_gen') and self.master_curve_gen is not None:
+            if self.master_curve_gen.master_f is not None:
+                name = "MasterCurve_E_storage"
+                self.available_graph_data[name] = {
+                    'x': self.master_curve_gen.master_f,
+                    'y': self.master_curve_gen.master_E_storage,
+                    'header': 'f(Hz)\tE_storage(MPa)',
+                    'description': f"Master Curve E' (Tref={self.master_curve_gen.T_ref}C)"
+                }
+                name = "MasterCurve_E_loss"
+                self.available_graph_data[name] = {
+                    'x': self.master_curve_gen.master_f,
+                    'y': self.master_curve_gen.master_E_loss,
+                    'header': 'f(Hz)\tE_loss(MPa)',
+                    'description': f"Master Curve E'' (Tref={self.master_curve_gen.T_ref}C)"
+                }
+
+        # DMA data
+        if hasattr(self, 'raw_dma_data') and self.raw_dma_data is not None:
+            name = "DMA_E_storage"
+            omega = self.raw_dma_data['omega']
+            self.available_graph_data[name] = {
+                'x': omega,
+                'y': self.raw_dma_data['E_storage'],
+                'header': 'omega(rad/s)\tE_storage(Pa)',
+                'description': 'DMA E_storage'
+            }
+            name = "DMA_E_loss"
+            self.available_graph_data[name] = {
+                'x': omega,
+                'y': self.raw_dma_data['E_loss'],
+                'header': 'omega(rad/s)\tE_loss(Pa)',
+                'description': 'DMA E_loss'
+            }
+
+        # Mu_visc results
+        if hasattr(self, 'mu_visc_results') and self.mu_visc_results is not None:
+            if 'v' in self.mu_visc_results and 'mu_visc' in self.mu_visc_results:
+                name = "Friction_mu_vs_v"
+                self.available_graph_data[name] = {
+                    'x': self.mu_visc_results['v'],
+                    'y': self.mu_visc_results['mu_visc'],
+                    'header': 'v(m/s)\tmu_visc',
+                    'description': 'Friction coefficient vs velocity'
+                }
+
+        # Add items to listbox
+        for name, data in self.available_graph_data.items():
+            self.graph_data_listbox.insert(tk.END, f"{name} - {data['description']}")
+
+        if not self.available_graph_data:
+            self.graph_data_listbox.insert(tk.END, "(No graph data available)")
+
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Button(btn_frame, text="Select All", command=lambda: self.graph_data_listbox.select_set(0, tk.END)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Clear Selection", command=lambda: self.graph_data_listbox.selection_clear(0, tk.END)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Export Selected", command=lambda: self._export_selected_graph_data(popup)).pack(side=tk.RIGHT, padx=5)
+
+        # Status
+        self.export_status_var = tk.StringVar(value="Select data and click Export")
+        ttk.Label(main_frame, textvariable=self.export_status_var, font=('Arial', 9)).pack(anchor=tk.W)
+
+    def _export_selected_graph_data(self, popup):
+        """Export selected graph data to txt files."""
+        selected_indices = self.graph_data_listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning("경고", "저장할 데이터를 선택하세요.")
+            return
+
+        # Ask for output directory
+        output_dir = filedialog.askdirectory(title="저장 폴더 선택")
+        if not output_dir:
+            return
+
+        # Get list of data names
+        data_names = list(self.available_graph_data.keys())
+
+        saved_files = []
+        for idx in selected_indices:
+            if idx >= len(data_names):
+                continue
+
+            name = data_names[idx]
+            data = self.available_graph_data[name]
+
+            # Generate filename with timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}.txt"
+            filepath = os.path.join(output_dir, filename)
+
+            try:
+                with open(filepath, 'w') as f:
+                    # Write header
+                    f.write(f"# {data['description']}\n")
+                    f.write(f"# Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# {data['header']}\n")
+
+                    # Write data
+                    if 'q' in data and 'C' in data:
+                        for q, C in zip(data['q'], data['C']):
+                            f.write(f"{q:.6e}\t{C:.6e}\n")
+                    elif 'x' in data and 'y' in data:
+                        for x, y in zip(data['x'], data['y']):
+                            f.write(f"{x:.6e}\t{y:.6e}\n")
+
+                saved_files.append(filename)
+
+            except Exception as e:
+                messagebox.showerror("오류", f"저장 실패 ({name}): {e}")
+
+        if saved_files:
+            self.export_status_var.set(f"Saved {len(saved_files)} files")
+            messagebox.showinfo("완료",
+                f"총 {len(saved_files)}개 파일 저장 완료\n\n"
+                f"저장 위치: {output_dir}\n\n"
+                f"파일 목록:\n" + "\n".join(saved_files[:10]) +
+                ("\n..." if len(saved_files) > 10 else ""))
 
     def _show_help(self):
         """Show help dialog."""
