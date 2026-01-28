@@ -150,6 +150,9 @@ class PerssonModelGUI_V2:
         self.profile_psd_analyzer = None  # ProfilePSDAnalyzer instance
         self.profile_psd_data = None  # Loaded profile data (x, h)
 
+        # Graph data registry for automatic data listing
+        self.graph_data_registry = {}  # {name: {x, y, header, description, timestamp}}
+
         # Reference μ_visc data for comparison (Persson program output)
         self._init_reference_mu_data()
 
@@ -1373,6 +1376,21 @@ class PerssonModelGUI_V2:
         self.fig_psd_profile.tight_layout()
         self.canvas_psd_profile.draw()
 
+        # Auto-register graph data
+        if C_full_2d is not None:
+            self._register_graph_data(
+                "PSD_Full_2D", q, C_full_2d,
+                "q(1/m)\tC(q)(m^4)", "Full PSD (2D isotropic)")
+        if C_top_2d is not None:
+            self._register_graph_data(
+                "PSD_Top_2D", q, C_top_2d,
+                "q(1/m)\tC(q)(m^4)", "Top PSD (2D isotropic)")
+        if (hasattr(self, 'param_psd_data') and self.param_psd_data is not None):
+            pdata = self.param_psd_data
+            self._register_graph_data(
+                "PSD_Param", pdata['q'], pdata['C'],
+                "q(1/m)\tC(q)(m^4)", f"Param PSD (H={pdata['H']:.3f})")
+
     def _fit_profile_psd(self):
         """Fit PSD to self-affine fractal model."""
         if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
@@ -1871,6 +1889,11 @@ class PerssonModelGUI_V2:
             # Create PSD model for calculations
             self.psd_model = MeasuredPSD(q, C)
             self.raw_psd_data = {'q': q, 'C': C}
+
+            # Register finalized PSD
+            self._register_graph_data(
+                "PSD_Finalized", q, C,
+                "q(1/m)\tC(q)(m^4)", f"Finalized PSD ({psd_type_str})")
 
             # Update Tab 3 settings
             if hasattr(self, 'psd_H_var'):
@@ -2451,6 +2474,19 @@ class PerssonModelGUI_V2:
         self.fig_mc.tight_layout()
         self.canvas_mc.draw()
 
+        # Auto-register graph data for master curve
+        if master_curve is not None and 'f' in master_curve:
+            self._register_graph_data(
+                "MasterCurve_E_storage",
+                master_curve['f'], master_curve['E_storage'],
+                "f(Hz)\tE_storage(MPa)",
+                f"Master Curve E' (Tref={T_ref}C)")
+            self._register_graph_data(
+                "MasterCurve_E_loss",
+                master_curve['f'], master_curve['E_loss'],
+                "f(Hz)\tE_loss(MPa)",
+                f"Master Curve E'' (Tref={T_ref}C)")
+
     def _update_mc_results(self, wlf_result, target='E_storage'):
         """Update master curve results text."""
         self.mc_result_text.delete('1.0', tk.END)
@@ -2754,6 +2790,15 @@ class PerssonModelGUI_V2:
                 'C1': self.master_curve_gen.C1,
                 'C2': self.master_curve_gen.C2
             }
+
+            # Register finalized master curve
+            f = self.master_curve_gen.master_f
+            self._register_graph_data(
+                "MasterCurve_E_storage_Finalized", f, self.master_curve_gen.master_E_storage,
+                "f(Hz)\tE_storage(MPa)", f"Finalized Master Curve E' (Tref={T_ref}C)")
+            self._register_graph_data(
+                "MasterCurve_E_loss_Finalized", f, self.master_curve_gen.master_E_loss,
+                "f(Hz)\tE_loss(MPa)", f"Finalized Master Curve E'' (Tref={T_ref}C)")
 
             # Update temperature in Tab 3
             self.temperature_var.set(str(T_ref))
@@ -4618,6 +4663,147 @@ class PerssonModelGUI_V2:
         if output_dir:
             messagebox.showinfo("Info", "Export functionality to be implemented")
 
+    def _register_graph_data(self, name: str, x_data, y_data, header: str, description: str):
+        """
+        Register graph data to the automatic data list.
+        Called whenever a graph is drawn with significant data.
+
+        Parameters
+        ----------
+        name : str
+            Unique identifier for this data (e.g., 'PSD_Full_2D', 'MasterCurve_E_storage')
+        x_data : array-like
+            X-axis data (q, f, v, etc.)
+        y_data : array-like
+            Y-axis data (C(q), E', mu, etc.)
+        header : str
+            Header line for export file (e.g., 'q(1/m)\\tC(q)(m^4)')
+        description : str
+            Human-readable description (e.g., 'Full PSD (2D isotropic)')
+        """
+        from datetime import datetime
+        import numpy as np
+
+        x_arr = np.asarray(x_data)
+        y_arr = np.asarray(y_data)
+
+        # Create timestamp for tracking
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        self.graph_data_registry[name] = {
+            'x': x_arr,
+            'y': y_arr,
+            'header': header,
+            'description': description,
+            'timestamp': timestamp
+        }
+
+        # Update the graph data listbox if it exists and is visible
+        if hasattr(self, 'graph_data_listbox') and self.graph_data_listbox.winfo_exists():
+            self._refresh_graph_data_listbox()
+
+    def _refresh_graph_data_listbox(self):
+        """Refresh the graph data listbox with current registry contents."""
+        if not hasattr(self, 'graph_data_listbox') or not self.graph_data_listbox.winfo_exists():
+            return
+
+        # Store current selection
+        current_selection = self.graph_data_listbox.curselection()
+
+        # Clear and repopulate
+        self.graph_data_listbox.delete(0, tk.END)
+
+        # Combine registry with legacy data
+        combined_data = dict(self.graph_data_registry)  # Start with registry data
+
+        # Add legacy data collection (same as before)
+        self._collect_legacy_graph_data(combined_data)
+
+        self.available_graph_data = combined_data
+
+        for name, data in combined_data.items():
+            timestamp = data.get('timestamp', '')
+            ts_str = f" [{timestamp}]" if timestamp else ""
+            self.graph_data_listbox.insert(tk.END, f"{name} - {data['description']}{ts_str}")
+
+        if not combined_data:
+            self.graph_data_listbox.insert(tk.END, "(No graph data available)")
+
+        # Restore selection if possible
+        for idx in current_selection:
+            if idx < self.graph_data_listbox.size():
+                self.graph_data_listbox.selection_set(idx)
+
+    def _collect_legacy_graph_data(self, data_dict):
+        """Collect graph data from legacy class attributes (backward compatibility)."""
+        # Tab 0: PSD data (if not already in registry)
+        if hasattr(self, 'profile_psd_analyzer') and self.profile_psd_analyzer is not None:
+            if self.profile_psd_analyzer.q is not None and self.profile_psd_analyzer.C_full_2d is not None:
+                if "PSD_Full_2D" not in data_dict:
+                    data_dict["PSD_Full_2D"] = {
+                        'x': self.profile_psd_analyzer.q,
+                        'y': self.profile_psd_analyzer.C_full_2d,
+                        'header': 'q(1/m)\tC(q)(m^4)',
+                        'description': 'Full PSD (2D isotropic)'
+                    }
+            if self.profile_psd_analyzer.C_top_2d is not None:
+                if "PSD_Top_2D" not in data_dict:
+                    data_dict["PSD_Top_2D"] = {
+                        'x': self.profile_psd_analyzer.q,
+                        'y': self.profile_psd_analyzer.C_top_2d,
+                        'header': 'q(1/m)\tC(q)(m^4)',
+                        'description': 'Top PSD (2D isotropic)'
+                    }
+
+        # Parameter PSD
+        if hasattr(self, 'param_psd_data') and self.param_psd_data is not None:
+            if "PSD_Param" not in data_dict:
+                data_dict["PSD_Param"] = {
+                    'x': self.param_psd_data['q'],
+                    'y': self.param_psd_data['C'],
+                    'header': 'q(1/m)\tC(q)(m^4)',
+                    'description': f"Param PSD (H={self.param_psd_data['H']:.4f})"
+                }
+
+        # Finalized PSD
+        if hasattr(self, 'finalized_psd') and self.finalized_psd is not None:
+            if "PSD_Finalized" not in data_dict:
+                data_dict["PSD_Finalized"] = {
+                    'x': self.finalized_psd['q'],
+                    'y': self.finalized_psd['C'],
+                    'header': 'q(1/m)\tC(q)(m^4)',
+                    'description': f"Finalized PSD ({self.finalized_psd['type']})"
+                }
+
+        # Tab 1: Master Curve
+        if hasattr(self, 'master_curve_gen') and self.master_curve_gen is not None:
+            if self.master_curve_gen.master_f is not None:
+                if "MasterCurve_E_storage" not in data_dict:
+                    data_dict["MasterCurve_E_storage"] = {
+                        'x': self.master_curve_gen.master_f,
+                        'y': self.master_curve_gen.master_E_storage,
+                        'header': 'f(Hz)\tE_storage(MPa)',
+                        'description': f"Master Curve E' (Tref={self.master_curve_gen.T_ref}C)"
+                    }
+                if "MasterCurve_E_loss" not in data_dict:
+                    data_dict["MasterCurve_E_loss"] = {
+                        'x': self.master_curve_gen.master_f,
+                        'y': self.master_curve_gen.master_E_loss,
+                        'header': 'f(Hz)\tE_loss(MPa)',
+                        'description': f"Master Curve E'' (Tref={self.master_curve_gen.T_ref}C)"
+                    }
+
+        # Mu_visc results
+        if hasattr(self, 'mu_visc_results') and self.mu_visc_results is not None:
+            if 'v' in self.mu_visc_results and 'mu_visc' in self.mu_visc_results:
+                if "Friction_mu_vs_v" not in data_dict:
+                    data_dict["Friction_mu_vs_v"] = {
+                        'x': self.mu_visc_results['v'],
+                        'y': self.mu_visc_results['mu_visc'],
+                        'header': 'v(m/s)\tmu_visc',
+                        'description': 'Friction coefficient vs velocity'
+                    }
+
     def _show_graph_data_export_popup(self):
         """Show popup window for exporting all graph data to txt files."""
         popup = tk.Toplevel(self.root)
@@ -4645,98 +4831,33 @@ class PerssonModelGUI_V2:
         self.graph_data_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.graph_data_listbox.yview)
 
-        # Collect available data
-        self.available_graph_data = {}
+        # Collect and display available data using the registry system
+        self.available_graph_data = dict(self.graph_data_registry)  # Start with registry
+        self._collect_legacy_graph_data(self.available_graph_data)  # Add legacy sources
 
-        # Tab 0: PSD data
-        if hasattr(self, 'profile_psd_analyzer') and self.profile_psd_analyzer is not None:
-            if self.profile_psd_analyzer.q is not None and self.profile_psd_analyzer.C_full_2d is not None:
-                name = "PSD_Full_2D"
-                self.available_graph_data[name] = {
-                    'q': self.profile_psd_analyzer.q,
-                    'C': self.profile_psd_analyzer.C_full_2d,
-                    'header': 'q(1/m)\tC(q)(m^4)',
-                    'description': 'Full PSD (2D isotropic)'
-                }
-            if self.profile_psd_analyzer.C_top_2d is not None:
-                name = "PSD_Top_2D"
-                self.available_graph_data[name] = {
-                    'q': self.profile_psd_analyzer.q,
-                    'C': self.profile_psd_analyzer.C_top_2d,
-                    'header': 'q(1/m)\tC(q)(m^4)',
-                    'description': 'Top PSD (2D isotropic)'
-                }
-
-        # Parameter PSD
-        if hasattr(self, 'param_psd_data') and self.param_psd_data is not None:
-            name = "PSD_Param"
-            self.available_graph_data[name] = {
-                'q': self.param_psd_data['q'],
-                'C': self.param_psd_data['C'],
-                'header': 'q(1/m)\tC(q)(m^4)',
-                'description': f"Param PSD (H={self.param_psd_data['H']:.4f})"
-            }
-
-        # Finalized PSD
-        if hasattr(self, 'finalized_psd') and self.finalized_psd is not None:
-            name = "PSD_Finalized"
-            self.available_graph_data[name] = {
-                'q': self.finalized_psd['q'],
-                'C': self.finalized_psd['C'],
-                'header': 'q(1/m)\tC(q)(m^4)',
-                'description': f"Finalized PSD ({self.finalized_psd['type']})"
-            }
-
-        # Tab 1: Master Curve
-        if hasattr(self, 'master_curve_gen') and self.master_curve_gen is not None:
-            if self.master_curve_gen.master_f is not None:
-                name = "MasterCurve_E_storage"
-                self.available_graph_data[name] = {
-                    'x': self.master_curve_gen.master_f,
-                    'y': self.master_curve_gen.master_E_storage,
-                    'header': 'f(Hz)\tE_storage(MPa)',
-                    'description': f"Master Curve E' (Tref={self.master_curve_gen.T_ref}C)"
-                }
-                name = "MasterCurve_E_loss"
-                self.available_graph_data[name] = {
-                    'x': self.master_curve_gen.master_f,
-                    'y': self.master_curve_gen.master_E_loss,
-                    'header': 'f(Hz)\tE_loss(MPa)',
-                    'description': f"Master Curve E'' (Tref={self.master_curve_gen.T_ref}C)"
-                }
-
-        # DMA data
+        # Also add DMA raw data if available
         if hasattr(self, 'raw_dma_data') and self.raw_dma_data is not None:
-            name = "DMA_E_storage"
             omega = self.raw_dma_data['omega']
-            self.available_graph_data[name] = {
-                'x': omega,
-                'y': self.raw_dma_data['E_storage'],
-                'header': 'omega(rad/s)\tE_storage(Pa)',
-                'description': 'DMA E_storage'
-            }
-            name = "DMA_E_loss"
-            self.available_graph_data[name] = {
-                'x': omega,
-                'y': self.raw_dma_data['E_loss'],
-                'header': 'omega(rad/s)\tE_loss(Pa)',
-                'description': 'DMA E_loss'
-            }
-
-        # Mu_visc results
-        if hasattr(self, 'mu_visc_results') and self.mu_visc_results is not None:
-            if 'v' in self.mu_visc_results and 'mu_visc' in self.mu_visc_results:
-                name = "Friction_mu_vs_v"
-                self.available_graph_data[name] = {
-                    'x': self.mu_visc_results['v'],
-                    'y': self.mu_visc_results['mu_visc'],
-                    'header': 'v(m/s)\tmu_visc',
-                    'description': 'Friction coefficient vs velocity'
+            if "DMA_E_storage" not in self.available_graph_data:
+                self.available_graph_data["DMA_E_storage"] = {
+                    'x': omega,
+                    'y': self.raw_dma_data['E_storage'],
+                    'header': 'omega(rad/s)\tE_storage(Pa)',
+                    'description': 'DMA E_storage'
+                }
+            if "DMA_E_loss" not in self.available_graph_data:
+                self.available_graph_data["DMA_E_loss"] = {
+                    'x': omega,
+                    'y': self.raw_dma_data['E_loss'],
+                    'header': 'omega(rad/s)\tE_loss(Pa)',
+                    'description': 'DMA E_loss'
                 }
 
-        # Add items to listbox
+        # Add items to listbox with timestamp if available
         for name, data in self.available_graph_data.items():
-            self.graph_data_listbox.insert(tk.END, f"{name} - {data['description']}")
+            timestamp = data.get('timestamp', '')
+            ts_str = f" [{timestamp}]" if timestamp else ""
+            self.graph_data_listbox.insert(tk.END, f"{name} - {data['description']}{ts_str}")
 
         if not self.available_graph_data:
             self.graph_data_listbox.insert(tk.END, "(No graph data available)")
@@ -6916,6 +7037,14 @@ $\begin{array}{lcc}
 
             self.fig_mu_visc.tight_layout()
             self.canvas_mu_visc.draw()
+
+            # Auto-register graph data for friction results
+            self._register_graph_data(
+                "Friction_mu_vs_v", v, mu_array,
+                "v(m/s)\tmu_visc", "Friction coefficient vs velocity")
+            self._register_graph_data(
+                "ContactArea_A_A0_vs_v", v, P_qmax_array,
+                "v(m/s)\tA/A0", "Real contact area ratio vs velocity")
 
         except Exception as e:
             # Fallback: clear plots and show error message

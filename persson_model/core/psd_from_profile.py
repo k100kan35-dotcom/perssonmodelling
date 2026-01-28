@@ -251,13 +251,12 @@ def calculate_1d_psd(
     q = 2 * np.pi * freq
 
     # Power spectrum (one-sided)
-    # PSD = |FFT|² * 2 / (N * L) for one-sided spectrum
-    # The factor of 2 accounts for the one-sided spectrum
     power = np.abs(h_fft)**2
 
-    # Normalize: C(q) has units of m³ for 1D PSD
-    # C_1D(q) = (2/L) * |h_fft|² / N²
-    C1d = 2.0 * power / (n**2 * L) / w_correction
+    # Normalize: C_1D(q) has units of m³
+    # Correct formula: C_1D(q) = L * |FFT|² / (π * N²) for one-sided PSD in wavenumber
+    # This satisfies: h_rms² = ∫ C_1D(q) dq
+    C1d = power * L / (np.pi * n**2) / w_correction
 
     # Remove DC component (q=0)
     valid = q > 0
@@ -347,7 +346,8 @@ def calculate_top_psd(
 
     # Power spectrum
     power = np.abs(h_fft)**2
-    C1d = 2.0 * power / (n**2 * L) / w_correction
+    # Correct formula: C_1D(q) = L * |FFT|² / (π * N²) for one-sided PSD in wavenumber
+    C1d = power * L / (np.pi * n**2) / w_correction
 
     # Apply 1/phi correction
     C_top = C1d / phi
