@@ -7802,14 +7802,30 @@ $\begin{array}{lcc}
 
             # Get q and v ranges from G(q,v) results
             results_2d = self.results['2d_results']
-            q_min = results_2d['q'].min()
-            q_max = results_2d['q'].max()
-            v_min = results_2d['v'].min()
-            v_max = results_2d['v'].max()
+            q_orig = results_2d['q']
+            v_orig = results_2d['v']
+            G_matrix_orig = results_2d['G_matrix']  # Tab 3에서 계산된 G(q,v)
 
-            # Create q and v arrays
+            q_min = q_orig.min()
+            q_max = q_orig.max()
+            v_min = v_orig.min()
+            v_max = v_orig.max()
+
+            # Create q and v arrays for visualization
             q_array = np.logspace(np.log10(q_min), np.log10(q_max), n_q)
             v_array = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
+
+            # Create 2D interpolator for G(q, v) from Tab 3 results
+            from scipy.interpolate import RegularGridInterpolator
+            # Use log scale for better interpolation
+            log_q_orig = np.log10(q_orig)
+            log_v_orig = np.log10(v_orig)
+            log_G_orig = np.log10(np.maximum(G_matrix_orig, 1e-30))  # Avoid log(0)
+
+            G_interp = RegularGridInterpolator(
+                (log_q_orig, log_v_orig), log_G_orig,
+                method='linear', bounds_error=False, fill_value=None
+            )
 
             # Get PSD values
             C_q = self.psd_model(q_array)
@@ -7896,31 +7912,34 @@ $\begin{array}{lcc}
                         f_val = 1.0
                         E_storage_nonlinear[i, j] = E_storage
 
-                    # Calculate G integrand: q^3 * C(q) * |E*|^2 / ((1-nu^2)*sigma0)^2
-                    # Linear: E* = E' + iE''
-                    # Nonlinear: E*_eff = E'*f + iE''*g
-                    C_val = C_q[i]
-                    prefactor = 1.0 / ((1 - poisson**2) * sigma_0)**2
+                    # Get G value from Tab 3 results (interpolated)
+                    # G_interp uses log scale
+                    try:
+                        log_G_val = G_interp((np.log10(q), np.log10(v)))
+                        G_linear = 10 ** log_G_val if np.isfinite(log_G_val) else 1e-10
+                    except:
+                        G_linear = 1e-10
 
-                    # Linear |E*|^2 = E'^2 + E''^2
-                    E_star_sq_linear = E_storage**2 + E_loss**2
-                    G_integrand_linear[i, j] = q**3 * C_val * E_star_sq_linear * prefactor
+                    # Store G as "integrand" for visualization (actually the cumulative G value)
+                    G_integrand_linear[i, j] = G_linear
 
-                    # Nonlinear |E*_eff|^2
-                    E_prime_eff = E_storage_nonlinear[i, j]
-                    E_loss_eff = E_loss_nonlinear[i, j]
-                    E_star_sq_nonlinear = E_prime_eff**2 + E_loss_eff**2
-                    G_integrand_nonlinear[i, j] = q**3 * C_val * E_star_sq_nonlinear * prefactor
+                    # Calculate nonlinear G with f(ε) correction
+                    # G_nonlinear ≈ G_linear * f(ε)^2 (since G ~ |E|^2)
+                    if self.f_interpolator is not None:
+                        f_val_sq = f_val ** 2  # f_val was calculated above
+                        G_nonlinear = G_linear * f_val_sq
+                    else:
+                        G_nonlinear = G_linear
+
+                    G_integrand_nonlinear[i, j] = G_nonlinear
 
                     # Calculate contact area ratio A/A0 = P(q) = erf(1/(2*sqrt(G)))
-                    # G ~ cumulative integral of q^3*C(q)*|E*|^2
-                    # Approximate G at this point for visualization
                     from scipy.special import erf
-                    G_linear_approx = max(G_integrand_linear[i, j] * (q / n_q), 1e-20)
-                    G_nonlinear_approx = max(G_integrand_nonlinear[i, j] * (q / n_q), 1e-20)
+                    G_linear_safe = max(G_linear, 1e-20)
+                    G_nonlinear_safe = max(G_nonlinear, 1e-20)
 
-                    arg_linear = 1.0 / (2.0 * np.sqrt(G_linear_approx))
-                    arg_nonlinear = 1.0 / (2.0 * np.sqrt(G_nonlinear_approx))
+                    arg_linear = 1.0 / (2.0 * np.sqrt(G_linear_safe))
+                    arg_nonlinear = 1.0 / (2.0 * np.sqrt(G_nonlinear_safe))
                     contact_linear[i, j] = erf(min(arg_linear, 10.0))
                     contact_nonlinear[i, j] = erf(min(arg_nonlinear, 10.0))
 
