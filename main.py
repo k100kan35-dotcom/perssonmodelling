@@ -2164,19 +2164,25 @@ class PerssonModelGUI_V2:
         self.mc_shift_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 7. Export buttons
-        export_frame = ttk.LabelFrame(left_frame, text="내보내기", padding=5)
-        export_frame.pack(fill=tk.X, pady=2, padx=3)
+        # 7. Export buttons - IMPORTANT: This must be visible via scrolling
+        export_frame = ttk.LabelFrame(left_frame, text="★ 내보내기 ★", padding=5)
+        export_frame.pack(fill=tk.X, pady=5, padx=3)
 
         ttk.Button(
             export_frame, text="마스터 커브 CSV 내보내기",
             command=self._export_master_curve
-        ).pack(fill=tk.X, pady=1)
+        ).pack(fill=tk.X, pady=2)
 
-        ttk.Button(
-            export_frame, text="마스터 커브 확정 → Tab 3 (계산설정)",
+        # Make this button more prominent
+        finalize_btn = ttk.Button(
+            export_frame, text="▶ 마스터 커브 확정 → Tab 3 (계산설정)",
             command=self._finalize_master_curve_to_tab3
-        ).pack(fill=tk.X, pady=1)
+        )
+        finalize_btn.pack(fill=tk.X, pady=2)
+
+        # Force update of scroll region after all widgets are added
+        left_frame.update_idletasks()
+        mc_canvas.configure(scrollregion=mc_canvas.bbox("all"))
 
         # ============== Right Panel: Plots ==============
 
