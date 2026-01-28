@@ -3846,6 +3846,69 @@ class PerssonModelGUI_V2:
                 integration_method='trapz'
             )
 
+            # =====================================================================
+            # DIAGNOSTIC OUTPUT: Check units and values for G(q) calculation
+            # =====================================================================
+            print("\n" + "="*80)
+            print("G(q) 계산 단위 진단 (Unit Diagnostics)")
+            print("="*80)
+            print(f"σ₀ (nominal pressure) = {sigma_0:.2e} Pa = {sigma_0/1e6:.4f} MPa")
+            print(f"Poisson ratio (ν) = {poisson}")
+            print(f"Prefactor = 1/((1-ν²)σ₀) = {self.g_calculator.prefactor:.2e} (1/Pa)")
+            print()
+
+            # Check E' and E'' at representative frequencies
+            test_omegas = [0.1, 1, 10, 100, 1e3, 1e4, 1e5, 1e6]  # rad/s
+            print("주파수별 E', E'' 값 (Pa):")
+            print("-" * 60)
+            print(f"{'ω (rad/s)':<12} {'E\' (Pa)':<15} {'E\'\' (Pa)':<15} {'|E*| (Pa)':<15}")
+            print("-" * 60)
+            for omega in test_omegas:
+                E_star = self.material.get_modulus(omega, temperature=temperature)
+                E_prime = np.real(E_star)
+                E_loss = np.imag(E_star)
+                E_abs = np.abs(E_star)
+                print(f"{omega:<12.1e} {E_prime:<15.2e} {E_loss:<15.2e} {E_abs:<15.2e}")
+            print()
+
+            # Check PSD values at representative wavenumbers
+            test_qs = [100, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8]  # 1/m
+            print("파수별 C(q) 값 (m⁴):")
+            print("-" * 40)
+            print(f"{'q (1/m)':<12} {'C(q) (m⁴)':<15}")
+            print("-" * 40)
+            for q_test in test_qs:
+                C_test = self.psd_model(np.array([q_test]))[0]
+                print(f"{q_test:<12.1e} {C_test:<15.2e}")
+            print()
+
+            # Calculate sample G integrand at v = v_min
+            v_test = v_array[0]
+            q_test = 1e6  # 중간 파수값
+            omega_test = q_test * v_test  # ω = q × v
+            E_star_test = self.material.get_modulus(omega_test, temperature=temperature)
+            E_abs_test = np.abs(E_star_test)
+            C_q_test = self.psd_model(np.array([q_test]))[0]
+            prefactor = self.g_calculator.prefactor
+
+            # G_integrand ~ q³ × C(q) × 2π × |E × prefactor|²
+            modulus_term = (E_abs_test * prefactor)**2
+            G_integrand_approx = q_test**3 * C_q_test * 2 * np.pi * modulus_term
+
+            print("G integrand 샘플 계산:")
+            print("-" * 60)
+            print(f"v = {v_test:.4e} m/s")
+            print(f"q = {q_test:.2e} 1/m")
+            print(f"ω = q × v = {omega_test:.2e} rad/s")
+            print(f"|E*(ω)| = {E_abs_test:.2e} Pa")
+            print(f"prefactor = {prefactor:.2e} 1/Pa")
+            print(f"|E × prefactor|² = {modulus_term:.2e} (dimensionless)")
+            print(f"q³ = {q_test**3:.2e} m⁻³")
+            print(f"C(q) = {C_q_test:.2e} m⁴")
+            print(f"q³ × C(q) = {q_test**3 * C_q_test:.2e} m")
+            print(f"G_integrand ≈ q³ × C(q) × 2π × |E×pf|² = {G_integrand_approx:.2e}")
+            print("="*80 + "\n")
+
             # Initialize calculation progress plots (3 subplots)
             try:
                 # Clear all three subplots
@@ -6785,6 +6848,43 @@ $\begin{array}{lcc}
                 if 'q3CPS' in mid_detail:
                     q3CPS = mid_detail['q3CPS']
                     self.mu_result_text.insert(tk.END, f"  q³C(q)P(q)S(q) max: {np.max(q3CPS):.2e}\n")
+
+                # === 추가: 각 항목별 기여도 분석 ===
+                self.mu_result_text.insert(tk.END, f"\n[항목별 기여도 분석]\n")
+                if 'q' in mid_detail and 'G' in mid_detail and 'P' in mid_detail:
+                    q_diag = mid_detail['q']
+                    G_diag = mid_detail['G']
+                    P_diag = mid_detail['P']
+                    S_diag = mid_detail.get('S', np.ones_like(P_diag))
+                    angle_diag = mid_detail.get('angle_integral', np.ones_like(P_diag))
+                    C_diag = mid_detail.get('C_q', self.psd_model(q_diag))
+
+                    # 중간 q 인덱스
+                    mid_idx = len(q_diag) // 2
+                    q_mid = q_diag[mid_idx]
+
+                    self.mu_result_text.insert(tk.END, f"  @ q = {q_mid:.2e} (1/m):\n")
+                    self.mu_result_text.insert(tk.END, f"    • q³ = {q_mid**3:.2e}\n")
+                    self.mu_result_text.insert(tk.END, f"    • C(q) = {C_diag[mid_idx]:.2e} m⁴\n")
+                    self.mu_result_text.insert(tk.END, f"    • G(q) = {G_diag[mid_idx]:.2e}\n")
+                    self.mu_result_text.insert(tk.END, f"    • P(q) = {P_diag[mid_idx]:.4f}  ← G가 크면 P→0!\n")
+                    self.mu_result_text.insert(tk.END, f"    • S(q) = {S_diag[mid_idx]:.4f}\n")
+                    self.mu_result_text.insert(tk.END, f"    • angle_int = {angle_diag[mid_idx]:.2e}\n")
+
+                    # 곱의 결과
+                    product = q_mid**3 * C_diag[mid_idx] * P_diag[mid_idx] * S_diag[mid_idx] * angle_diag[mid_idx]
+                    self.mu_result_text.insert(tk.END, f"    • 곱 = {product:.2e}\n")
+
+                    # P(q)가 작은 이유 분석
+                    if P_diag[mid_idx] < 0.1:
+                        self.mu_result_text.insert(tk.END, f"\n  *** P(q)가 작은 이유 ***\n")
+                        self.mu_result_text.insert(tk.END, f"    P = erf(1/(2√G)) 에서:\n")
+                        sqrt_G = np.sqrt(G_diag[mid_idx])
+                        arg = 1.0 / (2.0 * sqrt_G) if sqrt_G > 0 else 10.0
+                        self.mu_result_text.insert(tk.END, f"    √G = {sqrt_G:.2e}\n")
+                        self.mu_result_text.insert(tk.END, f"    1/(2√G) = {arg:.4f}\n")
+                        self.mu_result_text.insert(tk.END, f"    → G가 너무 크면 P→0, μ_visc→0\n")
+                        self.mu_result_text.insert(tk.END, f"    → σ₀를 높이면 G가 작아짐 (G ∝ 1/σ₀²)\n")
 
                 # C(q) - PSD values (critical for checking normalization)
                 if 'C_q' in mid_detail:
