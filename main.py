@@ -1007,15 +1007,73 @@ class PerssonModelGUI_V2:
         ttk.Button(extrap_frame, text="외삽 적용 및 그래프 업데이트",
                    command=self._apply_q1_extrapolation).pack(fill=tk.X, pady=5)
 
-        # 5. Results Display
-        result_frame = ttk.LabelFrame(left_scrollable, text="5. 결과", padding=5)
+        # 5. Parameter-based PSD Generation
+        param_psd_frame = ttk.LabelFrame(left_scrollable, text="5. 파라미터 PSD 생성", padding=5)
+        param_psd_frame.pack(fill=tk.X, pady=3)
+
+        ttk.Label(param_psd_frame, text="※ H, q0, C(q0), q1으로 Self-Affine PSD 생성",
+                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
+
+        # Enable parameter PSD overlay
+        self.enable_param_psd_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(param_psd_frame, text="파라미터 PSD 표시",
+                        variable=self.enable_param_psd_var).pack(anchor=tk.W)
+
+        # H input
+        h_row = ttk.Frame(param_psd_frame)
+        h_row.pack(fill=tk.X, pady=2)
+        ttk.Label(h_row, text="H (Hurst):", font=('Arial', 9), width=10).pack(side=tk.LEFT)
+        self.param_H_var = tk.StringVar(value="0.8")
+        ttk.Entry(h_row, textvariable=self.param_H_var, width=10).pack(side=tk.LEFT, padx=5)
+
+        # q0 input
+        q0_row = ttk.Frame(param_psd_frame)
+        q0_row.pack(fill=tk.X, pady=2)
+        ttk.Label(q0_row, text="q0:", font=('Arial', 9), width=10).pack(side=tk.LEFT)
+        self.param_q0_var = tk.StringVar(value="1e4")
+        ttk.Entry(q0_row, textvariable=self.param_q0_var, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Label(q0_row, text="1/m", font=('Arial', 8)).pack(side=tk.LEFT)
+
+        # C(q0) input
+        cq0_row = ttk.Frame(param_psd_frame)
+        cq0_row.pack(fill=tk.X, pady=2)
+        ttk.Label(cq0_row, text="C(q0):", font=('Arial', 9), width=10).pack(side=tk.LEFT)
+        self.param_Cq0_var = tk.StringVar(value="1e-18")
+        ttk.Entry(cq0_row, textvariable=self.param_Cq0_var, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Label(cq0_row, text="m^4", font=('Arial', 8)).pack(side=tk.LEFT)
+
+        # q1 input
+        q1_row = ttk.Frame(param_psd_frame)
+        q1_row.pack(fill=tk.X, pady=2)
+        ttk.Label(q1_row, text="q1:", font=('Arial', 9), width=10).pack(side=tk.LEFT)
+        self.param_q1_var = tk.StringVar(value="1e9")
+        ttk.Entry(q1_row, textvariable=self.param_q1_var, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Label(q1_row, text="1/m", font=('Arial', 8)).pack(side=tk.LEFT)
+
+        # Points per decade
+        ppd_row = ttk.Frame(param_psd_frame)
+        ppd_row.pack(fill=tk.X, pady=2)
+        ttk.Label(ppd_row, text="pts/decade:", font=('Arial', 9), width=10).pack(side=tk.LEFT)
+        self.param_ppd_var = tk.StringVar(value="20")
+        ttk.Entry(ppd_row, textvariable=self.param_ppd_var, width=10).pack(side=tk.LEFT, padx=5)
+
+        # Buttons
+        param_btn_row = ttk.Frame(param_psd_frame)
+        param_btn_row.pack(fill=tk.X, pady=5)
+        ttk.Button(param_btn_row, text="PSD 생성 및 플롯",
+                   command=self._generate_param_psd).pack(side=tk.LEFT, padx=2)
+        ttk.Button(param_btn_row, text="피팅값 가져오기",
+                   command=self._copy_fit_to_param).pack(side=tk.LEFT, padx=2)
+
+        # 6. Results Display
+        result_frame = ttk.LabelFrame(left_scrollable, text="6. 결과", padding=5)
         result_frame.pack(fill=tk.X, pady=3)
 
         self.psd_profile_result_text = tk.Text(result_frame, height=12, width=45, font=('Consolas', 9))
         self.psd_profile_result_text.pack(fill=tk.BOTH, expand=True)
 
-        # 6. Export Options
-        export_frame = ttk.LabelFrame(left_scrollable, text="6. 내보내기", padding=5)
+        # 7. Export Options
+        export_frame = ttk.LabelFrame(left_scrollable, text="7. 내보내기", padding=5)
         export_frame.pack(fill=tk.X, pady=3)
 
         export_btn_row = ttk.Frame(export_frame)
@@ -1296,6 +1354,13 @@ class PerssonModelGUI_V2:
             self.ax_psd_2d.axvline(x=target_q1, color='green', linestyle=':', alpha=0.5,
                                     label=f'Target q1: {target_q1:.1e}')
 
+        # Plot parameter-based PSD if enabled
+        if (hasattr(self, 'enable_param_psd_var') and self.enable_param_psd_var.get() and
+            hasattr(self, 'param_psd_data') and self.param_psd_data is not None):
+            pdata = self.param_psd_data
+            self.ax_psd_2d.loglog(pdata['q'], pdata['C'], 'm-', linewidth=2, alpha=0.7,
+                                   label=f'Param PSD (H={pdata["H"]:.3f})')
+
         self.ax_psd_2d.set_title('2D Isotropic PSD C(q)', fontweight='bold')
         self.ax_psd_2d.set_xlabel('Wavenumber q (1/m)')
         self.ax_psd_2d.set_ylabel('C(q) (m^4)')
@@ -1463,6 +1528,123 @@ class PerssonModelGUI_V2:
             import traceback
             traceback.print_exc()
 
+    def _generate_param_psd(self):
+        """Generate PSD from parameters (H, q0, C(q0), q1)."""
+        try:
+            # Get parameters
+            H = float(self.param_H_var.get())
+            q0 = float(self.param_q0_var.get())
+            C_q0 = float(self.param_Cq0_var.get())
+            q1 = float(self.param_q1_var.get())
+            pts_per_decade = int(self.param_ppd_var.get())
+
+            # Validate
+            if H <= 0 or H >= 1:
+                messagebox.showwarning("경고", "H는 0 < H < 1 범위여야 합니다.")
+                return
+            if q0 >= q1:
+                messagebox.showwarning("경고", "q0 < q1 이어야 합니다.")
+                return
+            if C_q0 <= 0:
+                messagebox.showwarning("경고", "C(q0) > 0 이어야 합니다.")
+                return
+
+            # Generate q array
+            log_q0 = np.log10(q0)
+            log_q1 = np.log10(q1)
+            n_decades = log_q1 - log_q0
+            n_points = max(10, int(n_decades * pts_per_decade))
+
+            q_param = np.logspace(log_q0, log_q1, n_points)
+
+            # Generate self-affine PSD: C(q) = C(q0) * (q/q0)^(-2(1+H))
+            slope = -2 * (1 + H)
+            C_param = C_q0 * (q_param / q0) ** slope
+
+            # Store parameter PSD data
+            self.param_psd_data = {
+                'q': q_param,
+                'C': C_param,
+                'H': H,
+                'q0': q0,
+                'C_q0': C_q0,
+                'q1': q1,
+                'slope': slope
+            }
+
+            # Calculate h_rms and h'_rms from parameter PSD
+            # h_rms^2 = 2*pi * integral(q*C(q)*dq)
+            h_rms_sq = 2 * np.pi * np.trapezoid(q_param * C_param, q_param)
+            h_rms = np.sqrt(max(h_rms_sq, 0))
+
+            # h'_rms^2 = 2*pi * integral(q^3*C(q)*dq)
+            slope_sq = 2 * np.pi * np.trapezoid(q_param**3 * C_param, q_param)
+            h_rms_slope = np.sqrt(max(slope_sq, 0))
+
+            self.param_psd_data['h_rms'] = h_rms
+            self.param_psd_data['h_rms_slope'] = h_rms_slope
+
+            # Enable display and update plot
+            self.enable_param_psd_var.set(True)
+            self._plot_profile_psd()
+            self._update_psd_profile_results()
+
+            messagebox.showinfo("완료",
+                f"파라미터 PSD 생성 완료\n\n"
+                f"H = {H:.4f}\n"
+                f"q0 = {q0:.2e} 1/m\n"
+                f"C(q0) = {C_q0:.2e} m^4\n"
+                f"q1 = {q1:.2e} 1/m\n\n"
+                f"h_rms = {h_rms*1e6:.4f} um\n"
+                f"h'_rms (xi) = {h_rms_slope:.6f}")
+
+            self.status_var.set(f"파라미터 PSD 생성: H={H:.3f}, h'_rms={h_rms_slope:.4f}")
+
+        except ValueError as e:
+            messagebox.showerror("오류", f"파라미터 입력 오류: {e}")
+        except Exception as e:
+            messagebox.showerror("오류", f"PSD 생성 실패: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _copy_fit_to_param(self):
+        """Copy fitting results to parameter PSD inputs."""
+        if self.profile_psd_analyzer is None:
+            messagebox.showwarning("경고", "먼저 PSD를 계산하고 피팅을 실행하세요.")
+            return
+
+        # Get fit result
+        fit_result = self.profile_psd_analyzer.fit_result_full
+        if self.fit_target_var.get() == "top":
+            fit_result = self.profile_psd_analyzer.fit_result_top
+
+        if fit_result is None:
+            messagebox.showwarning("경고", "피팅 결과가 없습니다. 먼저 피팅을 실행하세요.")
+            return
+
+        try:
+            # Copy values
+            H = fit_result['H']
+            q0 = fit_result.get('q0', self.profile_psd_analyzer.q[0])
+            C_q0 = fit_result.get('C0', self.profile_psd_analyzer.C_full_2d[0])
+
+            # Get q1 from data or extrapolation setting
+            if hasattr(self.profile_psd_analyzer, 'extrap_info') and self.profile_psd_analyzer.extrap_info is not None:
+                q1 = self.profile_psd_analyzer.extrap_info['target_q1']
+            else:
+                q1 = self.profile_psd_analyzer.q[-1]
+
+            # Update UI
+            self.param_H_var.set(f"{H:.4f}")
+            self.param_q0_var.set(f"{q0:.2e}")
+            self.param_Cq0_var.set(f"{C_q0:.2e}")
+            self.param_q1_var.set(f"{q1:.2e}")
+
+            self.status_var.set(f"피팅값 복사 완료: H={H:.4f}, q0={q0:.2e}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"피팅값 복사 실패: {e}")
+
     def _update_psd_profile_results(self):
         """Update results text display."""
         self.psd_profile_result_text.delete(1.0, tk.END)
@@ -1549,6 +1731,18 @@ class PerssonModelGUI_V2:
             lines.append(f"\n[With Extrapolation]")
             lines.append(f"  h_rms (extrap): {params_ext['h_rms']*1e6:.4f} um")
             lines.append(f"  h'_rms (xi, extrap): {params_ext['h_rms_slope']:.6f}")
+
+        # Parameter PSD results
+        if hasattr(self, 'param_psd_data') and self.param_psd_data is not None:
+            pdata = self.param_psd_data
+            lines.append(f"\n[Parameter PSD]")
+            lines.append(f"  H: {pdata['H']:.4f}")
+            lines.append(f"  q0: {pdata['q0']:.2e} 1/m")
+            lines.append(f"  C(q0): {pdata['C_q0']:.2e} m^4")
+            lines.append(f"  q1: {pdata['q1']:.2e} 1/m")
+            lines.append(f"  slope: {pdata['slope']:.4f}")
+            lines.append(f"  h_rms: {pdata['h_rms']*1e6:.4f} um")
+            lines.append(f"  h'_rms (xi): {pdata['h_rms_slope']:.6f}")
 
         self.psd_profile_result_text.insert(tk.END, "\n".join(lines))
 
