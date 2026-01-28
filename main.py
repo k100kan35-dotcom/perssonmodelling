@@ -5484,9 +5484,13 @@ $\begin{array}{lcc}
 
     def _calculate_rms_slope(self):
         """Calculate h'rms and Local Strain from PSD data."""
-        # Check if PSD data is available
-        if self.psd_model is None:
-            messagebox.showwarning("경고", "먼저 PSD 데이터를 로드하세요.")
+        # Check if PSD data is available from Tab 0
+        tab0_ready = getattr(self, 'tab0_finalized', False)
+        if not tab0_ready or self.psd_model is None:
+            messagebox.showwarning("경고",
+                "PSD 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 0 (PSD 생성)에서 PSD를 확정한 후\n"
+                "'PSD 확정 → Tab 3' 버튼을 클릭하세요.")
             return
 
         try:
@@ -6630,8 +6634,20 @@ $\begin{array}{lcc}
         - S(q) = γ + (1-γ)P(q)² : contact correction factor
         - Im[E(ω,T)] : loss modulus (optionally corrected by g(strain))
         """
-        if self.material is None or self.psd_model is None:
-            messagebox.showwarning("경고", "먼저 재료(DMA)와 PSD 데이터를 로드하세요.")
+        # Check if data is from Tab 0 and Tab 1
+        tab0_ready = getattr(self, 'tab0_finalized', False)
+        tab1_ready = getattr(self, 'tab1_finalized', False)
+
+        if not tab0_ready or self.psd_model is None:
+            messagebox.showwarning("경고",
+                "PSD 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 0 (PSD 생성)에서 PSD를 확정하세요.")
+            return
+
+        if not tab1_ready or self.material is None:
+            messagebox.showwarning("경고",
+                "마스터 커브 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 1 (마스터 커브 생성)에서 마스터 커브를 확정하세요.")
             return
 
         if not self.results or '2d_results' not in self.results:
@@ -7946,8 +7962,20 @@ $\begin{array}{lcc}
 
     def _calculate_strain_map(self):
         """Calculate and visualize local strain map."""
-        if self.material is None or self.psd_model is None:
-            messagebox.showwarning("경고", "먼저 재료(DMA)와 PSD 데이터를 로드하세요.")
+        # Check if data is from Tab 0 and Tab 1
+        tab0_ready = getattr(self, 'tab0_finalized', False)
+        tab1_ready = getattr(self, 'tab1_finalized', False)
+
+        if not tab0_ready or self.psd_model is None:
+            messagebox.showwarning("경고",
+                "PSD 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 0 (PSD 생성)에서 PSD를 확정하세요.")
+            return
+
+        if not tab1_ready or self.material is None:
+            messagebox.showwarning("경고",
+                "마스터 커브 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 1 (마스터 커브 생성)에서 마스터 커브를 확정하세요.")
             return
 
         if not self.results or '2d_results' not in self.results:
