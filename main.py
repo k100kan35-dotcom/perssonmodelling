@@ -76,6 +76,7 @@ from persson_model.core.friction import (
     RMSSlopeCalculator
 )
 from persson_model.core.master_curve import MasterCurveGenerator, load_multi_temp_dma
+from persson_model.core.psd_from_profile import ProfilePSDAnalyzer, self_affine_psd_model
 
 # Configure matplotlib for better Korean font support
 # IMPORTANT: Set unicode_minus FIRST to avoid minus sign warnings
@@ -142,6 +143,10 @@ class PerssonModelGUI_V2:
         self.rms_slope_calculator = None  # RMSSlopeCalculator instance
         self.rms_slope_profiles = None  # Calculated profiles (q, xi, strain, hrms)
         self.local_strain_array = None  # Local strain for mu_visc calculation
+
+        # Profile PSD analyzer (Tab 0)
+        self.profile_psd_analyzer = None  # ProfilePSDAnalyzer instance
+        self.profile_psd_data = None  # Loaded profile data (x, h)
 
         # Reference μ_visc data for comparison (Persson program output)
         self._init_reference_mu_data()
@@ -568,64 +573,69 @@ class PerssonModelGUI_V2:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Tab 0: Master Curve Generation (NEW - First Tab)
+        # Tab 0: PSD from Profile (NEW - First Tab)
+        self.tab_psd_profile = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_psd_profile, text="0. PSD 생성")
+        self._create_psd_profile_tab(self.tab_psd_profile)
+
+        # Tab 1: Master Curve Generation
         self.tab_master_curve = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_master_curve, text="0. 마스터 커브 생성")
+        self.notebook.add(self.tab_master_curve, text="1. 마스터 커브 생성")
         self._create_master_curve_tab(self.tab_master_curve)
 
-        # Tab 1: Input Data Verification
+        # Tab 2: Input Data Verification
         self.tab_verification = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_verification, text="1. 입력 데이터 검증")
+        self.notebook.add(self.tab_verification, text="2. 입력 데이터 검증")
         self._create_verification_tab(self.tab_verification)
 
-        # Tab 2: Calculation Parameters
+        # Tab 3: Calculation Parameters
         self.tab_parameters = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_parameters, text="2. 계산 설정")
+        self.notebook.add(self.tab_parameters, text="3. 계산 설정")
         self._create_parameters_tab(self.tab_parameters)
 
-        # Tab 3: G(q,v) Results
+        # Tab 4: G(q,v) Results
         self.tab_results = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_results, text="3. G(q,v) 결과")
+        self.notebook.add(self.tab_results, text="4. G(q,v) 결과")
         self._create_results_tab(self.tab_results)
 
-        # Tab 4: h'rms / Local Strain
+        # Tab 5: h'rms / Local Strain
         self.tab_rms_slope = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_rms_slope, text="4. h'rms/Local Strain")
+        self.notebook.add(self.tab_rms_slope, text="5. h'rms/Local Strain")
         self._create_rms_slope_tab(self.tab_rms_slope)
 
-        # Tab 5: mu_visc Calculation
+        # Tab 6: mu_visc Calculation
         self.tab_mu_visc = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_mu_visc, text="5. μ_visc 계산")
+        self.notebook.add(self.tab_mu_visc, text="6. μ_visc 계산")
         self._create_mu_visc_tab(self.tab_mu_visc)
 
-        # Tab 6: Local Strain Map (NEW)
+        # Tab 7: Local Strain Map
         self.tab_strain_map = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_strain_map, text="6. Local Strain Map")
+        self.notebook.add(self.tab_strain_map, text="7. Local Strain Map")
         self._create_strain_map_tab(self.tab_strain_map)
 
-        # Tab 7: Integrand Visualization
+        # Tab 8: Integrand Visualization
         self.tab_integrand = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_integrand, text="7. 피적분함수 분석")
+        self.notebook.add(self.tab_integrand, text="8. 피적분함수 분석")
         self._create_integrand_tab(self.tab_integrand)
 
-        # Tab 8: Equations Summary
+        # Tab 9: Equations Summary
         self.tab_equations = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_equations, text="8. 수식 정리")
+        self.notebook.add(self.tab_equations, text="9. 수식 정리")
         self._create_equations_tab(self.tab_equations)
 
-        # Tab 9: Variable Relationship
+        # Tab 10: Variable Relationship
         self.tab_variables = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_variables, text="9. 변수 관계")
+        self.notebook.add(self.tab_variables, text="10. 변수 관계")
         self._create_variables_tab(self.tab_variables)
 
-        # Tab 10: Debug Log (NEW)
+        # Tab 11: Debug Log
         self.tab_debug = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_debug, text="10. 디버그 로그")
+        self.notebook.add(self.tab_debug, text="11. 디버그 로그")
         self._create_debug_tab(self.tab_debug)
 
-        # Tab 11: Friction Factor Analysis (NEW)
+        # Tab 12: Friction Factor Analysis
         self.tab_friction_factors = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_friction_factors, text="11. 마찰계수 영향 인자")
+        self.notebook.add(self.tab_friction_factors, text="12. 마찰계수 영향 인자")
         self._create_friction_factors_tab(self.tab_friction_factors)
 
         # Initialize debug log storage
@@ -781,6 +791,644 @@ class PerssonModelGUI_V2:
             text="그래프 저장",
             command=lambda: self._save_plot(self.fig_verification, "verification_plot")
         ).pack(side=tk.LEFT, padx=5)
+
+    def _create_psd_profile_tab(self, parent):
+        """Create PSD from Profile tab for calculating PSD from surface height data."""
+        # Main container
+        main_container = ttk.Frame(parent)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Left panel for controls (fixed width)
+        left_frame = ttk.Frame(main_container, width=400)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        left_frame.pack_propagate(False)
+
+        # Add scrollbar to left panel
+        left_canvas = tk.Canvas(left_frame, highlightthickness=0)
+        left_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=left_canvas.yview)
+        left_scrollable = ttk.Frame(left_canvas)
+
+        left_scrollable.bind(
+            "<Configure>",
+            lambda e: left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+        )
+
+        left_canvas.create_window((0, 0), window=left_scrollable, anchor="nw")
+        left_canvas.configure(yscrollcommand=left_scrollbar.set)
+
+        left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            left_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        left_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # ============== Left Panel: Controls ==============
+
+        # 1. Description
+        desc_frame = ttk.LabelFrame(left_scrollable, text="탭 설명", padding=5)
+        desc_frame.pack(fill=tk.X, pady=3)
+
+        desc_text = (
+            "표면 높이 프로파일 데이터로부터\n"
+            "Power Spectral Density (PSD)를 계산합니다.\n\n"
+            "• Full PSD: 전체 표면 거칠기\n"
+            "• Top PSD: 상부 표면만 (h>0)\n"
+            "  (Ref: J. Chem. Phys. 162, 074704)"
+        )
+        ttk.Label(desc_frame, text=desc_text, font=('Arial', 9), justify=tk.LEFT).pack(anchor=tk.W)
+
+        # 2. Data Loading
+        load_frame = ttk.LabelFrame(left_scrollable, text="1. 데이터 로드", padding=5)
+        load_frame.pack(fill=tk.X, pady=3)
+
+        # File path display
+        self.psd_profile_file_var = tk.StringVar(value="(파일 선택 안됨)")
+        ttk.Label(load_frame, textvariable=self.psd_profile_file_var,
+                  font=('Arial', 8), foreground='gray').pack(fill=tk.X)
+
+        # Load button
+        ttk.Button(load_frame, text="프로파일 데이터 로드 (.txt, .csv)",
+                   command=self._load_profile_data).pack(fill=tk.X, pady=2)
+
+        # Column settings
+        col_frame = ttk.Frame(load_frame)
+        col_frame.pack(fill=tk.X, pady=2)
+
+        ttk.Label(col_frame, text="X열:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.profile_x_col_var = tk.StringVar(value="0")
+        ttk.Entry(col_frame, textvariable=self.profile_x_col_var, width=3).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(col_frame, text="H열:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 0))
+        self.profile_h_col_var = tk.StringVar(value="1")
+        ttk.Entry(col_frame, textvariable=self.profile_h_col_var, width=3).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(col_frame, text="Skip:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 0))
+        self.profile_skip_var = tk.StringVar(value="0")
+        ttk.Entry(col_frame, textvariable=self.profile_skip_var, width=3).pack(side=tk.LEFT, padx=2)
+
+        # Unit conversion
+        unit_frame = ttk.LabelFrame(load_frame, text="단위 변환", padding=3)
+        unit_frame.pack(fill=tk.X, pady=2)
+
+        unit_row1 = ttk.Frame(unit_frame)
+        unit_row1.pack(fill=tk.X)
+        ttk.Label(unit_row1, text="X 단위:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.profile_x_unit_var = tk.StringVar(value="um")
+        unit_combo_x = ttk.Combobox(unit_row1, textvariable=self.profile_x_unit_var,
+                                     values=['m', 'mm', 'um', 'nm'], width=6, state='readonly')
+        unit_combo_x.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(unit_row1, text="H 단위:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 0))
+        self.profile_h_unit_var = tk.StringVar(value="um")
+        unit_combo_h = ttk.Combobox(unit_row1, textvariable=self.profile_h_unit_var,
+                                     values=['m', 'mm', 'um', 'nm'], width=6, state='readonly')
+        unit_combo_h.pack(side=tk.LEFT, padx=2)
+
+        # Data info
+        self.profile_data_info_var = tk.StringVar(value="데이터: -")
+        ttk.Label(load_frame, textvariable=self.profile_data_info_var,
+                  font=('Arial', 8)).pack(fill=tk.X, pady=2)
+
+        # 3. PSD Calculation Settings
+        calc_frame = ttk.LabelFrame(left_scrollable, text="2. PSD 계산 설정", padding=5)
+        calc_frame.pack(fill=tk.X, pady=3)
+
+        # Detrend method
+        detrend_row = ttk.Frame(calc_frame)
+        detrend_row.pack(fill=tk.X, pady=2)
+        ttk.Label(detrend_row, text="Detrend:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.profile_detrend_var = tk.StringVar(value="mean")
+        ttk.Combobox(detrend_row, textvariable=self.profile_detrend_var,
+                     values=['mean', 'linear', 'quadratic'], width=10, state='readonly').pack(side=tk.LEFT, padx=5)
+
+        # Window function
+        window_row = ttk.Frame(calc_frame)
+        window_row.pack(fill=tk.X, pady=2)
+        ttk.Label(window_row, text="Window:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.profile_window_var = tk.StringVar(value="hann")
+        ttk.Combobox(window_row, textvariable=self.profile_window_var,
+                     values=['hann', 'hamming', 'blackman', 'none'], width=10, state='readonly').pack(side=tk.LEFT, padx=5)
+
+        # PSD type selection
+        psd_type_frame = ttk.Frame(calc_frame)
+        psd_type_frame.pack(fill=tk.X, pady=2)
+
+        self.calc_full_psd_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(psd_type_frame, text="Full PSD",
+                        variable=self.calc_full_psd_var).pack(side=tk.LEFT)
+
+        self.calc_top_psd_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(psd_type_frame, text="Top PSD",
+                        variable=self.calc_top_psd_var).pack(side=tk.LEFT, padx=10)
+
+        # Calculate button
+        ttk.Button(calc_frame, text="PSD 계산",
+                   command=self._calculate_profile_psd).pack(fill=tk.X, pady=5)
+
+        # 4. Fitting Settings
+        fit_frame = ttk.LabelFrame(left_scrollable, text="3. Self-Affine 피팅", padding=5)
+        fit_frame.pack(fill=tk.X, pady=3)
+
+        # Fitting range
+        range_row = ttk.Frame(fit_frame)
+        range_row.pack(fill=tk.X, pady=2)
+
+        ttk.Label(range_row, text="q_min:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.fit_q_min_var = tk.StringVar(value="auto")
+        ttk.Entry(range_row, textvariable=self.fit_q_min_var, width=8).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(range_row, text="q_max:", font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 0))
+        self.fit_q_max_var = tk.StringVar(value="auto")
+        ttk.Entry(range_row, textvariable=self.fit_q_max_var, width=8).pack(side=tk.LEFT, padx=2)
+
+        # Auto range option
+        self.fit_auto_range_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(fit_frame, text="자동 직선 구간 탐지",
+                        variable=self.fit_auto_range_var).pack(anchor=tk.W)
+
+        # PSD to fit
+        fit_target_row = ttk.Frame(fit_frame)
+        fit_target_row.pack(fill=tk.X, pady=2)
+        ttk.Label(fit_target_row, text="피팅 대상:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.fit_target_var = tk.StringVar(value="full")
+        ttk.Radiobutton(fit_target_row, text="Full", variable=self.fit_target_var,
+                        value="full").pack(side=tk.LEFT)
+        ttk.Radiobutton(fit_target_row, text="Top", variable=self.fit_target_var,
+                        value="top").pack(side=tk.LEFT)
+
+        # Fit button
+        ttk.Button(fit_frame, text="Self-Affine 피팅 실행",
+                   command=self._fit_profile_psd).pack(fill=tk.X, pady=5)
+
+        # 5. Results Display
+        result_frame = ttk.LabelFrame(left_scrollable, text="4. 결과", padding=5)
+        result_frame.pack(fill=tk.X, pady=3)
+
+        self.psd_profile_result_text = tk.Text(result_frame, height=12, width=45, font=('Consolas', 9))
+        self.psd_profile_result_text.pack(fill=tk.BOTH, expand=True)
+
+        # 6. Export Options
+        export_frame = ttk.LabelFrame(left_scrollable, text="5. 내보내기", padding=5)
+        export_frame.pack(fill=tk.X, pady=3)
+
+        export_btn_row = ttk.Frame(export_frame)
+        export_btn_row.pack(fill=tk.X)
+
+        ttk.Button(export_btn_row, text="PSD CSV 저장",
+                   command=self._export_profile_psd_csv).pack(side=tk.LEFT, padx=2)
+        ttk.Button(export_btn_row, text="그래프 저장",
+                   command=self._save_profile_psd_plot).pack(side=tk.LEFT, padx=2)
+
+        # Apply to calculation
+        apply_frame = ttk.Frame(export_frame)
+        apply_frame.pack(fill=tk.X, pady=5)
+
+        self.apply_psd_type_var = tk.StringVar(value="full")
+        ttk.Label(apply_frame, text="적용할 PSD:", font=('Arial', 9)).pack(side=tk.LEFT)
+        ttk.Radiobutton(apply_frame, text="Full", variable=self.apply_psd_type_var,
+                        value="full").pack(side=tk.LEFT)
+        ttk.Radiobutton(apply_frame, text="Top", variable=self.apply_psd_type_var,
+                        value="top").pack(side=tk.LEFT)
+
+        ttk.Button(export_frame, text="마찰 계산에 적용 (Tab 2로 전송)",
+                   command=self._apply_profile_psd_to_calculation).pack(fill=tk.X, pady=2)
+
+        # ============== Right Panel: Plots ==============
+        right_frame = ttk.Frame(main_container)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # Create figure with subplots
+        self.fig_psd_profile = Figure(figsize=(12, 9), dpi=100)
+
+        # 2x2 subplot layout
+        # Top-left: Raw profile
+        self.ax_profile_raw = self.fig_psd_profile.add_subplot(221)
+        self.ax_profile_raw.set_title('표면 프로파일', fontweight='bold')
+        self.ax_profile_raw.set_xlabel('Position (m)')
+        self.ax_profile_raw.set_ylabel('Height (m)')
+        self.ax_profile_raw.grid(True, alpha=0.3)
+
+        # Top-right: Profile histogram
+        self.ax_profile_hist = self.fig_psd_profile.add_subplot(222)
+        self.ax_profile_hist.set_title('높이 분포', fontweight='bold')
+        self.ax_profile_hist.set_xlabel('Height (m)')
+        self.ax_profile_hist.set_ylabel('Count')
+        self.ax_profile_hist.grid(True, alpha=0.3)
+
+        # Bottom-left: 1D PSD
+        self.ax_psd_1d = self.fig_psd_profile.add_subplot(223)
+        self.ax_psd_1d.set_title('1D PSD C₁ᴅ(q)', fontweight='bold')
+        self.ax_psd_1d.set_xlabel('Wavenumber q (1/m)')
+        self.ax_psd_1d.set_ylabel('C₁ᴅ(q) (m³)')
+        self.ax_psd_1d.set_xscale('log')
+        self.ax_psd_1d.set_yscale('log')
+        self.ax_psd_1d.grid(True, alpha=0.3, which='both')
+
+        # Bottom-right: 2D isotropic PSD (main result)
+        self.ax_psd_2d = self.fig_psd_profile.add_subplot(224)
+        self.ax_psd_2d.set_title('2D Isotropic PSD C(q)', fontweight='bold')
+        self.ax_psd_2d.set_xlabel('Wavenumber q (1/m)')
+        self.ax_psd_2d.set_ylabel('C(q) (m⁴)')
+        self.ax_psd_2d.set_xscale('log')
+        self.ax_psd_2d.set_yscale('log')
+        self.ax_psd_2d.grid(True, alpha=0.3, which='both')
+
+        self.fig_psd_profile.tight_layout()
+
+        # Canvas
+        self.canvas_psd_profile = FigureCanvasTkAgg(self.fig_psd_profile, master=right_frame)
+        self.canvas_psd_profile.draw()
+        self.canvas_psd_profile.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Toolbar
+        toolbar_frame = ttk.Frame(right_frame)
+        toolbar_frame.pack(fill=tk.X)
+        NavigationToolbar2Tk(self.canvas_psd_profile, toolbar_frame)
+
+    def _load_profile_data(self):
+        """Load surface profile data from file."""
+        filepath = filedialog.askopenfilename(
+            title="표면 프로파일 데이터 선택",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filepath:
+            return
+
+        try:
+            # Get settings
+            x_col = int(self.profile_x_col_var.get())
+            h_col = int(self.profile_h_col_var.get())
+            skip_header = int(self.profile_skip_var.get())
+            x_unit = self.profile_x_unit_var.get()
+            h_unit = self.profile_h_unit_var.get()
+
+            # Create analyzer
+            self.profile_psd_analyzer = ProfilePSDAnalyzer()
+            self.profile_psd_analyzer.load_data(
+                filepath,
+                x_col=x_col,
+                h_col=h_col,
+                skip_header=skip_header,
+                x_unit=x_unit,
+                h_unit=h_unit
+            )
+
+            # Store data
+            self.profile_psd_data = {
+                'x': self.profile_psd_analyzer.x,
+                'h': self.profile_psd_analyzer.h,
+                'filepath': filepath
+            }
+
+            # Update UI
+            filename = os.path.basename(filepath)
+            self.psd_profile_file_var.set(f"파일: {filename}")
+
+            n = len(self.profile_psd_analyzer.x)
+            dx = np.abs(self.profile_psd_analyzer.x[1] - self.profile_psd_analyzer.x[0])
+            L = n * dx
+            h_rms = np.std(self.profile_psd_analyzer.h)
+
+            self.profile_data_info_var.set(
+                f"데이터: {n} points, L={L*1e3:.3f} mm, dx={dx*1e6:.3f} μm, h_rms={h_rms*1e6:.3f} μm"
+            )
+
+            # Plot raw profile
+            self._plot_profile_raw()
+
+            self.status_var.set(f"프로파일 데이터 로드 완료: {filename}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"데이터 로드 실패: {e}")
+
+    def _plot_profile_raw(self):
+        """Plot raw profile data."""
+        if self.profile_psd_analyzer is None:
+            return
+
+        x = self.profile_psd_analyzer.x
+        h = self.profile_psd_analyzer.h
+
+        # Plot 1: Raw profile
+        self.ax_profile_raw.clear()
+        self.ax_profile_raw.plot(x * 1e3, h * 1e6, 'b-', linewidth=0.5)
+        self.ax_profile_raw.set_title('표면 프로파일', fontweight='bold')
+        self.ax_profile_raw.set_xlabel('Position (mm)')
+        self.ax_profile_raw.set_ylabel('Height (μm)')
+        self.ax_profile_raw.grid(True, alpha=0.3)
+
+        # Plot 2: Height histogram
+        self.ax_profile_hist.clear()
+        h_detrended = h - np.mean(h)
+        self.ax_profile_hist.hist(h_detrended * 1e6, bins=50, color='steelblue', edgecolor='white', alpha=0.7)
+        self.ax_profile_hist.axvline(x=0, color='r', linestyle='--', linewidth=1, label='Mean')
+        self.ax_profile_hist.set_title('높이 분포 (Detrended)', fontweight='bold')
+        self.ax_profile_hist.set_xlabel('Height (μm)')
+        self.ax_profile_hist.set_ylabel('Count')
+        self.ax_profile_hist.grid(True, alpha=0.3)
+
+        # Mark top region
+        n_top = np.sum(h_detrended > 0)
+        phi = n_top / len(h_detrended)
+        self.ax_profile_hist.axvspan(0, np.max(h_detrended) * 1e6, alpha=0.2, color='green',
+                                      label=f'Top (φ={phi:.2f})')
+        self.ax_profile_hist.legend(fontsize=8)
+
+        self.fig_psd_profile.tight_layout()
+        self.canvas_psd_profile.draw()
+
+    def _calculate_profile_psd(self):
+        """Calculate PSD from profile data."""
+        if self.profile_psd_analyzer is None:
+            messagebox.showwarning("경고", "먼저 프로파일 데이터를 로드하세요.")
+            return
+
+        try:
+            window = self.profile_window_var.get()
+            detrend = self.profile_detrend_var.get()
+            calc_top = self.calc_top_psd_var.get()
+
+            # Calculate PSD
+            self.profile_psd_analyzer.calculate_psd(
+                window=window,
+                detrend_method=detrend,
+                calculate_top=calc_top
+            )
+
+            # Plot results
+            self._plot_profile_psd()
+
+            # Update results text
+            self._update_psd_profile_results()
+
+            self.status_var.set("PSD 계산 완료")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"PSD 계산 실패: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _plot_profile_psd(self):
+        """Plot calculated PSD."""
+        if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
+            return
+
+        q = self.profile_psd_analyzer.q
+        C_full_1d = self.profile_psd_analyzer.C_full_1d
+        C_full_2d = self.profile_psd_analyzer.C_full_2d
+        C_top_1d = self.profile_psd_analyzer.C_top_1d
+        C_top_2d = self.profile_psd_analyzer.C_top_2d
+
+        # Plot 1D PSD
+        self.ax_psd_1d.clear()
+        if C_full_1d is not None:
+            self.ax_psd_1d.loglog(q, C_full_1d, 'b-', linewidth=1.5, label='Full PSD', alpha=0.8)
+        if C_top_1d is not None:
+            self.ax_psd_1d.loglog(q, C_top_1d, 'r-', linewidth=1.5, label='Top PSD', alpha=0.8)
+
+        self.ax_psd_1d.set_title('1D PSD C₁ᴅ(q)', fontweight='bold')
+        self.ax_psd_1d.set_xlabel('Wavenumber q (1/m)')
+        self.ax_psd_1d.set_ylabel('C₁ᴅ(q) (m³)')
+        self.ax_psd_1d.grid(True, alpha=0.3, which='both')
+        self.ax_psd_1d.legend(fontsize=8)
+
+        # Plot 2D isotropic PSD
+        self.ax_psd_2d.clear()
+        if C_full_2d is not None:
+            self.ax_psd_2d.loglog(q, C_full_2d, 'b-', linewidth=2, label='Full PSD', alpha=0.8)
+        if C_top_2d is not None:
+            self.ax_psd_2d.loglog(q, C_top_2d, 'r-', linewidth=2, label='Top PSD', alpha=0.8)
+
+        # Add fitted lines if available
+        if self.profile_psd_analyzer.fit_result_full is not None:
+            fit = self.profile_psd_analyzer.fit_result_full
+            H = fit['H']
+            slope = fit['slope']
+            self.ax_psd_2d.loglog(fit['q_fit'], fit['C_fit'], 'b--', linewidth=1.5,
+                                   label=f'Fit (Full): H={H:.3f}, slope={slope:.2f}')
+
+        if self.profile_psd_analyzer.fit_result_top is not None:
+            fit = self.profile_psd_analyzer.fit_result_top
+            H = fit['H']
+            slope = fit['slope']
+            self.ax_psd_2d.loglog(fit['q_fit'], fit['C_fit'], 'r--', linewidth=1.5,
+                                   label=f'Fit (Top): H={H:.3f}, slope={slope:.2f}')
+
+        self.ax_psd_2d.set_title('2D Isotropic PSD C(q)', fontweight='bold')
+        self.ax_psd_2d.set_xlabel('Wavenumber q (1/m)')
+        self.ax_psd_2d.set_ylabel('C(q) (m⁴)')
+        self.ax_psd_2d.grid(True, alpha=0.3, which='both')
+        self.ax_psd_2d.legend(fontsize=8, loc='lower left')
+
+        self.fig_psd_profile.tight_layout()
+        self.canvas_psd_profile.draw()
+
+    def _fit_profile_psd(self):
+        """Fit PSD to self-affine fractal model."""
+        if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
+            messagebox.showwarning("경고", "먼저 PSD를 계산하세요.")
+            return
+
+        try:
+            # Get settings
+            auto_range = self.fit_auto_range_var.get()
+            use_top = self.fit_target_var.get() == "top"
+
+            q_min = None
+            q_max = None
+            if not auto_range:
+                q_min_str = self.fit_q_min_var.get()
+                q_max_str = self.fit_q_max_var.get()
+                if q_min_str.lower() != "auto":
+                    q_min = float(q_min_str)
+                if q_max_str.lower() != "auto":
+                    q_max = float(q_max_str)
+
+            # Perform fitting
+            result = self.profile_psd_analyzer.fit_model(
+                q_min=q_min,
+                q_max=q_max,
+                fit_mode='slope_only',
+                auto_range=auto_range,
+                use_top_psd=use_top
+            )
+
+            # Also calculate surface parameters
+            self.profile_psd_analyzer.get_surface_parameters(use_top_psd=use_top)
+
+            # Update plot and results
+            self._plot_profile_psd()
+            self._update_psd_profile_results()
+
+            self.status_var.set(f"피팅 완료: H = {result['H']:.4f}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"피팅 실패: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _update_psd_profile_results(self):
+        """Update results text display."""
+        self.psd_profile_result_text.delete(1.0, tk.END)
+
+        if self.profile_psd_analyzer is None:
+            return
+
+        lines = []
+        lines.append("=" * 45)
+        lines.append("PSD 계산 결과")
+        lines.append("=" * 45)
+
+        # Data info
+        if self.profile_psd_data is not None:
+            x = self.profile_psd_analyzer.x
+            h = self.profile_psd_analyzer.h
+            n = len(x)
+            dx = np.abs(x[1] - x[0])
+            L = n * dx
+
+            lines.append(f"\n[데이터 정보]")
+            lines.append(f"  데이터 점: {n}")
+            lines.append(f"  전체 길이: {L*1e3:.4f} mm")
+            lines.append(f"  샘플링 간격: {dx*1e6:.4f} μm")
+            lines.append(f"  h_rms (raw): {np.std(h)*1e6:.4f} μm")
+
+        # Top PSD info
+        if self.profile_psd_analyzer.phi is not None:
+            phi = self.profile_psd_analyzer.phi
+            lines.append(f"\n[Top PSD 정보]")
+            lines.append(f"  φ (상부 비율): {phi:.4f} ({phi*100:.1f}%)")
+            lines.append(f"  1/φ (보정 계수): {1/phi:.4f}")
+
+        # Fit results
+        if self.profile_psd_analyzer.fit_result_full is not None:
+            fit = self.profile_psd_analyzer.fit_result_full
+            lines.append(f"\n[Full PSD 피팅 결과]")
+            lines.append(f"  Hurst Exponent H: {fit['H']:.4f}")
+            lines.append(f"  기울기 (log-log): {fit['slope']:.4f}")
+            lines.append(f"  이론 기울기: -2(1+H) = {-2*(1+fit['H']):.4f}")
+            lines.append(f"  R²: {fit['r_squared']:.6f}")
+            if 'q0' in fit:
+                lines.append(f"  q₀ (추정): {fit['q0']:.2e} 1/m")
+            if 'C0' in fit:
+                lines.append(f"  C(q₀) (추정): {fit['C0']:.2e} m⁴")
+
+        if self.profile_psd_analyzer.fit_result_top is not None:
+            fit = self.profile_psd_analyzer.fit_result_top
+            lines.append(f"\n[Top PSD 피팅 결과]")
+            lines.append(f"  Hurst Exponent H: {fit['H']:.4f}")
+            lines.append(f"  기울기 (log-log): {fit['slope']:.4f}")
+            lines.append(f"  R²: {fit['r_squared']:.6f}")
+
+        # Surface parameters
+        if self.profile_psd_analyzer.surface_params is not None:
+            params = self.profile_psd_analyzer.surface_params
+            lines.append(f"\n[표면 파라미터 (PSD 적분)]")
+            lines.append(f"  h_rms: {params['h_rms']*1e6:.4f} μm")
+            lines.append(f"  h'_rms (ξ): {params['h_rms_slope']:.6f}")
+            lines.append(f"  h''_rms: {params['h_rms_curvature']:.2e} 1/m")
+
+        self.psd_profile_result_text.insert(tk.END, "\n".join(lines))
+
+    def _export_profile_psd_csv(self):
+        """Export PSD data to CSV."""
+        if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
+            messagebox.showwarning("경고", "먼저 PSD를 계산하세요.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="PSD 데이터 저장",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filepath:
+            return
+
+        try:
+            q = self.profile_psd_analyzer.q
+            C_full_2d = self.profile_psd_analyzer.C_full_2d
+            C_top_2d = self.profile_psd_analyzer.C_top_2d
+
+            with open(filepath, 'w') as f:
+                # Header
+                header = ["q (1/m)", "C_full (m^4)"]
+                if C_top_2d is not None:
+                    header.append("C_top (m^4)")
+                f.write(",".join(header) + "\n")
+
+                # Data
+                for i in range(len(q)):
+                    row = [f"{q[i]:.6e}", f"{C_full_2d[i]:.6e}"]
+                    if C_top_2d is not None:
+                        row.append(f"{C_top_2d[i]:.6e}")
+                    f.write(",".join(row) + "\n")
+
+            messagebox.showinfo("완료", f"PSD 데이터가 저장되었습니다:\n{filepath}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"저장 실패: {e}")
+
+    def _save_profile_psd_plot(self):
+        """Save PSD plot to file."""
+        self._save_plot(self.fig_psd_profile, "profile_psd_plot")
+
+    def _apply_profile_psd_to_calculation(self):
+        """Apply calculated PSD to friction calculation."""
+        if self.profile_psd_analyzer is None or self.profile_psd_analyzer.q is None:
+            messagebox.showwarning("경고", "먼저 PSD를 계산하세요.")
+            return
+
+        try:
+            use_top = self.apply_psd_type_var.get() == "top"
+
+            q, C = self.profile_psd_analyzer.get_psd_for_persson(use_top_psd=use_top)
+
+            # Create PSD model
+            self.psd_model = MeasuredPSD(q, C)
+            self.raw_psd_data = {'q': q, 'C': C}
+
+            # Get fit parameters if available
+            fit_result = self.profile_psd_analyzer.fit_result_top if use_top else self.profile_psd_analyzer.fit_result_full
+
+            if fit_result is not None:
+                H = fit_result['H']
+                # Update Tab 3 PSD settings if they exist
+                if hasattr(self, 'psd_H_var'):
+                    self.psd_H_var.set(f"{H:.4f}")
+
+            # Calculate surface parameters
+            params = self.profile_psd_analyzer.get_surface_parameters(use_top_psd=use_top)
+            xi = params['h_rms_slope']
+
+            # Update Tab 3 settings
+            if hasattr(self, 'psd_xi_var'):
+                self.psd_xi_var.set(f"{xi:.6f}")
+
+            psd_type_str = "Top PSD" if use_top else "Full PSD"
+            messagebox.showinfo("완료",
+                f"{psd_type_str}가 마찰 계산에 적용되었습니다.\n\n"
+                f"q 범위: {q[0]:.2e} ~ {q[-1]:.2e} 1/m\n"
+                f"h'_rms (ξ): {xi:.6f}\n\n"
+                f"Tab 2 (입력 데이터 검증)에서 확인하세요."
+            )
+
+            # Switch to verification tab
+            self.notebook.select(2)
+
+            self.status_var.set(f"{psd_type_str} 적용 완료: ξ = {xi:.6f}")
+
+        except Exception as e:
+            messagebox.showerror("오류", f"적용 실패: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _create_master_curve_tab(self, parent):
         """Create Master Curve generation tab using Time-Temperature Superposition."""
