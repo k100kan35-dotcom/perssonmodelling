@@ -1913,12 +1913,48 @@ class PerssonModelGUI_V2:
             # Check if Tab 2 should be disabled
             self._update_tab2_state()
 
+            # Verify PSD normalization: ∫ q×C(q) dq (using 2π factor) should ≈ h_rms²
+            # For 2D isotropic: h_rms² = 2π ∫ q C(q) dq
+            from scipy.integrate import simpson
+            integrand_qC = q * C  # q × C(q) for h_rms² check
+            h_rms_sq_from_psd = 2 * np.pi * simpson(integrand_qC, x=q)
+            h_rms_from_psd = np.sqrt(max(h_rms_sq_from_psd, 0))
+
+            # Also check C(q0) value for typical range
+            C_q0 = C[0]
+            q0 = q[0]
+
+            # Get scan length info if available
+            scan_length_str = ""
+            if hasattr(self.profile_psd_analyzer, 'scan_length'):
+                L = self.profile_psd_analyzer.scan_length
+                n_pts = self.profile_psd_analyzer.n_points
+                dx = self.profile_psd_analyzer.sample_spacing
+                scan_length_str = (
+                    f"\n[프로파일 정보]\n"
+                    f"• 스캔 길이 L: {L*1e3:.4f} mm ({L:.6f} m)\n"
+                    f"• 데이터 포인트: {n_pts}\n"
+                    f"• 샘플 간격 dx: {dx*1e6:.4f} μm\n"
+                )
+
+            # Show verification info
+            verification_msg = (
+                f"[PSD 검증]\n"
+                f"• 원본 h_rms: {h_rms*1e6:.4f} μm\n"
+                f"• PSD 적분 h_rms: {h_rms_from_psd*1e6:.4f} μm\n"
+                f"• C(q₀={q0:.2e}): {C_q0:.2e} m⁴\n"
+            )
+            if abs(h_rms - h_rms_from_psd) / max(h_rms, 1e-12) > 0.5:
+                verification_msg += "⚠ 경고: PSD 적분값과 h_rms 불일치! 정규화 확인 필요\n"
+            verification_msg += scan_length_str
+
             messagebox.showinfo("PSD 확정 완료",
                 f"{psd_type_str} → Tab 3 전송 완료\n\n"
                 f"q range: {q[0]:.2e} ~ {q[-1]:.2e} 1/m\n"
                 f"H = {H:.4f}\n"
                 f"h_rms = {h_rms*1e6:.4f} um\n"
                 f"h'_rms (xi) = {xi:.6f}\n\n"
+                f"{verification_msg}\n"
                 f"Tab 3 (계산 설정)에서 계속하세요."
             )
 
@@ -7002,6 +7038,27 @@ $\begin{array}{lcc}
                 if 'q3CPS' in mid_detail:
                     q3CPS = mid_detail['q3CPS']
                     self.mu_result_text.insert(tk.END, f"  q³C(q)P(q)S(q) max: {np.max(q3CPS):.2e}\n")
+
+                # C(q) - PSD values (critical for checking normalization)
+                if 'C_q' in mid_detail:
+                    C_q_diag = mid_detail['C_q']
+                    self.mu_result_text.insert(tk.END, f"  C(q) 범위: {np.min(C_q_diag):.2e} ~ {np.max(C_q_diag):.2e} m⁴\n")
+                    # Check typical values
+                    if np.max(C_q_diag) < 1e-18:
+                        self.mu_result_text.insert(tk.END, f"  ※ 경고: C(q)가 매우 작음 - PSD 정규화 확인 필요!\n")
+                    elif np.max(C_q_diag) > 1e-8:
+                        self.mu_result_text.insert(tk.END, f"  ※ 경고: C(q)가 매우 큼 - PSD 정규화 확인 필요!\n")
+
+                # Loss modulus check - at mid frequency
+                mid_q = mid_detail.get('q', q)[len(mid_detail.get('q', q)) // 2]
+                mid_omega = mid_q * mid_v
+                if hasattr(self, 'material') and self.material is not None:
+                    E_loss_check = self.material.get_loss_modulus(mid_omega, temperature=temperature)
+                    E_store_check = self.material.get_storage_modulus(mid_omega, temperature=temperature)
+                    self.mu_result_text.insert(tk.END, f"\n[재료 특성 @ ω={mid_omega:.2e} rad/s]\n")
+                    self.mu_result_text.insert(tk.END, f"  E'(저장탄성률): {E_store_check:.2e} Pa\n")
+                    self.mu_result_text.insert(tk.END, f"  E''(손실탄성률): {E_loss_check:.2e} Pa\n")
+                    self.mu_result_text.insert(tk.END, f"  tan(δ) = E''/E': {E_loss_check/max(E_store_check,1):.4f}\n")
 
             self.mu_result_text.insert(tk.END, "\n[속도별 μ_visc]\n")
             step = max(1, len(v) // 8)

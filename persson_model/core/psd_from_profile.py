@@ -847,6 +847,13 @@ class ProfilePSDAnalyzer:
 
         self.points_per_decade = points_per_decade
 
+        # Store scan length for reference (important for PSD normalization)
+        n = len(self.h)
+        dx = np.abs(self.x[1] - self.x[0])
+        self.scan_length = n * dx  # Total scan length in meters
+        self.n_points = n
+        self.sample_spacing = dx
+
         # Calculate raw (unbinned) Full PSD
         self.q_raw, self.C_full_1d_raw = calculate_1d_psd(
             self.x, self.h, window, detrend_method
