@@ -256,8 +256,9 @@ def calculate_1d_psd(
     power = np.abs(h_fft)**2
 
     # Normalize: C(q) has units of m³ for 1D PSD
-    # C_1D(q) = (2/L) * |h_fft|² / N²
-    C1d = 2.0 * power / (n**2 * L) / w_correction
+    # C_1D(q) = L * |h_fft|² / (π * N²)
+    # Parseval: h_rms² = ∫ C_1D(q) dq
+    C1d = power * L / (np.pi * n**2) / w_correction
 
     # Remove DC component (q=0)
     valid = q > 0
@@ -348,7 +349,7 @@ def calculate_top_psd(
     # Power spectrum
     power = np.abs(h_fft)**2
     # Same formula as calculate_1d_psd
-    C1d = 2.0 * power / (n**2 * L) / w_correction
+    C1d = power * L / (np.pi * n**2) / w_correction
 
     # Apply 1/phi correction
     C_top = C1d / phi
