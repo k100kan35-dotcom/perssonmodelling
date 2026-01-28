@@ -1888,7 +1888,7 @@ class PerssonModelGUI_V2:
 
             # Create PSD model for calculations
             self.psd_model = MeasuredPSD(q, C)
-            self.raw_psd_data = {'q': q, 'C': C}
+            self.raw_psd_data = {'q': q, 'C_q': C}  # Key must be 'C_q' for Tab 3 compatibility
 
             # Register finalized PSD
             self._register_graph_data(
