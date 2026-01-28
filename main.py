@@ -202,21 +202,13 @@ class PerssonModelGUI_V2:
                     reference_temp=20.0
                 )
 
-                # Load PSD data
-                q, C_q = load_psd_from_file(psd_file, skip_header=1)
-                self.psd_model = create_psd_from_data(q, C_q, interpolation_kind='log-log')
-
-                # Update UI
-                self.q_min_var.set(f"{q[0]:.2e}")
-                # Don't overwrite q_max - keep the default value (6.0e+4) for better initial calculations
-                # User can manually adjust if they want to use the full PSD range
-                # self.q_max_var.set(f"{q[-1]:.2e}")
-                self.psd_type_var.set("measured")
+                # PSD is NOT loaded here - must come from Tab 0
+                # User must use Tab 0 (PSD 생성) to set PSD data
 
                 self._update_material_display()
                 self._update_verification_plots()
 
-                self.status_var.set(f"초기 데이터 로드 완료: PSD ({len(q)}개), DMA ({len(omega_raw)}개)")
+                self.status_var.set(f"초기 DMA 데이터 로드 완료 ({len(omega_raw)}개). PSD는 Tab 0에서 설정하세요.")
             else:
                 # Use example material
                 self.material = ViscoelasticMaterial.create_example_sbr()
@@ -559,7 +551,7 @@ class PerssonModelGUI_V2:
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Load DMA Data", command=self._load_material)
-        file_menu.add_command(label="Load PSD Data", command=self._load_psd_data)
+        # PSD loading removed - must use Tab 0 (PSD 생성)
         file_menu.add_separator()
         file_menu.add_command(label="Save Results (CSV)", command=self._save_detailed_csv)
         file_menu.add_command(label="Export All", command=self._export_all_results)
@@ -722,48 +714,50 @@ class PerssonModelGUI_V2:
         ttk.Button(dma_frame, text="Apply DMA", command=self._apply_dma_smoothing_extrapolation, width=12).pack(pady=2)
 
         # Right column: PSD Settings
-        psd_frame = ttk.LabelFrame(settings_container, text="PSD Settings (Power Law)", padding=5)
+        psd_frame = ttk.LabelFrame(settings_container, text="PSD 설정 (Tab 0에서 전송)", padding=5)
         psd_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        # Load PSD button row (at top of PSD frame)
-        psd_load_row = ttk.Frame(psd_frame)
-        psd_load_row.pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(psd_load_row, text="Load PSD", command=self._load_psd_data, width=10).pack(side=tk.LEFT)
+        # PSD source notice
+        psd_notice = ttk.Label(psd_frame,
+            text="※ PSD는 반드시 '0.PSD 생성' 탭에서\n   확정 후 전송해야 합니다.",
+            font=('Arial', 9, 'bold'), foreground='blue')
+        psd_notice.pack(anchor=tk.W, pady=(0, 5))
 
-        # q0, q1 row
-        q_row = ttk.Frame(psd_frame)
+        # PSD status display (read-only)
+        self.psd_status_var = tk.StringVar(value="PSD 미설정 - Tab 0에서 전송 필요")
+        self.psd_status_label = ttk.Label(psd_frame, textvariable=self.psd_status_var,
+                                          font=('Arial', 8), foreground='red')
+        self.psd_status_label.pack(anchor=tk.W, pady=2)
+
+        # PSD info display (read-only, shows after Tab 0 sends data)
+        psd_info_frame = ttk.Frame(psd_frame)
+        psd_info_frame.pack(fill=tk.X, pady=2)
+
+        # q range display
+        q_row = ttk.Frame(psd_info_frame)
         q_row.pack(fill=tk.X, pady=1)
-        ttk.Label(q_row, text="q0:", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_q0_var = tk.StringVar(value="500")
-        ttk.Entry(q_row, textvariable=self.psd_q0_var, width=8).pack(side=tk.LEFT, padx=2)
-        ttk.Label(q_row, text="q1:", font=('Arial', 8)).pack(side=tk.LEFT, padx=(5, 0))
-        self.psd_q1_var = tk.StringVar(value="1e5")
-        ttk.Entry(q_row, textvariable=self.psd_q1_var, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Label(q_row, text="q 범위:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.psd_q_range_var = tk.StringVar(value="- ~ - (1/m)")
+        ttk.Label(q_row, textvariable=self.psd_q_range_var, font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=5)
 
-        # H row
-        h_row = ttk.Frame(psd_frame)
+        # H display
+        h_row = ttk.Frame(psd_info_frame)
         h_row.pack(fill=tk.X, pady=1)
         ttk.Label(h_row, text="H (Hurst):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_H_var = tk.StringVar(value="0.56")
-        ttk.Entry(h_row, textvariable=self.psd_H_var, width=6).pack(side=tk.LEFT, padx=2)
+        self.psd_H_var = tk.StringVar(value="-")
+        ttk.Label(h_row, textvariable=self.psd_H_var, font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=5)
 
-        # ξ target row - specify h'rms to auto-calculate C(q0)
-        xi_row = ttk.Frame(psd_frame)
+        # ξ display
+        xi_row = ttk.Frame(psd_info_frame)
         xi_row.pack(fill=tk.X, pady=1)
         ttk.Label(xi_row, text="ξ (h'rms):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.psd_xi_var = tk.StringVar(value="4.0520")
-        ttk.Entry(xi_row, textvariable=self.psd_xi_var, width=6).pack(side=tk.LEFT, padx=2)
-        ttk.Button(xi_row, text="→ C(q0) 계산", command=self._calc_Cq0_from_xi, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        self.psd_xi_var = tk.StringVar(value="-")
+        ttk.Label(xi_row, textvariable=self.psd_xi_var, font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=5)
 
-        # C(q0) row (can be manually overridden)
-        cq_row = ttk.Frame(psd_frame)
-        cq_row.pack(fill=tk.X, pady=1)
-        ttk.Label(cq_row, text="C(q0):", font=('Arial', 8)).pack(side=tk.LEFT)
+        # Hidden variables for backward compatibility
+        self.psd_q0_var = tk.StringVar(value="500")
+        self.psd_q1_var = tk.StringVar(value="1e5")
         self.psd_Cq0_var = tk.StringVar(value="3.5e-13")
-        ttk.Entry(cq_row, textvariable=self.psd_Cq0_var, width=12).pack(side=tk.LEFT, padx=2)
-
-        # Apply PSD button
-        ttk.Button(psd_frame, text="Apply PSD", command=self._apply_psd_settings, width=12).pack(pady=2)
 
         # Plot area
         plot_frame = ttk.Frame(parent)
@@ -1895,11 +1889,23 @@ class PerssonModelGUI_V2:
                 "PSD_Finalized", q, C,
                 "q(1/m)\tC(q)(m^4)", f"Finalized PSD ({psd_type_str})")
 
-            # Update Tab 3 settings
+            # Update Tab 3 PSD display
+            if hasattr(self, 'psd_status_var'):
+                self.psd_status_var.set(f"✓ PSD 설정됨: {psd_type_str}")
+            if hasattr(self, 'psd_status_label'):
+                self.psd_status_label.config(foreground='green')
+            if hasattr(self, 'psd_q_range_var'):
+                self.psd_q_range_var.set(f"{q[0]:.2e} ~ {q[-1]:.2e} (1/m)")
             if hasattr(self, 'psd_H_var'):
                 self.psd_H_var.set(f"{H:.4f}")
             if hasattr(self, 'psd_xi_var'):
                 self.psd_xi_var.set(f"{xi:.6f}")
+
+            # Update q_min/q_max for calculation
+            if hasattr(self, 'q_min_var'):
+                self.q_min_var.set(f"{q[0]:.2e}")
+            if hasattr(self, 'q_max_var'):
+                self.q_max_var.set(f"{q[-1]:.2e}")
 
             # Mark Tab 0 as finalized
             self.tab0_finalized = True
@@ -4007,8 +4013,17 @@ class PerssonModelGUI_V2:
 
     def _run_calculation(self):
         """Run G(q,v) 2D calculation."""
-        if self.material is None or self.psd_model is None:
-            messagebox.showwarning("Warning", "Please load material and PSD data first!")
+        # Check if PSD has been set from Tab 0
+        tab0_ready = getattr(self, 'tab0_finalized', False)
+        if not tab0_ready or self.psd_model is None:
+            messagebox.showwarning("경고",
+                "PSD 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 0 (PSD 생성)에서 PSD를 확정한 후\n"
+                "'PSD 확정 → Tab 3' 버튼을 클릭하세요.")
+            return
+
+        if self.material is None:
+            messagebox.showwarning("경고", "DMA/재료 데이터가 설정되지 않았습니다!")
             return
 
         try:
