@@ -7482,36 +7482,29 @@ $\begin{array}{lcc}
             self.g_calc_status_var.set("오류 발생")
 
     def _recalculate_G_with_temperature(self):
-        """Recalculate G(q,v) after temperature shift.
+        """Recalculate G(q,v) after temperature shift using existing g_calculator.
 
-        Uses:
-        - Tab 0 (PSD): self.psd_model - C(q) 데이터
-        - Tab 1 (Master Curve): self.material - E*(ω) 데이터
+        Uses the same calculation method as Tab 3 to ensure consistency.
+        Updates self.results['2d_results'] so mu_visc calculation uses new data.
         """
         try:
-            # Check required data from Tab 0 (PSD)
+            # Check required data
             if self.psd_model is None:
                 self.g_calc_status_var.set("PSD 데이터 없음 (Tab 0 확정 필요)")
                 return
 
-            # Check required data from Tab 1 (Master Curve)
             if self.material is None:
                 self.g_calc_status_var.set("마스터 커브 없음 (Tab 1 확정 필요)")
                 return
 
-            # Display data sources
-            psd_src = getattr(self, 'psd_source', 'Unknown')
-            mat_src = getattr(self, 'material_source', 'Unknown')
-            print(f"\n[G 계산] PSD: {psd_src}")
-            print(f"[G 계산] Master Curve: {mat_src}")
-
             # Get parameters from Tab 3 settings
             sigma_0 = float(self.sigma_0_var.get()) * 1e6  # MPa to Pa
-            nu = float(self.nu_var.get())
+            temperature = float(self.temperature_var.get())
+            poisson = float(self.poisson_var.get())
             n_q = int(self.n_q_var.get())
             n_phi = int(self.n_phi_var.get())
 
-            # Get q range from Tab 0/1 settings
+            # Get q range
             if self.auto_q_range_var.get():
                 q_min = float(self.q_min_var.get())
                 q_max = float(self.q_max_var.get())
@@ -7524,73 +7517,51 @@ $\begin{array}{lcc}
             v_max = float(self.v_max_var.get())
             n_v = int(self.n_v_var.get())
 
-            velocities = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
-
-            # Update status
-            self.g_calc_status_var.set(f"G(q,v) 계산 중... (0/{n_v})")
-            self.root.update_idletasks()
-
-            # Create arrays for G, P, S
             q_array = np.logspace(np.log10(q_min), np.log10(q_max), n_q)
-            G_qv = np.zeros((n_v, n_q))
-            P_q = np.zeros((n_v, n_q))
-            S_q = np.zeros((n_v, n_q))
+            v_array = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
 
-            gamma = float(self.gamma_var.get())
-            phi_array = np.linspace(0, 2 * np.pi, n_phi)
+            # Update g_calculator with new (shifted) material
+            from persson_model.core.g_factor import GFactorCalculator
 
-            # Calculate G for each velocity
-            for i_v, v in enumerate(velocities):
-                if i_v % max(1, n_v // 10) == 0:
-                    self.g_calc_status_var.set(f"G(q,v) 계산 중... ({i_v}/{n_v})")
-                    self.root.update_idletasks()
+            # Create modulus functions from shifted material
+            def storage_func(omega):
+                return self.material.get_storage_modulus(omega, temperature=temperature)
 
-                G_cumulative = 0.0
+            def loss_func(omega):
+                return self.material.get_loss_modulus(omega, temperature=temperature)
 
-                for i_q, q in enumerate(q_array):
-                    # Get PSD value
-                    C_q = self.psd_model(q)
+            # Recreate g_calculator with shifted material
+            self.g_calculator = GFactorCalculator(
+                psd_func=self.psd_model,
+                storage_modulus_func=storage_func,
+                loss_modulus_func=loss_func,
+                sigma_0=sigma_0,
+                velocity=v_array[0],
+                poisson_ratio=poisson,
+                n_angle_points=n_phi
+            )
 
-                    # Angular integration for G
-                    G_phi_integrand = np.zeros(n_phi)
-                    for i_phi, phi in enumerate(phi_array):
-                        omega = q * v * np.cos(phi)
-                        if omega > 0:
-                            E_star = self.material.get_complex_modulus(omega)
-                            E_ratio = np.abs(E_star) / ((1 - nu**2) * sigma_0)
-                            G_phi_integrand[i_phi] = E_ratio**2
+            # Progress callback
+            def progress_callback(percent):
+                self.g_calc_status_var.set(f"G(q,v) 재계산 중... {percent}%")
+                self.root.update_idletasks()
 
-                    # Integrate over phi
-                    G_phi_integral = np.trapezoid(G_phi_integrand, phi_array)
+            # Use the same calculation method as Tab 3
+            results_2d = self.g_calculator.calculate_G_multi_velocity(
+                q_array, v_array, q_min=q_min, progress_callback=progress_callback
+            )
 
-                    # Add to cumulative G
-                    dq = q * np.log(10) * (np.log10(q_max) - np.log10(q_min)) / n_q
-                    G_cumulative += (1/8) * q**3 * C_q * G_phi_integral * dq
+            # Update self.results so mu_visc calculation uses new data
+            if not hasattr(self, 'results') or self.results is None:
+                self.results = {}
 
-                    G_qv[i_v, i_q] = G_cumulative
+            self.results['2d_results'] = results_2d
 
-                    # Calculate P and S
-                    if G_cumulative > 0:
-                        P_q[i_v, i_q] = special.erf(1 / (2 * np.sqrt(G_cumulative)))
-                    else:
-                        P_q[i_v, i_q] = 1.0
-                    S_q[i_v, i_q] = gamma + (1 - gamma) * P_q[i_v, i_q]**2
+            # Also store temperature info
+            self.results['temperature_shifted'] = True
+            self.results['shift_info'] = self.current_temp_shift
 
-            # Store results
-            self.temp_shifted_G_data = {
-                'velocities': velocities,
-                'q_array': q_array,
-                'G_qv': G_qv,
-                'P_q': P_q,
-                'S_q': S_q,
-                'T': self.current_temp_shift['T_target'],
-                'aT': self.current_temp_shift['aT']
-            }
-
-            self.g_calc_status_var.set(f"G(q,v) 계산 완료 (T={self.current_temp_shift['T_target']}°C)")
-
-            # Update Tab 3 results display if available
-            self._update_G_display_after_temp_shift()
+            self.g_calc_status_var.set(f"G(q,v) 재계산 완료 (T={self.current_temp_shift['T_target']}°C)")
 
         except Exception as e:
             import traceback
