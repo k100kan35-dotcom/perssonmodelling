@@ -2494,7 +2494,12 @@ class PerssonModelGUI_V2:
             messagebox.showerror("오류", f"마스터 커브 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
 
     def _load_persson_aT(self):
-        """Load aT shift factor data for temperature shifting."""
+        """Load aT (and bT) shift factor data for temperature shifting.
+
+        Supports formats:
+        - 2 columns: T(°C), aT
+        - 3 columns: T(°C), aT, bT (Persson format)
+        """
         filename = filedialog.askopenfilename(
             title="aT 시프트 팩터 파일 선택",
             filetypes=[
@@ -2510,19 +2515,19 @@ class PerssonModelGUI_V2:
         try:
             import pandas as pd
 
-            # Try different delimiters
+            # Try different delimiters (handle Fortran-style spacing)
             df = None
-            for sep in ['\t', ',', ' ', ';']:
+            for sep in [r'\s+', '\t', ',', ';']:
                 try:
                     df = pd.read_csv(filename, sep=sep, skipinitialspace=True,
-                                     comment='#', header=None)
+                                     comment='#', header=None, engine='python')
                     if len(df.columns) >= 2:
                         break
                 except:
                     continue
 
             if df is None or len(df.columns) < 2:
-                raise ValueError("파일에서 2개 이상의 컬럼을 찾을 수 없습니다.\n예상 형식: T(°C), aT 또는 T(°C), log10(aT)")
+                raise ValueError("파일에서 2개 이상의 컬럼을 찾을 수 없습니다.\n예상 형식: T(°C), aT [, bT]")
 
             # Drop any header rows (non-numeric)
             df = df.apply(pd.to_numeric, errors='coerce').dropna()
@@ -2531,41 +2536,43 @@ class PerssonModelGUI_V2:
                 raise ValueError("유효한 데이터 행이 부족합니다.")
 
             T = df.iloc[:, 0].values  # Temperature (°C)
-            aT_raw = df.iloc[:, 1].values  # aT or log10(aT)
+            aT = df.iloc[:, 1].values  # aT (always linear in Persson format)
 
-            # Detect if data is log10(aT) or aT
-            # If max value < 50, likely log10(aT); otherwise aT
-            if np.max(np.abs(aT_raw)) < 50:
-                # Likely log10(aT)
-                log_aT = aT_raw
-                aT = 10**aT_raw
-                format_str = "log10(aT) 형식"
+            # Check for bT column
+            has_bT = len(df.columns) >= 3
+            if has_bT:
+                bT = df.iloc[:, 2].values
             else:
-                # Likely aT
-                aT = aT_raw
-                log_aT = np.log10(aT)
-                format_str = "aT 형식"
+                bT = np.ones_like(T)  # Default bT = 1
+
+            # Persson format: aT is linear (not log), detect by checking values
+            # aT values span many orders of magnitude (e.g., 1e-2 to 1e7)
+            log_aT = np.log10(np.maximum(aT, 1e-20))  # Avoid log(0)
+            format_str = "Persson 형식 (T, aT, bT)" if has_bT else "T, aT 형식"
 
             # Sort by temperature
             sort_idx = np.argsort(T)
             T = T[sort_idx]
             aT = aT[sort_idx]
             log_aT = log_aT[sort_idx]
+            bT = bT[sort_idx]
 
-            # Find reference temperature (where aT ≈ 1 or log_aT ≈ 0)
-            ref_idx = np.argmin(np.abs(log_aT))
+            # Find reference temperature (where aT ≈ 1)
+            ref_idx = np.argmin(np.abs(aT - 1.0))
             T_ref = T[ref_idx]
 
-            # Store aT data
+            # Store aT/bT data
             self.persson_aT_data = {
                 'T': T.copy(),
                 'aT': aT.copy(),
                 'log_aT': log_aT.copy(),
+                'bT': bT.copy(),
                 'T_ref': T_ref,
+                'has_bT': has_bT,
                 'filename': os.path.basename(filename)
             }
 
-            # Create interpolation function for aT
+            # Create interpolation functions
             from scipy.interpolate import interp1d
             self.persson_aT_interp = interp1d(
                 T, log_aT,
@@ -2573,35 +2580,44 @@ class PerssonModelGUI_V2:
                 bounds_error=False,
                 fill_value='extrapolate'
             )
-
-            # Update info display
-            self.mc_aT_info_var.set(
-                f"aT: {len(T)} pts, T={T.min():.0f}~{T.max():.0f}°C, Tref≈{T_ref:.0f}°C"
+            self.persson_bT_interp = interp1d(
+                T, bT,
+                kind='linear',
+                bounds_error=False,
+                fill_value='extrapolate'
             )
 
-            # Plot aT on the bottom-right plot
+            # Update info display
+            bT_info = f", bT={bT.min():.2f}~{bT.max():.2f}" if has_bT else ""
+            self.mc_aT_info_var.set(
+                f"aT: {len(T)} pts, T={T.min():.0f}~{T.max():.0f}°C, Tref={T_ref:.0f}°C{bT_info}"
+            )
+
+            # Plot aT (and bT) on the bottom-right plot
             self._plot_persson_aT()
 
             messagebox.showinfo(
                 "성공",
-                f"aT 시프트 팩터 로드 완료\n\n"
+                f"시프트 팩터 로드 완료\n\n"
                 f"파일: {os.path.basename(filename)}\n"
                 f"데이터 포인트: {len(T)}\n"
-                f"온도 범위: {T.min():.0f} ~ {T.max():.0f} °C\n"
-                f"기준 온도 (Tref): {T_ref:.1f} °C\n"
-                f"데이터 형식: {format_str}\n\n"
+                f"온도 범위: {T.min():.1f} ~ {T.max():.1f} °C\n"
+                f"기준 온도 (Tref): {T_ref:.1f} °C (aT=1)\n"
+                f"aT 범위: {aT.min():.2e} ~ {aT.max():.2e}\n"
+                f"bT 포함: {'예' if has_bT else '아니오'}\n"
+                f"형식: {format_str}\n\n"
                 f"이제 Tab 5에서 온도를 변경하여\n"
                 f"다른 온도에서의 μ_visc를 계산할 수 있습니다."
             )
 
-            self.status_var.set("aT 시프트 팩터 로드 완료")
+            self.status_var.set("시프트 팩터 (aT, bT) 로드 완료")
 
         except Exception as e:
             import traceback
             messagebox.showerror("오류", f"aT 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
 
     def _plot_persson_aT(self):
-        """Plot loaded aT shift factor data."""
+        """Plot loaded aT (and bT) shift factor data."""
         if not hasattr(self, 'persson_aT_data') or self.persson_aT_data is None:
             return
 
@@ -2610,19 +2626,45 @@ class PerssonModelGUI_V2:
         # Use bottom-right plot (bT plot)
         self.ax_mc_bT.clear()
 
+        # Remove any existing twin axis
+        if hasattr(self, '_ax_bT_twin') and self._ax_bT_twin is not None:
+            try:
+                self._ax_bT_twin.remove()
+            except:
+                pass
+            self._ax_bT_twin = None
+
         T = data['T']
         log_aT = data['log_aT']
         T_ref = data['T_ref']
+        has_bT = data.get('has_bT', False)
 
-        self.ax_mc_bT.plot(T, log_aT, 'bo-', linewidth=2, markersize=4, label='log₁₀(aT)')
+        # Plot log₁₀(aT) on primary axis
+        line1, = self.ax_mc_bT.plot(T, log_aT, 'bo-', linewidth=2, markersize=4, label='log₁₀(aT)')
         self.ax_mc_bT.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
         self.ax_mc_bT.axvline(x=T_ref, color='red', linestyle='--', alpha=0.5, label=f'Tref={T_ref:.0f}°C')
 
         self.ax_mc_bT.set_xlabel('온도 T (°C)')
-        self.ax_mc_bT.set_ylabel('log₁₀(aT)')
-        self.ax_mc_bT.set_title('시프트 팩터 aT (Persson)', fontweight='bold')
-        self.ax_mc_bT.legend(loc='upper right', fontsize=8)
+        self.ax_mc_bT.set_ylabel('log₁₀(aT)', color='blue')
+        self.ax_mc_bT.tick_params(axis='y', labelcolor='blue')
         self.ax_mc_bT.grid(True, alpha=0.3)
+
+        # If bT data exists, plot on secondary y-axis
+        if has_bT and 'bT' in data:
+            bT = data['bT']
+            self._ax_bT_twin = self.ax_mc_bT.twinx()
+            line2, = self._ax_bT_twin.plot(T, bT, 'r^-', linewidth=2, markersize=4, label='bT')
+            self._ax_bT_twin.set_ylabel('bT (수직 시프트)', color='red')
+            self._ax_bT_twin.tick_params(axis='y', labelcolor='red')
+
+            # Combined legend
+            lines = [line1, line2]
+            labels = [l.get_label() for l in lines]
+            self.ax_mc_bT.legend(lines, labels, loc='upper right', fontsize=8)
+            self.ax_mc_bT.set_title('시프트 팩터 aT & bT (Persson)', fontweight='bold')
+        else:
+            self.ax_mc_bT.legend(loc='upper right', fontsize=8)
+            self.ax_mc_bT.set_title('시프트 팩터 aT (Persson)', fontweight='bold')
 
         self.fig_mc.tight_layout()
         self.canvas_mc.draw()
@@ -7331,7 +7373,7 @@ $\begin{array}{lcc}
         self.canvas_mu_visc.draw()
 
     def _apply_temperature_shift(self):
-        """Apply temperature shift to master curve using aT and recalculate G."""
+        """Apply temperature shift to master curve using aT (and bT) and recalculate G."""
         try:
             # Get target temperature
             T_target = float(self.mu_calc_temp_var.get())
@@ -7356,8 +7398,18 @@ $\begin{array}{lcc}
             log_aT = self.persson_aT_interp(T_target)
             aT = 10**log_aT
 
+            # Get bT at target temperature (if available)
+            has_bT = self.persson_aT_data.get('has_bT', False)
+            if has_bT and hasattr(self, 'persson_bT_interp') and self.persson_bT_interp is not None:
+                bT = float(self.persson_bT_interp(T_target))
+            else:
+                bT = 1.0  # No vertical shift if bT not available
+
             # Update status
-            self.g_calc_status_var.set(f"온도 시프트 계산 중... T={T_target}°C, aT={aT:.2e}")
+            status_msg = f"온도 시프트 계산 중... T={T_target}°C, aT={aT:.2e}"
+            if has_bT:
+                status_msg += f", bT={bT:.4f}"
+            self.g_calc_status_var.set(status_msg)
             self.root.update_idletasks()
 
             # Get master curve data at reference temperature
@@ -7366,22 +7418,33 @@ $\begin{array}{lcc}
             E_storage_ref = mc_data['E_storage'].copy()
             E_loss_ref = mc_data['E_loss'].copy()
 
-            # Apply temperature shift: ω(T) = ω(Tref) × aT(T)
+            # Apply temperature shift:
+            # Horizontal (frequency) shift: ω(T) = ω(Tref) × aT(T)
             # At higher T, aT < 1, so effective frequency decreases
-            # The master curve is evaluated at shifted frequencies
             omega_shifted = omega_ref * aT
+
+            # Vertical (modulus) shift: E(T) = E(Tref) × bT(T)
+            # bT accounts for temperature-dependent density and other effects
+            E_storage_shifted = E_storage_ref * bT
+            E_loss_shifted = E_loss_ref * bT
 
             # Update status
             self.g_calc_status_var.set(f"시프트된 마스터 커브 생성 중...")
             self.root.update_idletasks()
 
-            # Create new material with shifted frequencies
+            # Create new material with shifted frequencies and moduli
             from persson_model.utils.data_loader import create_material_from_dma
+            material_name = f"Persson (T={T_target}°C, aT={aT:.2e}"
+            if has_bT:
+                material_name += f", bT={bT:.4f})"
+            else:
+                material_name += ")"
+
             self.material_shifted = create_material_from_dma(
                 omega=omega_shifted,
-                E_storage=E_storage_ref,
-                E_loss=E_loss_ref,
-                material_name=f"Persson (T={T_target}°C, aT={aT:.2e})",
+                E_storage=E_storage_shifted,
+                E_loss=E_loss_shifted,
+                material_name=material_name,
                 reference_temp=T_target
             )
 
@@ -7390,17 +7453,26 @@ $\begin{array}{lcc}
                 'T_target': T_target,
                 'T_ref': T_ref,
                 'aT': aT,
-                'log_aT': log_aT
+                'log_aT': log_aT,
+                'bT': bT,
+                'has_bT': has_bT
             }
 
             # Update material for calculations
             self.material = self.material_shifted
-            self.material_source = f"Persson 정품 (T={T_target}°C 시프트, aT={aT:.2e})"
+            source_str = f"Persson 정품 (T={T_target}°C, aT={aT:.2e}"
+            if has_bT:
+                source_str += f", bT={bT:.4f})"
+            else:
+                source_str += ")"
+            self.material_source = source_str
 
             # Update aT status display
-            self.mu_aT_status_var.set(
-                f"T={T_target}°C, aT={aT:.2e} (Tref={T_ref}°C)"
-            )
+            status_str = f"T={T_target}°C, aT={aT:.2e}"
+            if has_bT:
+                status_str += f", bT={bT:.4f}"
+            status_str += f" (Tref={T_ref}°C)"
+            self.mu_aT_status_var.set(status_str)
 
             # Now recalculate G(q,v) with shifted material
             self.g_calc_status_var.set(f"G(q,v) 재계산 시작...")
@@ -7410,9 +7482,11 @@ $\begin{array}{lcc}
             self._recalculate_G_with_temperature()
 
             # Final status
-            self.g_calc_status_var.set(
-                f"완료: T={T_target}°C, aT={aT:.2e}, G 재계산됨"
-            )
+            final_status = f"완료: T={T_target}°C, aT={aT:.2e}"
+            if has_bT:
+                final_status += f", bT={bT:.4f}"
+            final_status += ", G 재계산됨"
+            self.g_calc_status_var.set(final_status)
 
             self.status_var.set(f"온도 시프트 적용 완료: T={T_target}°C")
 
