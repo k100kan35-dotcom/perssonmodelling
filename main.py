@@ -3811,8 +3811,13 @@ class PerssonModelGUI_V2:
                 "'PSD 확정 → Tab 3' 버튼을 클릭하세요.")
             return
 
-        if self.material is None:
-            messagebox.showwarning("경고", "DMA/재료 데이터가 설정되지 않았습니다!")
+        # Check if Master Curve has been set from Tab 1
+        tab1_ready = getattr(self, 'tab1_finalized', False)
+        if not tab1_ready or self.material is None:
+            messagebox.showwarning("경고",
+                "마스터 커브 데이터가 설정되지 않았습니다!\n\n"
+                "Tab 1 (마스터 커브 생성)에서 마스터 커브를 확정한 후\n"
+                "'마스터 커브 확정 → Tab 3' 버튼을 클릭하세요.")
             return
 
         try:
