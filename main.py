@@ -1964,8 +1964,20 @@ class PerssonModelGUI_V2:
             command=self._load_persson_master_curve
         ).pack(fill=tk.X, pady=2)
 
+        # aT 시프트 팩터 로드 버튼
+        ttk.Button(
+            load_frame,
+            text="aT 시프트 팩터 로드 (T, aT)",
+            command=self._load_persson_aT
+        ).pack(fill=tk.X, pady=2)
+
         self.mc_data_info_var = tk.StringVar(value="데이터 미로드")
         ttk.Label(load_frame, textvariable=self.mc_data_info_var,
+                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
+
+        # aT 정보 표시
+        self.mc_aT_info_var = tk.StringVar(value="aT: 미로드")
+        ttk.Label(load_frame, textvariable=self.mc_aT_info_var,
                   font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
 
         # 마스터 커브 비교 버튼
@@ -2444,6 +2456,140 @@ class PerssonModelGUI_V2:
         except Exception as e:
             import traceback
             messagebox.showerror("오류", f"마스터 커브 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def _load_persson_aT(self):
+        """Load aT shift factor data for temperature shifting."""
+        filename = filedialog.askopenfilename(
+            title="aT 시프트 팩터 파일 선택",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import pandas as pd
+
+            # Try different delimiters
+            df = None
+            for sep in ['\t', ',', ' ', ';']:
+                try:
+                    df = pd.read_csv(filename, sep=sep, skipinitialspace=True,
+                                     comment='#', header=None)
+                    if len(df.columns) >= 2:
+                        break
+                except:
+                    continue
+
+            if df is None or len(df.columns) < 2:
+                raise ValueError("파일에서 2개 이상의 컬럼을 찾을 수 없습니다.\n예상 형식: T(°C), aT 또는 T(°C), log10(aT)")
+
+            # Drop any header rows (non-numeric)
+            df = df.apply(pd.to_numeric, errors='coerce').dropna()
+
+            if len(df) < 2:
+                raise ValueError("유효한 데이터 행이 부족합니다.")
+
+            T = df.iloc[:, 0].values  # Temperature (°C)
+            aT_raw = df.iloc[:, 1].values  # aT or log10(aT)
+
+            # Detect if data is log10(aT) or aT
+            # If max value < 50, likely log10(aT); otherwise aT
+            if np.max(np.abs(aT_raw)) < 50:
+                # Likely log10(aT)
+                log_aT = aT_raw
+                aT = 10**aT_raw
+                format_str = "log10(aT) 형식"
+            else:
+                # Likely aT
+                aT = aT_raw
+                log_aT = np.log10(aT)
+                format_str = "aT 형식"
+
+            # Sort by temperature
+            sort_idx = np.argsort(T)
+            T = T[sort_idx]
+            aT = aT[sort_idx]
+            log_aT = log_aT[sort_idx]
+
+            # Find reference temperature (where aT ≈ 1 or log_aT ≈ 0)
+            ref_idx = np.argmin(np.abs(log_aT))
+            T_ref = T[ref_idx]
+
+            # Store aT data
+            self.persson_aT_data = {
+                'T': T.copy(),
+                'aT': aT.copy(),
+                'log_aT': log_aT.copy(),
+                'T_ref': T_ref,
+                'filename': os.path.basename(filename)
+            }
+
+            # Create interpolation function for aT
+            from scipy.interpolate import interp1d
+            self.persson_aT_interp = interp1d(
+                T, log_aT,
+                kind='linear',
+                bounds_error=False,
+                fill_value='extrapolate'
+            )
+
+            # Update info display
+            self.mc_aT_info_var.set(
+                f"aT: {len(T)} pts, T={T.min():.0f}~{T.max():.0f}°C, Tref≈{T_ref:.0f}°C"
+            )
+
+            # Plot aT on the bottom-right plot
+            self._plot_persson_aT()
+
+            messagebox.showinfo(
+                "성공",
+                f"aT 시프트 팩터 로드 완료\n\n"
+                f"파일: {os.path.basename(filename)}\n"
+                f"데이터 포인트: {len(T)}\n"
+                f"온도 범위: {T.min():.0f} ~ {T.max():.0f} °C\n"
+                f"기준 온도 (Tref): {T_ref:.1f} °C\n"
+                f"데이터 형식: {format_str}\n\n"
+                f"이제 Tab 5에서 온도를 변경하여\n"
+                f"다른 온도에서의 μ_visc를 계산할 수 있습니다."
+            )
+
+            self.status_var.set("aT 시프트 팩터 로드 완료")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"aT 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def _plot_persson_aT(self):
+        """Plot loaded aT shift factor data."""
+        if not hasattr(self, 'persson_aT_data') or self.persson_aT_data is None:
+            return
+
+        data = self.persson_aT_data
+
+        # Use bottom-right plot (bT plot)
+        self.ax_mc_bT.clear()
+
+        T = data['T']
+        log_aT = data['log_aT']
+        T_ref = data['T_ref']
+
+        self.ax_mc_bT.plot(T, log_aT, 'bo-', linewidth=2, markersize=4, label='log₁₀(aT)')
+        self.ax_mc_bT.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+        self.ax_mc_bT.axvline(x=T_ref, color='red', linestyle='--', alpha=0.5, label=f'Tref={T_ref:.0f}°C')
+
+        self.ax_mc_bT.set_xlabel('온도 T (°C)')
+        self.ax_mc_bT.set_ylabel('log₁₀(aT)')
+        self.ax_mc_bT.set_title('시프트 팩터 aT (Persson)', fontweight='bold')
+        self.ax_mc_bT.legend(loc='upper right', fontsize=8)
+        self.ax_mc_bT.grid(True, alpha=0.3)
+
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
 
     def _plot_persson_master_curve(self):
         """Plot the loaded Persson master curve."""
@@ -6378,6 +6524,37 @@ $\begin{array}{lcc}
         ttk.Combobox(smooth_row, textvariable=self.smooth_window_var,
                      values=["3", "5", "7", "9", "11"], width=4, state="readonly").pack(side=tk.LEFT, padx=2)
 
+        # ===== Temperature Shift Section =====
+        ttk.Separator(mu_settings_frame, orient='horizontal').pack(fill=tk.X, pady=3)
+        temp_frame = ttk.LabelFrame(mu_settings_frame, text="온도 시프트 (aT 적용)", padding=3)
+        temp_frame.pack(fill=tk.X, pady=2)
+
+        # Temperature input row
+        temp_row1 = ttk.Frame(temp_frame)
+        temp_row1.pack(fill=tk.X, pady=1)
+        ttk.Label(temp_row1, text="계산 온도:", font=('Arial', 9)).pack(side=tk.LEFT)
+        self.mu_calc_temp_var = tk.StringVar(value="20.0")
+        self.mu_calc_temp_entry = ttk.Entry(temp_row1, textvariable=self.mu_calc_temp_var, width=8)
+        self.mu_calc_temp_entry.pack(side=tk.LEFT, padx=2)
+        ttk.Label(temp_row1, text="°C", font=('Arial', 9)).pack(side=tk.LEFT)
+
+        # aT status display
+        self.mu_aT_status_var = tk.StringVar(value="aT: 미로드 (Tref에서 계산)")
+        ttk.Label(temp_frame, textvariable=self.mu_aT_status_var,
+                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
+
+        # Temperature apply button
+        temp_row2 = ttk.Frame(temp_frame)
+        temp_row2.pack(fill=tk.X, pady=1)
+        ttk.Button(temp_row2, text="온도 적용 & G 재계산",
+                   command=self._apply_temperature_shift, width=20).pack(side=tk.LEFT)
+
+        # G calculation status
+        self.g_calc_status_var = tk.StringVar(value="")
+        self.g_calc_status_label = ttk.Label(temp_frame, textvariable=self.g_calc_status_var,
+                  font=('Arial', 8), foreground='blue')
+        self.g_calc_status_label.pack(anchor=tk.W)
+
         # Calculate button and progress bar
         calc_row = ttk.Frame(mu_settings_frame)
         calc_row.pack(fill=tk.X, pady=2)
@@ -6985,6 +7162,225 @@ $\begin{array}{lcc}
         self.ax_fg_curves.set_ylim(0, 1.1)
 
         self.canvas_mu_visc.draw()
+
+    def _apply_temperature_shift(self):
+        """Apply temperature shift to master curve using aT and recalculate G."""
+        try:
+            # Get target temperature
+            T_target = float(self.mu_calc_temp_var.get())
+
+            # Check if aT data is loaded
+            if not hasattr(self, 'persson_aT_interp') or self.persson_aT_interp is None:
+                messagebox.showwarning("경고",
+                    "aT 시프트 팩터 데이터가 로드되지 않았습니다.\n\n"
+                    "Tab 1에서 'aT 시프트 팩터 로드' 버튼을 사용하여\n"
+                    "aT 데이터를 로드하세요.")
+                return
+
+            # Check if Persson master curve is loaded
+            if not hasattr(self, 'persson_master_curve') or self.persson_master_curve is None:
+                messagebox.showwarning("경고",
+                    "Persson 정품 마스터 커브가 로드되지 않았습니다.\n\n"
+                    "Tab 1에서 먼저 마스터 커브를 로드하세요.")
+                return
+
+            # Get aT at target temperature
+            T_ref = self.persson_aT_data['T_ref']
+            log_aT = self.persson_aT_interp(T_target)
+            aT = 10**log_aT
+
+            # Update status
+            self.g_calc_status_var.set(f"온도 시프트 계산 중... T={T_target}°C, aT={aT:.2e}")
+            self.root.update_idletasks()
+
+            # Get master curve data at reference temperature
+            mc_data = self.persson_master_curve
+            omega_ref = mc_data['omega'].copy()  # rad/s at Tref
+            E_storage_ref = mc_data['E_storage'].copy()
+            E_loss_ref = mc_data['E_loss'].copy()
+
+            # Apply temperature shift: ω(T) = ω(Tref) × aT(T)
+            # At higher T, aT < 1, so effective frequency decreases
+            # The master curve is evaluated at shifted frequencies
+            omega_shifted = omega_ref * aT
+
+            # Update status
+            self.g_calc_status_var.set(f"시프트된 마스터 커브 생성 중...")
+            self.root.update_idletasks()
+
+            # Create new material with shifted frequencies
+            from persson_model.utils.data_loader import create_material_from_dma
+            self.material_shifted = create_material_from_dma(
+                omega=omega_shifted,
+                E_storage=E_storage_ref,
+                E_loss=E_loss_ref,
+                material_name=f"Persson (T={T_target}°C, aT={aT:.2e})",
+                reference_temp=T_target
+            )
+
+            # Store shift info
+            self.current_temp_shift = {
+                'T_target': T_target,
+                'T_ref': T_ref,
+                'aT': aT,
+                'log_aT': log_aT
+            }
+
+            # Update material for calculations
+            self.material = self.material_shifted
+            self.material_source = f"Persson 정품 (T={T_target}°C 시프트, aT={aT:.2e})"
+
+            # Update aT status display
+            self.mu_aT_status_var.set(
+                f"T={T_target}°C, aT={aT:.2e} (Tref={T_ref}°C)"
+            )
+
+            # Now recalculate G(q,v) with shifted material
+            self.g_calc_status_var.set(f"G(q,v) 재계산 시작...")
+            self.root.update_idletasks()
+
+            # Call G recalculation (this will update Tab 3 data)
+            self._recalculate_G_with_temperature()
+
+            # Final status
+            self.g_calc_status_var.set(
+                f"완료: T={T_target}°C, aT={aT:.2e}, G 재계산됨"
+            )
+
+            self.status_var.set(f"온도 시프트 적용 완료: T={T_target}°C")
+
+        except ValueError as e:
+            messagebox.showerror("오류", f"온도 값이 올바르지 않습니다: {e}")
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"온도 시프트 적용 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+            self.g_calc_status_var.set("오류 발생")
+
+    def _recalculate_G_with_temperature(self):
+        """Recalculate G(q,v) after temperature shift."""
+        try:
+            # Check required data
+            if self.psd_model is None:
+                self.g_calc_status_var.set("PSD 데이터 없음")
+                return
+
+            if self.material is None:
+                self.g_calc_status_var.set("마스터 커브 없음")
+                return
+
+            # Get parameters from Tab 3 settings
+            sigma_0 = float(self.sigma_0_var.get()) * 1e6  # MPa to Pa
+            nu = float(self.nu_var.get())
+            n_q = int(self.n_q_var.get())
+            n_phi = int(self.n_phi_var.get())
+
+            # Get q range
+            if self.auto_q_range_var.get():
+                q_min = float(self.q_min_var.get())
+                q_max = float(self.q_max_var.get())
+            else:
+                q_min = float(self.q_min_manual_var.get())
+                q_max = float(self.q_max_manual_var.get())
+
+            # Get velocity range
+            v_min = float(self.v_min_var.get())
+            v_max = float(self.v_max_var.get())
+            n_v = int(self.n_v_var.get())
+
+            velocities = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
+
+            # Update status
+            self.g_calc_status_var.set(f"G(q,v) 계산 중... (0/{n_v})")
+            self.root.update_idletasks()
+
+            # Create arrays for G, P, S
+            q_array = np.logspace(np.log10(q_min), np.log10(q_max), n_q)
+            G_qv = np.zeros((n_v, n_q))
+            P_q = np.zeros((n_v, n_q))
+            S_q = np.zeros((n_v, n_q))
+
+            gamma = float(self.gamma_var.get())
+            phi_array = np.linspace(0, 2 * np.pi, n_phi)
+
+            # Calculate G for each velocity
+            for i_v, v in enumerate(velocities):
+                if i_v % max(1, n_v // 10) == 0:
+                    self.g_calc_status_var.set(f"G(q,v) 계산 중... ({i_v}/{n_v})")
+                    self.root.update_idletasks()
+
+                G_cumulative = 0.0
+
+                for i_q, q in enumerate(q_array):
+                    # Get PSD value
+                    C_q = self.psd_model(q)
+
+                    # Angular integration for G
+                    G_phi_integrand = np.zeros(n_phi)
+                    for i_phi, phi in enumerate(phi_array):
+                        omega = q * v * np.cos(phi)
+                        if omega > 0:
+                            E_star = self.material.get_complex_modulus(omega)
+                            E_ratio = np.abs(E_star) / ((1 - nu**2) * sigma_0)
+                            G_phi_integrand[i_phi] = E_ratio**2
+
+                    # Integrate over phi
+                    G_phi_integral = np.trapezoid(G_phi_integrand, phi_array)
+
+                    # Add to cumulative G
+                    dq = q * np.log(10) * (np.log10(q_max) - np.log10(q_min)) / n_q
+                    G_cumulative += (1/8) * q**3 * C_q * G_phi_integral * dq
+
+                    G_qv[i_v, i_q] = G_cumulative
+
+                    # Calculate P and S
+                    if G_cumulative > 0:
+                        P_q[i_v, i_q] = special.erf(1 / (2 * np.sqrt(G_cumulative)))
+                    else:
+                        P_q[i_v, i_q] = 1.0
+                    S_q[i_v, i_q] = gamma + (1 - gamma) * P_q[i_v, i_q]**2
+
+            # Store results
+            self.temp_shifted_G_data = {
+                'velocities': velocities,
+                'q_array': q_array,
+                'G_qv': G_qv,
+                'P_q': P_q,
+                'S_q': S_q,
+                'T': self.current_temp_shift['T_target'],
+                'aT': self.current_temp_shift['aT']
+            }
+
+            self.g_calc_status_var.set(f"G(q,v) 계산 완료 (T={self.current_temp_shift['T_target']}°C)")
+
+            # Update Tab 3 results display if available
+            self._update_G_display_after_temp_shift()
+
+        except Exception as e:
+            import traceback
+            self.g_calc_status_var.set(f"G 계산 오류: {str(e)[:30]}")
+            print(f"G recalculation error: {traceback.format_exc()}")
+
+    def _update_G_display_after_temp_shift(self):
+        """Update G(q,v) display after temperature shift."""
+        if not hasattr(self, 'temp_shifted_G_data') or self.temp_shifted_G_data is None:
+            return
+
+        data = self.temp_shifted_G_data
+        T = data['T']
+        aT = data['aT']
+
+        # Update status text if Tab 3 result text exists
+        if hasattr(self, 'g_result_text'):
+            self.g_result_text.delete(1.0, tk.END)
+            self.g_result_text.insert(tk.END, f"=== G(q,v) 온도 시프트 결과 ===\n\n")
+            self.g_result_text.insert(tk.END, f"계산 온도: T = {T}°C\n")
+            self.g_result_text.insert(tk.END, f"시프트 팩터: aT = {aT:.4e}\n\n")
+
+            G_final = data['G_qv'][:, -1]  # G at q_max
+            self.g_result_text.insert(tk.END, f"G(q_max) 범위: {G_final.min():.4e} ~ {G_final.max():.4e}\n")
+
+            P_final = data['P_q'][:, -1]
+            self.g_result_text.insert(tk.END, f"P(q_max) 범위: {P_final.min():.4f} ~ {P_final.max():.4f}\n")
 
     def _calculate_mu_visc(self):
         """Calculate viscoelastic friction coefficient mu_visc.
