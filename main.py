@@ -2070,6 +2070,23 @@ class PerssonModelGUI_V2:
             command=self._toggle_bt_comparison
         ).pack(anchor=tk.W, pady=2)
 
+        # Persson 마스터 커브 스무딩 적용 버튼
+        ttk.Separator(smooth_frame, orient='horizontal').pack(fill=tk.X, pady=3)
+        persson_smooth_row = ttk.Frame(smooth_frame)
+        persson_smooth_row.pack(fill=tk.X, pady=2)
+        ttk.Button(
+            persson_smooth_row,
+            text="Persson 스무딩",
+            command=self._apply_smoothing_to_persson,
+            width=14
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            persson_smooth_row,
+            text="원본 복원",
+            command=self._reset_persson_to_original,
+            width=10
+        ).pack(side=tk.RIGHT, padx=2)
+
         # 4. Calculate button
         calc_frame = ttk.Frame(settings_frame)
         calc_frame.pack(fill=tk.X, pady=5)
@@ -2460,6 +2477,172 @@ class PerssonModelGUI_V2:
         self.ax_mc_aT.set_ylabel('tan δ = E\'\'/E\'')
         self.ax_mc_aT.set_title('tan δ (Persson 정품)', fontweight='bold')
         self.ax_mc_aT.legend(loc='upper right')
+        self.ax_mc_aT.grid(True, alpha=0.3)
+        self.ax_mc_aT.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5)
+
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
+
+    def _apply_smoothing_to_persson(self):
+        """Apply smoothing to loaded Persson master curve."""
+        if not hasattr(self, 'persson_master_curve') or self.persson_master_curve is None:
+            messagebox.showwarning("경고", "먼저 Persson 정품 마스터 커브를 로드하세요.")
+            return
+
+        try:
+            from scipy.signal import savgol_filter
+
+            data = self.persson_master_curve
+
+            # Get smoothing window
+            window = self.mc_smooth_window_var.get()
+            if window % 2 == 0:
+                window += 1  # Savitzky-Golay requires odd window
+
+            # Store original data if not already stored
+            if 'E_storage_orig' not in data:
+                data['E_storage_orig'] = data['E_storage'].copy()
+                data['E_loss_orig'] = data['E_loss'].copy()
+
+            # Apply smoothing in log space for better results
+            log_E_storage = np.log10(data['E_storage_orig'])
+            log_E_loss = np.log10(data['E_loss_orig'])
+
+            # Apply Savitzky-Golay filter
+            poly_order = min(3, window - 2)  # Polynomial order must be less than window
+            log_E_storage_smooth = savgol_filter(log_E_storage, window, poly_order)
+            log_E_loss_smooth = savgol_filter(log_E_loss, window, poly_order)
+
+            # Convert back from log space
+            E_storage_smooth = 10**log_E_storage_smooth
+            E_loss_smooth = 10**log_E_loss_smooth
+
+            # Update data
+            data['E_storage'] = E_storage_smooth
+            data['E_loss'] = E_loss_smooth
+            data['smoothed'] = True
+            data['smooth_window'] = window
+
+            # Update the material object
+            from persson_model.utils.data_loader import create_material_from_dma
+            self.material_persson = create_material_from_dma(
+                omega=data['omega'],
+                E_storage=E_storage_smooth,
+                E_loss=E_loss_smooth,
+                material_name=f"Persson Smoothed (w={window})",
+                reference_temp=20.0
+            )
+
+            # Update info display
+            tan_delta_avg = np.mean(E_loss_smooth / E_storage_smooth)
+            self.mc_data_info_var.set(
+                f"★ Persson 정품 (스무딩 w={window}): {len(data['f'])} pts, "
+                f"tan δ 평균={tan_delta_avg:.3f}"
+            )
+
+            # Replot
+            self._plot_persson_master_curve_with_original()
+
+            messagebox.showinfo(
+                "스무딩 완료",
+                f"Persson 마스터 커브 스무딩 적용 완료\n\n"
+                f"윈도우 크기: {window}\n"
+                f"tan δ 평균: {tan_delta_avg:.3f}"
+            )
+
+            self.status_var.set(f"Persson 마스터 커브 스무딩 적용 (w={window})")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"스무딩 적용 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def _reset_persson_to_original(self):
+        """Reset Persson master curve to original (before smoothing)."""
+        if not hasattr(self, 'persson_master_curve') or self.persson_master_curve is None:
+            messagebox.showwarning("경고", "Persson 마스터 커브가 로드되지 않았습니다.")
+            return
+
+        data = self.persson_master_curve
+
+        if 'E_storage_orig' not in data:
+            messagebox.showinfo("정보", "이미 원본 상태입니다.")
+            return
+
+        # Restore original data
+        data['E_storage'] = data['E_storage_orig'].copy()
+        data['E_loss'] = data['E_loss_orig'].copy()
+        data['smoothed'] = False
+        if 'smooth_window' in data:
+            del data['smooth_window']
+
+        # Update the material object
+        from persson_model.utils.data_loader import create_material_from_dma
+        self.material_persson = create_material_from_dma(
+            omega=data['omega'],
+            E_storage=data['E_storage'],
+            E_loss=data['E_loss'],
+            material_name=f"Persson ({data['filename']})",
+            reference_temp=20.0
+        )
+
+        # Update info display
+        tan_delta_avg = np.mean(data['E_loss'] / data['E_storage'])
+        self.mc_data_info_var.set(
+            f"★ Persson 정품: {len(data['f'])} pts, "
+            f"tan δ 평균={tan_delta_avg:.3f}"
+        )
+
+        # Replot (original only)
+        self._plot_persson_master_curve()
+
+        self.status_var.set("Persson 마스터 커브 원본 복원 완료")
+
+    def _plot_persson_master_curve_with_original(self):
+        """Plot Persson master curve with original (before smoothing) overlay."""
+        if not hasattr(self, 'persson_master_curve') or self.persson_master_curve is None:
+            return
+
+        data = self.persson_master_curve
+
+        # Use the master curve plot (top-right)
+        self.ax_mc_master.clear()
+        self.ax_mc_aT.clear()
+
+        f = data['f']
+        E_storage = data['E_storage'] / 1e6  # Convert to MPa for display
+        E_loss = data['E_loss'] / 1e6
+        tan_delta = E_loss / E_storage
+
+        # Plot smoothed data
+        self.ax_mc_master.loglog(f, E_storage, 'b-', linewidth=2, label="E' (스무딩)")
+        self.ax_mc_master.loglog(f, E_loss, 'r-', linewidth=2, label="E'' (스무딩)")
+
+        # Plot original if available
+        if 'E_storage_orig' in data:
+            E_storage_orig = data['E_storage_orig'] / 1e6
+            E_loss_orig = data['E_loss_orig'] / 1e6
+            tan_delta_orig = E_loss_orig / E_storage_orig
+
+            self.ax_mc_master.loglog(f, E_storage_orig, 'b:', linewidth=1, alpha=0.5, label="E' (원본)")
+            self.ax_mc_master.loglog(f, E_loss_orig, 'r:', linewidth=1, alpha=0.5, label="E'' (원본)")
+
+            # tan δ comparison
+            self.ax_mc_aT.semilogx(f, tan_delta, 'g-', linewidth=2, label='tan δ (스무딩)')
+            self.ax_mc_aT.semilogx(f, tan_delta_orig, 'g:', linewidth=1, alpha=0.5, label='tan δ (원본)')
+        else:
+            self.ax_mc_aT.semilogx(f, tan_delta, 'g-', linewidth=2, label='tan δ')
+
+        self.ax_mc_master.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_master.set_ylabel("E', E'' (MPa)")
+        smooth_info = f" (w={data.get('smooth_window', 'N/A')})" if data.get('smoothed') else ""
+        self.ax_mc_master.set_title(f"★ Persson 마스터 커브{smooth_info}", fontweight='bold')
+        self.ax_mc_master.legend(loc='upper left', fontsize=8)
+        self.ax_mc_master.grid(True, alpha=0.3)
+
+        self.ax_mc_aT.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_aT.set_ylabel('tan δ = E\'\'/E\'')
+        self.ax_mc_aT.set_title('tan δ 비교', fontweight='bold')
+        self.ax_mc_aT.legend(loc='upper right', fontsize=8)
         self.ax_mc_aT.grid(True, alpha=0.3)
         self.ax_mc_aT.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5)
 
