@@ -1953,9 +1953,36 @@ class PerssonModelGUI_V2:
             command=self._load_multi_temp_dma
         ).pack(fill=tk.X, pady=2)
 
+        # Persson 정품 마스터 커브 직접 로드 버튼
+        ttk.Separator(load_frame, orient='horizontal').pack(fill=tk.X, pady=5)
+        ttk.Label(load_frame, text="─ 또는: 완성된 마스터 커브 직접 로드 ─",
+                  font=('Arial', 8), foreground='blue').pack(anchor=tk.CENTER)
+
+        ttk.Button(
+            load_frame,
+            text="★ Persson 정품 마스터 커브 로드 (f, E', E'')",
+            command=self._load_persson_master_curve
+        ).pack(fill=tk.X, pady=2)
+
         self.mc_data_info_var = tk.StringVar(value="데이터 미로드")
         ttk.Label(load_frame, textvariable=self.mc_data_info_var,
                   font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
+
+        # 마스터 커브 비교 버튼
+        self.mc_compare_var = tk.BooleanVar(value=False)
+        compare_frame = ttk.Frame(load_frame)
+        compare_frame.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            compare_frame,
+            text="정품 vs 생성 비교 모드",
+            variable=self.mc_compare_var
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            compare_frame,
+            text="비교 플롯",
+            command=self._plot_master_curve_comparison,
+            width=10
+        ).pack(side=tk.RIGHT)
 
         # 3. Settings
         settings_frame = ttk.LabelFrame(left_frame, text="설정", padding=5)
@@ -2106,6 +2133,14 @@ class PerssonModelGUI_V2:
             command=self._finalize_master_curve_to_tab3
         )
         finalize_btn.pack(fill=tk.X, pady=2)
+
+        # Persson 정품 마스터 커브 확정 버튼
+        ttk.Separator(export_frame, orient='horizontal').pack(fill=tk.X, pady=3)
+        persson_finalize_btn = ttk.Button(
+            export_frame, text="★ Persson 정품 마스터 커브 확정 → Tab 3",
+            command=self._use_persson_master_curve_for_calc
+        )
+        persson_finalize_btn.pack(fill=tk.X, pady=2)
 
         # Force update of scroll region after all widgets are added
         left_frame.update_idletasks()
@@ -2292,6 +2327,279 @@ class PerssonModelGUI_V2:
 
         self.fig_mc.tight_layout()
         self.canvas_mc.draw()
+
+    def _load_persson_master_curve(self):
+        """Load pre-generated master curve in Persson format (f, E', E'')."""
+        filename = filedialog.askopenfilename(
+            title="Persson 정품 마스터 커브 파일 선택",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filename:
+            return
+
+        try:
+            import pandas as pd
+
+            # Try different delimiters
+            for sep in ['\t', ',', ' ', ';']:
+                try:
+                    df = pd.read_csv(filename, sep=sep, skipinitialspace=True,
+                                     comment='#', header=None)
+                    if len(df.columns) >= 3:
+                        break
+                except:
+                    continue
+
+            if df is None or len(df.columns) < 3:
+                raise ValueError("파일에서 3개 이상의 컬럼을 찾을 수 없습니다.")
+
+            # Assume columns: f (Hz), E' (MPa), E'' (MPa)
+            # Drop any header rows (non-numeric)
+            df = df.apply(pd.to_numeric, errors='coerce').dropna()
+
+            if len(df) < 2:
+                raise ValueError("유효한 데이터 행이 부족합니다.")
+
+            f = df.iloc[:, 0].values  # Frequency (Hz)
+            E_storage = df.iloc[:, 1].values  # E' (MPa)
+            E_loss = df.iloc[:, 2].values  # E'' (MPa)
+
+            # Convert Hz to rad/s
+            omega = 2 * np.pi * f
+
+            # Convert MPa to Pa (if values seem to be in MPa range)
+            if E_storage.max() < 1e6:  # Likely in MPa
+                E_storage = E_storage * 1e6
+                E_loss = E_loss * 1e6
+                unit_str = "MPa → Pa 변환됨"
+            else:
+                unit_str = "Pa (변환 없음)"
+
+            # Store the Persson master curve separately for comparison
+            self.persson_master_curve = {
+                'f': f.copy(),
+                'omega': omega.copy(),
+                'E_storage': E_storage.copy(),
+                'E_loss': E_loss.copy(),
+                'filename': os.path.basename(filename)
+            }
+
+            # Also create material from this data
+            from persson_model.utils.data_loader import create_material_from_dma
+            self.material_persson = create_material_from_dma(
+                omega=omega,
+                E_storage=E_storage,
+                E_loss=E_loss,
+                material_name=f"Persson ({os.path.basename(filename)})",
+                reference_temp=20.0
+            )
+
+            # Update info display
+            tan_delta_avg = np.mean(E_loss / E_storage)
+            self.mc_data_info_var.set(
+                f"★ Persson 정품: {len(f)} pts, "
+                f"f={f.min():.1e}~{f.max():.1e} Hz, "
+                f"tan δ 평균={tan_delta_avg:.3f}"
+            )
+
+            # Plot the loaded data
+            self._plot_persson_master_curve()
+
+            messagebox.showinfo(
+                "성공",
+                f"Persson 정품 마스터 커브 로드 완료\n\n"
+                f"파일: {os.path.basename(filename)}\n"
+                f"데이터 포인트: {len(f)}\n"
+                f"주파수 범위: {f.min():.2e} ~ {f.max():.2e} Hz\n"
+                f"E' 범위: {E_storage.min()/1e6:.2f} ~ {E_storage.max()/1e6:.2f} MPa\n"
+                f"E'' 범위: {E_loss.min()/1e6:.2f} ~ {E_loss.max()/1e6:.2f} MPa\n"
+                f"tan δ 평균: {tan_delta_avg:.3f}\n\n"
+                f"단위: {unit_str}"
+            )
+
+            self.status_var.set("Persson 정품 마스터 커브 로드 완료")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("오류", f"마스터 커브 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def _plot_persson_master_curve(self):
+        """Plot the loaded Persson master curve."""
+        if not hasattr(self, 'persson_master_curve') or self.persson_master_curve is None:
+            return
+
+        data = self.persson_master_curve
+
+        # Use the master curve plot (top-right)
+        self.ax_mc_master.clear()
+
+        f = data['f']
+        E_storage = data['E_storage'] / 1e6  # Convert to MPa for display
+        E_loss = data['E_loss'] / 1e6
+        tan_delta = E_loss / E_storage
+
+        # E' and E'' on log-log scale
+        self.ax_mc_master.loglog(f, E_storage, 'b-', linewidth=2, label="E' (Persson)")
+        self.ax_mc_master.loglog(f, E_loss, 'r-', linewidth=2, label="E'' (Persson)")
+
+        self.ax_mc_master.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_master.set_ylabel("E', E'' (MPa)")
+        self.ax_mc_master.set_title(f"★ Persson 정품 마스터 커브: {data['filename']}", fontweight='bold')
+        self.ax_mc_master.legend(loc='upper left')
+        self.ax_mc_master.grid(True, alpha=0.3)
+
+        # tan δ on the aT plot (bottom-left)
+        self.ax_mc_aT.clear()
+        self.ax_mc_aT.semilogx(f, tan_delta, 'g-', linewidth=2, label='tan δ (Persson)')
+        self.ax_mc_aT.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_aT.set_ylabel('tan δ = E\'\'/E\'')
+        self.ax_mc_aT.set_title('tan δ (Persson 정품)', fontweight='bold')
+        self.ax_mc_aT.legend(loc='upper right')
+        self.ax_mc_aT.grid(True, alpha=0.3)
+        self.ax_mc_aT.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5)
+
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
+
+    def _plot_master_curve_comparison(self):
+        """Plot comparison between Persson master curve and generated master curve."""
+        has_persson = hasattr(self, 'persson_master_curve') and self.persson_master_curve is not None
+        has_generated = hasattr(self, 'master_curve_gen') and self.master_curve_gen is not None and \
+                        self.master_curve_gen.master_f is not None
+
+        if not has_persson and not has_generated:
+            messagebox.showwarning("경고", "비교할 마스터 커브가 없습니다.\n\n"
+                                   "1. Persson 정품 마스터 커브를 로드하거나\n"
+                                   "2. 마스터 커브를 생성하세요.")
+            return
+
+        # Clear all plots for comparison
+        self.ax_mc_raw.clear()
+        self.ax_mc_master.clear()
+        self.ax_mc_aT.clear()
+        self.ax_mc_bT.clear()
+
+        # == Plot 1: E' comparison ==
+        if has_persson:
+            p_data = self.persson_master_curve
+            f_p = p_data['f']
+            E_p = p_data['E_storage'] / 1e6
+            E_pp = p_data['E_loss'] / 1e6
+            self.ax_mc_raw.loglog(f_p, E_p, 'b-', linewidth=2.5, label="E' (Persson 정품)", alpha=0.9)
+            self.ax_mc_master.loglog(f_p, E_pp, 'r-', linewidth=2.5, label="E'' (Persson 정품)", alpha=0.9)
+
+        if has_generated:
+            f_g = self.master_curve_gen.master_f
+            E_g = self.master_curve_gen.master_E_storage
+            E_gg = self.master_curve_gen.master_E_loss
+            self.ax_mc_raw.loglog(f_g, E_g, 'b--', linewidth=2, label="E' (생성)", alpha=0.7)
+            self.ax_mc_master.loglog(f_g, E_gg, 'r--', linewidth=2, label="E'' (생성)", alpha=0.7)
+
+        # Configure E' plot
+        self.ax_mc_raw.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_raw.set_ylabel("E' (MPa)")
+        self.ax_mc_raw.set_title("E' (저장 탄성률) 비교", fontweight='bold')
+        self.ax_mc_raw.legend(loc='lower right')
+        self.ax_mc_raw.grid(True, alpha=0.3)
+
+        # Configure E'' plot
+        self.ax_mc_master.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_master.set_ylabel("E'' (MPa)")
+        self.ax_mc_master.set_title("E'' (손실 탄성률) 비교", fontweight='bold')
+        self.ax_mc_master.legend(loc='lower right')
+        self.ax_mc_master.grid(True, alpha=0.3)
+
+        # == Plot 3: tan δ comparison ==
+        if has_persson:
+            tan_p = E_pp / E_p
+            self.ax_mc_aT.semilogx(f_p, tan_p, 'g-', linewidth=2.5, label='tan δ (Persson 정품)', alpha=0.9)
+
+        if has_generated:
+            tan_g = E_gg / E_g
+            self.ax_mc_aT.semilogx(f_g, tan_g, 'g--', linewidth=2, label='tan δ (생성)', alpha=0.7)
+
+        self.ax_mc_aT.set_xlabel('주파수 f (Hz)')
+        self.ax_mc_aT.set_ylabel('tan δ = E\'\'/E\'')
+        self.ax_mc_aT.set_title('tan δ (손실 탄젠트) 비교', fontweight='bold')
+        self.ax_mc_aT.legend(loc='upper right')
+        self.ax_mc_aT.grid(True, alpha=0.3)
+        self.ax_mc_aT.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='tan δ = 1')
+
+        # == Plot 4: E'' ratio or difference ==
+        if has_persson and has_generated:
+            # Interpolate to compare at same frequencies
+            from scipy.interpolate import interp1d
+
+            # Use overlapping frequency range
+            f_min = max(f_p.min(), f_g.min())
+            f_max = min(f_p.max(), f_g.max())
+            f_common = np.logspace(np.log10(f_min), np.log10(f_max), 50)
+
+            # Interpolate in log-log space
+            log_E_pp_interp = interp1d(np.log10(f_p), np.log10(E_pp), bounds_error=False, fill_value='extrapolate')
+            log_E_gg_interp = interp1d(np.log10(f_g), np.log10(E_gg), bounds_error=False, fill_value='extrapolate')
+
+            E_pp_common = 10**log_E_pp_interp(np.log10(f_common))
+            E_gg_common = 10**log_E_gg_interp(np.log10(f_common))
+
+            ratio = E_pp_common / E_gg_common
+
+            self.ax_mc_bT.semilogx(f_common, ratio, 'm-', linewidth=2, label="E''정품 / E''생성")
+            self.ax_mc_bT.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5)
+            self.ax_mc_bT.set_xlabel('주파수 f (Hz)')
+            self.ax_mc_bT.set_ylabel("E'' 비율")
+            self.ax_mc_bT.set_title("E'' 비율 (정품/생성)", fontweight='bold')
+            self.ax_mc_bT.legend(loc='upper right')
+            self.ax_mc_bT.grid(True, alpha=0.3)
+
+            # Print comparison summary
+            print("\n" + "="*60)
+            print("마스터 커브 비교 결과")
+            print("="*60)
+            print(f"E'' 비율 (정품/생성) = {ratio.mean():.2f} ± {ratio.std():.2f}")
+            print(f"tan δ 평균 (정품): {tan_p.mean():.3f}")
+            print(f"tan δ 평균 (생성): {tan_g.mean():.3f}")
+            print(f"tan δ 비율: {tan_p.mean()/tan_g.mean():.2f}x")
+            print("="*60)
+        else:
+            self.ax_mc_bT.text(0.5, 0.5, "비교 데이터 없음\n(정품과 생성 둘 다 필요)",
+                              ha='center', va='center', fontsize=10, transform=self.ax_mc_bT.transAxes)
+            self.ax_mc_bT.set_title("E'' 비율 비교", fontweight='bold')
+
+        self.fig_mc.tight_layout()
+        self.canvas_mc.draw()
+
+        self.status_var.set("마스터 커브 비교 플롯 완료")
+
+    def _use_persson_master_curve_for_calc(self):
+        """Use loaded Persson master curve for friction calculation."""
+        if not hasattr(self, 'material_persson') or self.material_persson is None:
+            messagebox.showwarning("경고", "먼저 Persson 정품 마스터 커브를 로드하세요.")
+            return
+
+        # Replace current material with Persson material
+        self.material = self.material_persson
+        self.material_source = f"Persson 정품: {self.persson_master_curve['filename']}"
+        self.tab1_finalized = True
+
+        # Update displays
+        data = self.persson_master_curve
+        tan_delta_avg = np.mean(data['E_loss'] / data['E_storage'])
+
+        messagebox.showinfo(
+            "확정 완료",
+            f"Persson 정품 마스터 커브가 계산에 사용됩니다.\n\n"
+            f"파일: {data['filename']}\n"
+            f"tan δ 평균: {tan_delta_avg:.3f}\n\n"
+            f"Tab 3, Tab 5에서 이 데이터로 μ_visc 계산이 가능합니다."
+        )
+
+        self.status_var.set("Persson 정품 마스터 커브 → 계산용 확정")
 
     def _generate_master_curve(self):
         """Generate master curve using TTS."""
