@@ -6826,10 +6826,10 @@ $\begin{array}{lcc}
                 self.mu_result_text.insert(tk.END, "\n  [보정 적용 항목]\n")
                 self.mu_result_text.insert(tk.END, "  • E'(ω) → E'(ω) × f(ε)  (저장탄성률)\n")
                 self.mu_result_text.insert(tk.END, "  • E''(ω) → E''(ω) × g(ε) (손실탄성률)\n")
-                self.mu_result_text.insert(tk.END, "  • |E*|² → (E'×f)² + (E''×g)²\n")
-                self.mu_result_text.insert(tk.END, "  • G(q) → G(q) × |E*_eff|²/|E*_lin|²\n")
-                self.mu_result_text.insert(tk.END, "  • P(q) = erf(1/(2√G_eff)) : 비선형 G(q) 기반\n")
-                self.mu_result_text.insert(tk.END, "  • S(q) = γ + (1-γ)P(q)² : 비선형 P(q) 기반\n")
+                self.mu_result_text.insert(tk.END, "  • G(q) 재계산: 적분 내부에서 보정된 E 사용\n")
+                self.mu_result_text.insert(tk.END, "    G = (1/8)∫q³C(q)∫|E_eff/((1-ν²)σ₀)|²dφdq\n")
+                self.mu_result_text.insert(tk.END, "  • P(q) = erf(1/(2√G)) : 재계산된 G 기반\n")
+                self.mu_result_text.insert(tk.END, "  • S(q) = γ + (1-γ)P² : 재계산된 P 기반\n")
             elif use_fg and self.g_interpolator is not None:
                 self.mu_result_text.insert(tk.END, f"  상태: *** 부분 적용 (g만) ***\n")
                 self.mu_result_text.insert(tk.END, "  ※ f 곡선이 없어 손실탄성률만 보정됨\n")
@@ -8898,9 +8898,9 @@ $\begin{array}{lcc}
 │                                                                              │
 │                                                                              │
 │  [비선형 보정 적용 시]                                                       │
-│  E'_eff = E' × f(ε),  E''_eff = E'' × g(ε)                                  │
-│  |E*_eff|² = (E'×f)² + (E''×g)²                                             │
-│  G_eff(q) = G_linear(q) × |E*_eff|²/|E*_linear|²                            │
+│  E'_eff(ω) = E'(ω) × f(ε),  E''_eff(ω) = E''(ω) × g(ε)                      │
+│  G(q)는 보정된 E_eff로 적분 재계산:                                          │
+│  G(q) = (1/8) ∫q³C(q) ∫|E_eff(qv·cosφ)/((1-ν²)σ₀)|² dφ dq                   │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -8944,10 +8944,9 @@ $\begin{array}{lcc}
 │                                                                              │
 │  ┌───────────────────────────────────────────────────────────────┐          │
 │  │ 비선형 보정 적용 시:                                          │          │
-│  │   E'_eff = E' × f(ε)                                          │          │
-│  │   E''_eff = E'' × g(ε)                                        │          │
-│  │   G_eff = G_linear × |E*_eff|²/|E*_linear|²                   │          │
-│  │   P(q), S(q) ← G_eff 기반으로 재계산                          │          │
+│  │   E'_eff = E' × f(ε), E''_eff = E'' × g(ε)                    │          │
+│  │   G(q) 재계산: 적분 내부에서 E_eff 사용                       │          │
+│  │   P(q), S(q) ← 재계산된 G 기반                                │          │
 │  │   여기서 ε는 Tab 4에서 계산된 local strain                    │          │
 │  └───────────────────────────────────────────────────────────────┘          │
 │                                                                              │
@@ -9001,8 +9000,8 @@ $\begin{array}{lcc}
   │  │ 비선형 모드:                                │ │
   │  │   ε(q) ← Tab 4의 h'rms 기반                  │ │
   │  │   E'_eff = E' × f(ε), E''_eff = E'' × g(ε)  │ │
-  │  │   G_eff = G × |E*_eff|²/|E*_lin|²           │ │
-  │  │   P(q), S(q) ← G_eff 기반 (비선형)          │ │
+  │  │   G(q) 재계산 (적분 내 E_eff 사용)          │ │
+  │  │   P(q), S(q) ← 재계산된 G 기반              │ │
   │  │   Im[E_eff] = Im[E_linear] × g(ε)           │ │
   │  └─────────────────────────────────────────────┘ │
   │                                                  │
@@ -9022,10 +9021,10 @@ $\begin{array}{lcc}
   • Tab 4에서 계산된 ε(q) = factor × ξ(q) 사용
   • E'_eff = E' × f(ε)     (저장 탄성률 보정)
   • E''_eff = E'' × g(ε)    (손실 탄성률 보정)
-  • |E*_eff|² = (E'×f)² + (E''×g)²
-  • G_eff = G_linear × |E*_eff|²/|E*_linear|²
-  • P(q) = erf(1/(2√G_eff))  ← 비선형
-  • S(q) = γ + (1-γ)P²       ← 비선형
+  • G(q) 재계산: 적분 내부에서 E_eff 사용
+    G = (1/8)∫q³C(q)∫|E_eff/((1-ν²)σ₀)|²dφdq
+  • P(q) = erf(1/(2√G))  ← 재계산된 G 기반
+  • S(q) = γ + (1-γ)P²   ← 재계산된 P 기반
   • Im[E_eff] = Im[E_linear] × g(ε)  ← 적분에 사용
 
   ※ 비선형 보정의 물리적 의미:
