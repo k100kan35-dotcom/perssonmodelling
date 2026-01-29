@@ -7405,10 +7405,8 @@ $\begin{array}{lcc}
             else:
                 bT = 1.0  # No vertical shift if bT not available
 
-            # Update status
+            # Update status (bT is loaded but not applied to modulus for friction calc)
             status_msg = f"온도 시프트 계산 중... T={T_target}°C, aT={aT:.2e}"
-            if has_bT:
-                status_msg += f", bT={bT:.4f}"
             self.g_calc_status_var.set(status_msg)
             self.root.update_idletasks()
 
@@ -7423,22 +7421,19 @@ $\begin{array}{lcc}
             # At higher T, aT < 1, so effective frequency decreases
             omega_shifted = omega_ref * aT
 
-            # Vertical (modulus) shift: E(T) = E(Tref) × bT(T)
-            # bT accounts for temperature-dependent density and other effects
-            E_storage_shifted = E_storage_ref * bT
-            E_loss_shifted = E_loss_ref * bT
+            # NOTE: bT (vertical shift) is NOT applied to modulus for friction calculation
+            # bT is used only for master curve construction, not for subsequent friction calc
+            # The modulus values remain unchanged from the reference temperature master curve
+            E_storage_shifted = E_storage_ref
+            E_loss_shifted = E_loss_ref
 
             # Update status
             self.g_calc_status_var.set(f"시프트된 마스터 커브 생성 중...")
             self.root.update_idletasks()
 
-            # Create new material with shifted frequencies and moduli
+            # Create new material with shifted frequencies (bT not applied to modulus)
             from persson_model.utils.data_loader import create_material_from_dma
-            material_name = f"Persson (T={T_target}°C, aT={aT:.2e}"
-            if has_bT:
-                material_name += f", bT={bT:.4f})"
-            else:
-                material_name += ")"
+            material_name = f"Persson (T={T_target}°C, aT={aT:.2e})"
 
             self.material_shifted = create_material_from_dma(
                 omega=omega_shifted,
@@ -7455,23 +7450,16 @@ $\begin{array}{lcc}
                 'aT': aT,
                 'log_aT': log_aT,
                 'bT': bT,
-                'has_bT': has_bT
+                'has_bT': has_bT,
+                'bT_applied': False  # bT is stored but not applied
             }
 
             # Update material for calculations
             self.material = self.material_shifted
-            source_str = f"Persson 정품 (T={T_target}°C, aT={aT:.2e}"
-            if has_bT:
-                source_str += f", bT={bT:.4f})"
-            else:
-                source_str += ")"
-            self.material_source = source_str
+            self.material_source = f"Persson 정품 (T={T_target}°C, aT={aT:.2e})"
 
             # Update aT status display
-            status_str = f"T={T_target}°C, aT={aT:.2e}"
-            if has_bT:
-                status_str += f", bT={bT:.4f}"
-            status_str += f" (Tref={T_ref}°C)"
+            status_str = f"T={T_target}°C, aT={aT:.2e} (Tref={T_ref}°C)"
             self.mu_aT_status_var.set(status_str)
 
             # Now recalculate G(q,v) with shifted material
@@ -7482,11 +7470,7 @@ $\begin{array}{lcc}
             self._recalculate_G_with_temperature()
 
             # Final status
-            final_status = f"완료: T={T_target}°C, aT={aT:.2e}"
-            if has_bT:
-                final_status += f", bT={bT:.4f}"
-            final_status += ", G 재계산됨"
-            self.g_calc_status_var.set(final_status)
+            self.g_calc_status_var.set(f"완료: T={T_target}°C, aT={aT:.2e}, G 재계산됨")
 
             self.status_var.set(f"온도 시프트 적용 완료: T={T_target}°C")
 
