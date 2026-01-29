@@ -716,6 +716,18 @@ class PerssonModelGUI_V2:
         ttk.Button(load_frame, text="프로파일 데이터 로드 (.txt, .csv)",
                    command=self._load_profile_data).pack(fill=tk.X, pady=2)
 
+        # Direct PSD loading section
+        ttk.Separator(load_frame, orient='horizontal').pack(fill=tk.X, pady=5)
+        ttk.Label(load_frame, text="─ 또는: PSD 파일 직접 로드 ─",
+                  font=('Arial', 8), foreground='blue').pack(anchor=tk.CENTER)
+
+        ttk.Button(load_frame, text="★ PSD 직접 로드 (q, C(q))",
+                   command=self._load_psd_direct).pack(fill=tk.X, pady=2)
+
+        self.psd_direct_info_var = tk.StringVar(value="PSD 직접 로드: -")
+        ttk.Label(load_frame, textvariable=self.psd_direct_info_var,
+                  font=('Arial', 8), foreground='gray').pack(fill=tk.X)
+
         # Column settings
         col_frame = ttk.Frame(load_frame)
         col_frame.pack(fill=tk.X, pady=2)
@@ -958,8 +970,10 @@ class PerssonModelGUI_V2:
                         value="top").pack(side=tk.LEFT)
         ttk.Radiobutton(apply_frame, text="Param", variable=self.apply_psd_type_var,
                         value="param").pack(side=tk.LEFT)
+        ttk.Radiobutton(apply_frame, text="직접로드", variable=self.apply_psd_type_var,
+                        value="direct").pack(side=tk.LEFT)
 
-        ttk.Button(export_frame, text="PSD 확정 → Tab 3 (계산설정)",
+        ttk.Button(export_frame, text="▶ PSD 확정 → 계산에 사용",
                    command=self._apply_profile_psd_to_tab3).pack(fill=tk.X, pady=2)
 
         # ============== Right Panel: Plots ==============
@@ -1725,7 +1739,29 @@ class PerssonModelGUI_V2:
 
         try:
             # Handle different PSD types
-            if psd_type == "param":
+            if psd_type == "direct":
+                # Use directly loaded PSD
+                if not hasattr(self, 'psd_direct_data') or self.psd_direct_data is None:
+                    messagebox.showwarning("경고", "먼저 PSD 파일을 직접 로드하세요.")
+                    return
+                q = self.psd_direct_data['q'].copy()
+                C = self.psd_direct_data['C_q'].copy()
+                # Calculate H, xi, h_rms from data
+                from scipy.integrate import simpson
+                h_rms_sq = 2 * np.pi * simpson(q * C, x=q)
+                h_rms = np.sqrt(max(h_rms_sq, 0))
+                # Estimate H from slope (log-log)
+                log_q = np.log10(q)
+                log_C = np.log10(C)
+                # Linear fit to get slope
+                coeffs = np.polyfit(log_q, log_C, 1)
+                slope = coeffs[0]  # C(q) ~ q^slope => slope = -2(1+H) => H = -slope/2 - 1
+                H = max(0.1, min(1.0, -slope/2 - 1))
+                # h_rms_slope (xi)
+                h_rms_slope_sq = np.pi * simpson(q**3 * C, x=q)
+                xi = np.sqrt(max(h_rms_slope_sq, 0))
+                psd_type_str = f"직접 로드: {self.psd_direct_data['filename']}"
+            elif psd_type == "param":
                 # Use parameter-generated PSD
                 if not hasattr(self, 'param_psd_data') or self.param_psd_data is None:
                     messagebox.showwarning("경고", "먼저 파라미터 PSD를 생성하세요.")
@@ -1971,13 +2007,6 @@ class PerssonModelGUI_V2:
             command=self._load_persson_aT
         ).pack(fill=tk.X, pady=2)
 
-        # PSD 직접 로드 버튼
-        ttk.Button(
-            load_frame,
-            text="PSD 직접 로드 (q, C(q))",
-            command=self._load_psd_direct
-        ).pack(fill=tk.X, pady=2)
-
         self.mc_data_info_var = tk.StringVar(value="데이터 미로드")
         ttk.Label(load_frame, textvariable=self.mc_data_info_var,
                   font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
@@ -1985,11 +2014,6 @@ class PerssonModelGUI_V2:
         # aT 정보 표시
         self.mc_aT_info_var = tk.StringVar(value="aT: 미로드")
         ttk.Label(load_frame, textvariable=self.mc_aT_info_var,
-                  font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
-
-        # PSD 정보 표시
-        self.mc_psd_info_var = tk.StringVar(value="PSD: 미로드")
-        ttk.Label(load_frame, textvariable=self.mc_psd_info_var,
                   font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
 
         # 마스터 커브 비교 버튼
@@ -2683,13 +2707,18 @@ class PerssonModelGUI_V2:
             self.q_min_var.set(f"{q.min():.2e}")
             self.q_max_var.set(f"{q.max():.2e}")
 
-            # Update info display
-            self.mc_psd_info_var.set(
-                f"PSD: {len(q)} pts, q={q.min():.1e}~{q.max():.1e} 1/m"
-            )
+            # Update info display in Tab 0
+            if hasattr(self, 'psd_direct_info_var'):
+                self.psd_direct_info_var.set(
+                    f"★ PSD 로드됨: {len(q)} pts, q={q.min():.1e}~{q.max():.1e} 1/m"
+                )
 
-            # Plot PSD on raw data plot (top-left)
-            self._plot_psd_direct()
+            # Set the apply type to "direct" for easy finalization
+            if hasattr(self, 'apply_psd_type_var'):
+                self.apply_psd_type_var.set("direct")
+
+            # Plot PSD on Tab 0's 2D PSD plot (bottom-right)
+            self._plot_psd_direct_on_tab0()
 
             messagebox.showinfo(
                 "성공",
@@ -2699,7 +2728,7 @@ class PerssonModelGUI_V2:
                 f"q 범위: {q.min():.2e} ~ {q.max():.2e} 1/m\n"
                 f"C(q) 범위: {C_q.min():.2e} ~ {C_q.max():.2e} m⁴\n"
                 f"형식: {format_str}\n\n"
-                f"PSD가 Tab 0 확정 상태로 설정되었습니다."
+                f"'▶ PSD 확정 → 계산에 사용' 버튼을 클릭하여 확정하세요."
             )
 
             self.status_var.set("PSD 직접 로드 완료")
@@ -2708,28 +2737,26 @@ class PerssonModelGUI_V2:
             import traceback
             messagebox.showerror("오류", f"PSD 로드 실패:\n{str(e)}\n\n{traceback.format_exc()}")
 
-    def _plot_psd_direct(self):
-        """Plot directly loaded PSD data."""
+    def _plot_psd_direct_on_tab0(self):
+        """Plot directly loaded PSD data on Tab 0's 2D PSD plot."""
         if not hasattr(self, 'psd_direct_data') or self.psd_direct_data is None:
             return
 
         data = self.psd_direct_data
-
-        # Use raw data plot (top-left)
-        self.ax_mc_raw.clear()
-
         q = data['q']
         C_q = data['C_q']
 
-        self.ax_mc_raw.loglog(q, C_q, 'k-', linewidth=2, label='C(q)')
-        self.ax_mc_raw.set_xlabel('파수 q (1/m)')
-        self.ax_mc_raw.set_ylabel('C(q) (m⁴)')
-        self.ax_mc_raw.set_title(f"PSD: {data['filename']}", fontweight='bold')
-        self.ax_mc_raw.legend(loc='upper right')
-        self.ax_mc_raw.grid(True, alpha=0.3)
-
-        self.fig_mc.tight_layout()
-        self.canvas_mc.draw()
+        # Use Tab 0's 2D PSD plot (bottom-right: ax_psd_2d)
+        if hasattr(self, 'ax_psd_2d'):
+            self.ax_psd_2d.clear()
+            self.ax_psd_2d.loglog(q, C_q, 'b-', linewidth=2, label='C(q) 직접 로드')
+            self.ax_psd_2d.set_xlabel('파수 q (1/m)')
+            self.ax_psd_2d.set_ylabel('C(q) (m⁴)')
+            self.ax_psd_2d.set_title(f"★ PSD 직접 로드: {data['filename']}", fontweight='bold')
+            self.ax_psd_2d.legend(loc='upper right')
+            self.ax_psd_2d.grid(True, alpha=0.3, which='both')
+            self.fig_psd_profile.tight_layout()
+            self.canvas_psd_profile.draw()
 
     def _plot_persson_master_curve(self):
         """Plot the loaded Persson master curve."""
