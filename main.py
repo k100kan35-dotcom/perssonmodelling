@@ -6562,6 +6562,21 @@ $\begin{array}{lcc}
         self.ax_mu_cumulative.set_xscale('log')
         self.ax_mu_cumulative.grid(True, alpha=0.3)
 
+        # 초기 참조 데이터 표시
+        if hasattr(self, 'reference_mu_data') and self.reference_mu_data is not None:
+            ref_v = self.reference_mu_data['v']
+            ref_mu = self.reference_mu_data['mu']
+            self.ax_mu_v.semilogx(ref_v, ref_mu, 'r-', linewidth=1.5, alpha=0.5,
+                                 label='참조 (Persson)')
+            self.ax_mu_v.legend(loc='upper left', fontsize=7)
+
+        if hasattr(self, 'reference_area_data') and self.reference_area_data is not None:
+            ref_v = self.reference_area_data['v']
+            ref_area = self.reference_area_data['area']
+            self.ax_mu_cumulative.semilogx(ref_v, ref_area, 'r-', linewidth=1.5, alpha=0.5,
+                                            label='참조 A/A0 (Persson)')
+            self.ax_mu_cumulative.legend(loc='best', fontsize=7)
+
         # Bottom-right: P(q) and S(q)
         self.ax_ps = self.fig_mu_visc.add_subplot(224)
         self.ax_ps.set_title('P(q), S(q) 분포', fontweight='bold')
