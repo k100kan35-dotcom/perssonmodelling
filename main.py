@@ -4429,6 +4429,9 @@ class PerssonModelGUI_V2:
             v_array = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
             q_array = np.logspace(np.log10(q_min), np.log10(q_max), n_q)
 
+            # Determine modulus mode from UI
+            modulus_mode = 'E_prime' if "E'" in self.modulus_mode_var.get() else 'E_star'
+
             # Create G calculator
             self.g_calculator = GCalculator(
                 psd_func=self.psd_model,
@@ -4438,7 +4441,8 @@ class PerssonModelGUI_V2:
                 poisson_ratio=poisson,
                 n_angle_points=int(self.g_n_angle_var.get()),
                 integration_method='trapz',
-                gamma=0.0  # Linear S(q) = P(q)^2 partial contact correction
+                gamma=0.0,
+                modulus_mode=modulus_mode
             )
 
             # =====================================================================
@@ -6454,6 +6458,17 @@ $\begin{array}{lcc}
         self.g_n_angle_var = tk.StringVar(value="36")
         ttk.Entry(integ_row, textvariable=self.g_n_angle_var, width=5).pack(side=tk.LEFT, padx=2)
 
+        # E modulus mode selection row
+        e_mode_row = ttk.Frame(mu_settings_frame)
+        e_mode_row.pack(fill=tk.X, pady=1)
+        ttk.Label(e_mode_row, text="G(q) 탄성률:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.modulus_mode_var = tk.StringVar(value="E' (저장탄성률)")
+        ttk.Combobox(e_mode_row, textvariable=self.modulus_mode_var,
+                     values=["E' (저장탄성률)", "|E*| (복소탄성률)"],
+                     width=16, state="readonly").pack(side=tk.LEFT, padx=2)
+        ttk.Label(e_mode_row, text="※ G(q) 및 A/A₀ 계산에 적용",
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT, padx=3)
+
         # Smoothing in single row
         smooth_row = ttk.Frame(mu_settings_frame)
         smooth_row.pack(fill=tk.X, pady=1)
@@ -7269,6 +7284,7 @@ $\begin{array}{lcc}
                 return self.material.get_modulus(omega, temperature=temperature)
 
             # Recreate g_calculator with shifted material (선형 계산만)
+            modulus_mode = 'E_prime' if "E'" in self.modulus_mode_var.get() else 'E_star'
             self.g_calculator = GCalculator(
                 psd_func=self.psd_model,
                 modulus_func=modulus_func,
@@ -7276,7 +7292,8 @@ $\begin{array}{lcc}
                 velocity=v_array[0],
                 poisson_ratio=poisson,
                 n_angle_points=int(self.g_n_angle_var.get()),
-                gamma=0.0  # Linear S(q) = P(q)^2 partial contact correction
+                gamma=0.0,  # Linear S(q) = P(q)^2 partial contact correction
+                modulus_mode=modulus_mode
             )
 
             # Progress callback

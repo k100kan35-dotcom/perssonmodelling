@@ -47,7 +47,8 @@ class GCalculator:
         integration_method: str = 'trapz',
         storage_modulus_func: Callable[[float], float] = None,
         loss_modulus_func: Callable[[float], float] = None,
-        gamma: float = 0.0
+        gamma: float = 0.0,
+        modulus_mode: str = 'E_prime'
     ):
         """
         Initialize G(q) calculator.
@@ -77,6 +78,10 @@ class GCalculator:
             Partial contact correction parameter for S(q).
             S(q) = gamma + (1 - gamma) * P(q)^2
             Linear case: gamma=0 → S(q) = P(q)^2 (default: 0.0)
+        modulus_mode : str, optional
+            'E_prime' : use E'² only in G(q) integrand (Persson standard)
+            'E_star'  : use |E*|² = E'² + E''² in G(q) integrand
+            (default: 'E_prime')
         """
         self.psd_func = psd_func
         self.modulus_func = modulus_func
@@ -88,6 +93,7 @@ class GCalculator:
         self.storage_modulus_func = storage_modulus_func
         self.loss_modulus_func = loss_modulus_func
         self.gamma = gamma
+        self.modulus_mode = modulus_mode
 
         # Precompute constant factor
         # Persson formula: |E / ((1-ν²)σ₀)|²
@@ -225,9 +231,14 @@ class GCalculator:
                 E_star_eff_sq = E_prime_eff**2 + E_loss_eff**2
                 integrand[i] = E_star_eff_sq * self.prefactor**2
         else:
-            # Linear calculation (original)
+            # Linear calculation
             E_values = np.array([self.modulus_func(w) for w in omega_eval])
-            integrand = np.abs(E_values * self.prefactor)**2
+            if self.modulus_mode == 'E_prime':
+                # Persson standard: use E' only
+                integrand = (np.real(E_values) * self.prefactor)**2
+            else:
+                # E_star mode: use |E*|² = E'² + E''²
+                integrand = np.abs(E_values * self.prefactor)**2
 
         # Validate integrand - replace NaN/Inf with zeros
         if np.any(~np.isfinite(integrand)):
@@ -298,7 +309,10 @@ class GCalculator:
         else:
             # Linear calculation
             E_values = np.array([self.modulus_func(w) for w in omega_eval])
-            integrand = np.abs(E_values * self.prefactor)**2
+            if self.modulus_mode == 'E_prime':
+                integrand = (np.real(E_values) * self.prefactor)**2
+            else:
+                integrand = np.abs(E_values * self.prefactor)**2
 
         # Numerical integration using trapezoidal rule
         result = np.trapz(integrand, phi)
