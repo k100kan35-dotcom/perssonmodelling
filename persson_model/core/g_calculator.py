@@ -541,46 +541,34 @@ class GCalculator:
             # Calculate full integrand
             G_integrand_arr[i] = self._integrand_q(q)
 
-        # Calculate cumulative G with S(q) partial contact correction
-        # S(q) = gamma + (1 - gamma) * P(q)^2
-        # Linear case (gamma=0): S(q) = P(q)^2
-        # At each step: apply S(q) to reduce integrand in non-contact regions
+        # Calculate cumulative G using trapezoidal integration
+        # Note: S(q) is NOT applied here. S(q) is used in the friction integral only.
         from scipy.special import erf
-        S_arr = np.ones(n)
-
-        # Initialize: at q_min, full contact assumed
-        P_arr[0] = 1.0
-        S_arr[0] = self.gamma + (1 - self.gamma) * P_arr[0]**2  # = 1.0
 
         for i in range(1, n):
             if q_values[i] <= q_min:
-                P_arr[i] = 1.0
-                S_arr[i] = 1.0
                 continue
 
-            # Apply S(q) correction to integrand
-            # Use S from previous step for current point (forward Euler)
-            corrected_prev = G_integrand_arr[i-1] * S_arr[i-1]
-            corrected_curr = G_integrand_arr[i] * S_arr[i-1]
-
             # Trapezoidal rule: (f(i-1) + f(i)) / 2 * Δq
-            delta_G = 0.5 * (corrected_prev + corrected_curr) * \
+            delta_G = 0.5 * (G_integrand_arr[i-1] + G_integrand_arr[i]) * \
                       (q_values[i] - q_values[i-1])
 
             delta_G_arr[i] = delta_G / 8.0  # Apply 1/8 factor
             G_arr[i] = G_arr[i-1] + delta_G_arr[i]
 
-            # Compute P(q) from current cumulative G
+        # Calculate contact area ratio P(q) = erf(1 / (2√G))
+        for i in range(n):
             if G_arr[i] > 1e-10:
                 sqrt_G = np.sqrt(G_arr[i])
                 arg = 1.0 / (2.0 * sqrt_G)
-                arg = min(arg, 10.0)  # erf(10) ≈ 1.0
+                arg = min(arg, 10.0)
                 P_arr[i] = erf(arg)
             else:
                 P_arr[i] = 1.0
 
-            # Compute S(q) for next step
-            S_arr[i] = self.gamma + (1 - self.gamma) * P_arr[i]**2
+        # Calculate S(q) for use in friction integral
+        # S(q) = gamma + (1 - gamma) * P(q)^2
+        S_arr = self.gamma + (1 - self.gamma) * P_arr**2
 
         result = {
             'q': q_values,
