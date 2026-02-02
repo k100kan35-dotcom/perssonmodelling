@@ -5123,10 +5123,13 @@ class PerssonModelGUI_V2:
                 # Safe slice bounds (prevent negative index wrap-around)
                 sl_start = max(0, q1_idx - 10)
                 sl_end = min(len(slope_rms_cumulative), q1_idx + 10)
-                f_interp = interp1d(slope_rms_cumulative[sl_start:sl_end],
-                                   q_parse[sl_start:sl_end],
-                                   kind='linear', fill_value='extrapolate')
-                q1_determined = float(f_interp(target_slope_rms))
+                if sl_end - sl_start >= 2:
+                    f_interp = interp1d(slope_rms_cumulative[sl_start:sl_end],
+                                       q_parse[sl_start:sl_end],
+                                       kind='linear', fill_value='extrapolate')
+                    q1_determined = float(f_interp(target_slope_rms))
+                else:
+                    q1_determined = float(q_parse[q1_idx])
             else:
                 # If target not reached, use extrapolation with Hurst exponent
                 # Fit power law to last portion of data
