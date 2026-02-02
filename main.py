@@ -4436,7 +4436,7 @@ class PerssonModelGUI_V2:
                 sigma_0=sigma_0,
                 velocity=v_array[0],  # Initial velocity
                 poisson_ratio=poisson,
-                n_angle_points=36,
+                n_angle_points=int(self.g_n_angle_var.get()),
                 integration_method='trapz'
             )
 
@@ -6445,9 +6445,12 @@ $\begin{array}{lcc}
         ttk.Label(integ_row, text="γ:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.gamma_var = tk.StringVar(value="0.75")
         ttk.Entry(integ_row, textvariable=self.gamma_var, width=5).pack(side=tk.LEFT, padx=2)
-        ttk.Label(integ_row, text="φ점:", font=('Arial', 8)).pack(side=tk.LEFT)
+        ttk.Label(integ_row, text="μ φ점:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.n_phi_var = tk.StringVar(value="144")
         ttk.Entry(integ_row, textvariable=self.n_phi_var, width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Label(integ_row, text="G φ점:", font=('Arial', 8)).pack(side=tk.LEFT)
+        self.g_n_angle_var = tk.StringVar(value="36")
+        ttk.Entry(integ_row, textvariable=self.g_n_angle_var, width=5).pack(side=tk.LEFT, padx=2)
 
         # Smoothing in single row
         smooth_row = ttk.Frame(mu_settings_frame)
@@ -7270,7 +7273,7 @@ $\begin{array}{lcc}
                 sigma_0=sigma_0,
                 velocity=v_array[0],
                 poisson_ratio=poisson,
-                n_angle_points=n_phi
+                n_angle_points=int(self.g_n_angle_var.get())
             )
 
             # Progress callback
