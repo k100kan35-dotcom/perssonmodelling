@@ -120,15 +120,10 @@ class ViscoelasticMaterial:
         log_E_double_prime = np.nan_to_num(log_E_double_prime, nan=5.0)
 
         # Choose interpolation method based on number of data points
-        # Cubic spline requires at least 4 points and can be unstable with extrapolation
-        # Use quadratic for moderate data, linear for sparse data
+        # Linear interpolation is most robust - avoids oscillation artifacts
+        # that quadratic/cubic can produce between noisy data points
         n_points = len(log_freq)
-        if n_points >= 20:
-            interp_kind = 'quadratic'  # Safer than cubic for extrapolation
-        elif n_points >= 4:
-            interp_kind = 'quadratic'
-        else:
-            interp_kind = 'linear'
+        interp_kind = 'linear'
 
         # Store frequency range for later reference
         self._log_freq_min = log_freq.min()
