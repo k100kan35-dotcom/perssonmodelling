@@ -5166,9 +5166,6 @@ class PerssonModelGUI_V2:
                 # Update calculated q1 display in Tab 3
                 self.calculated_q1_var.set(f"{q1_determined:.3e}")
 
-                # Pass q1 and hrms_slope to Tab 4 (RMS Slope tab)
-                self.rms_q_max_var.set(f"{q1_determined:.3e}")
-
                 # Store calculated q1 for other uses
                 self.calculated_q1 = q1_determined
 
