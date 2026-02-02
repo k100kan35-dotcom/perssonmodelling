@@ -6443,7 +6443,7 @@ $\begin{array}{lcc}
         integ_row = ttk.Frame(mu_settings_frame)
         integ_row.pack(fill=tk.X, pady=1)
         ttk.Label(integ_row, text="γ:", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.gamma_var = tk.StringVar(value="0.6")
+        self.gamma_var = tk.StringVar(value="0.75")
         ttk.Entry(integ_row, textvariable=self.gamma_var, width=5).pack(side=tk.LEFT, padx=2)
         ttk.Label(integ_row, text="φ점:", font=('Arial', 8)).pack(side=tk.LEFT)
         self.n_phi_var = tk.StringVar(value="144")
@@ -7879,11 +7879,28 @@ $\begin{array}{lcc}
             self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
             # Plot 2: Real Contact Area Ratio A/A0 = P(q_max) vs velocity
+            # Self-consistent correction: G_eff = ∫ dG'·P(q')·S(q') → P depends on γ
+            from scipy.special import erf as sp_erf
+            gamma = float(self.gamma_var.get())
             P_qmax_array = np.zeros(len(v))
 
             for i, det in enumerate(details['details']):
-                P = det.get('P', np.zeros(1))
-                P_qmax_array[i] = P[-1] if len(P) > 0 else 0
+                G = det.get('G', np.zeros(1))
+                if len(G) < 2:
+                    P_qmax_array[i] = 0
+                    continue
+                # 1st pass: P, S from simple G
+                G_safe = np.maximum(G, 1e-12)
+                P0 = sp_erf(1.0 / (2.0 * np.sqrt(G_safe)))
+                P0[G < 1e-10] = 1.0
+                S0 = gamma + (1 - gamma) * P0**2
+                # Self-consistent G: weight incremental G by P·S
+                dG = np.diff(G, prepend=0.0)
+                G_sc = np.cumsum(dG * P0 * S0)
+                G_sc = np.maximum(G_sc, 1e-12)
+                P_sc = sp_erf(1.0 / (2.0 * np.sqrt(G_sc)))
+                P_sc[G_sc < 1e-10] = 1.0
+                P_qmax_array[i] = P_sc[-1]
 
             # Sanitize P_qmax_array
             P_qmax_array = np.nan_to_num(P_qmax_array, nan=0.0, posinf=1.0, neginf=0.0)
