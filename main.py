@@ -250,6 +250,7 @@ class PerssonModelGUI_V2:
         import os
 
         ref_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reference_data')
+        print(f"[참조 데이터] 디렉토리: {ref_dir}")
 
         # Load reference μ_visc
         mu_file = os.path.join(ref_dir, 'persson_ref_mu_visc_linear.txt')
@@ -259,15 +260,19 @@ class PerssonModelGUI_V2:
                 log_v = data[:, 0]
                 mu = data[:, 1]
                 self.reference_mu_data = {
-                    'v': 10**log_v,  # Convert log10(v) to v (m/s)
+                    'v': 10**log_v,
                     'mu': mu,
                     'log_v': log_v,
                     'show': True
                 }
+                print(f"[참조 데이터] μ_visc 로드 성공: {len(mu)} points, μ=[{mu.min():.4f}~{mu.max():.4f}]")
             except Exception as e:
-                print(f"참조 μ_visc 로드 실패: {e}")
+                print(f"[참조 데이터] μ_visc 로드 실패: {e}")
+                import traceback
+                traceback.print_exc()
                 self.reference_mu_data = None
         else:
+            print(f"[참조 데이터] μ_visc 파일 없음: {mu_file}")
             self.reference_mu_data = None
 
         # Load reference A/A0
@@ -278,15 +283,19 @@ class PerssonModelGUI_V2:
                 log_v = data[:, 0]
                 area = data[:, 1]
                 self.reference_area_data = {
-                    'v': 10**log_v,  # Convert log10(v) to v (m/s)
+                    'v': 10**log_v,
                     'area': area,
                     'log_v': log_v,
                     'show': True
                 }
+                print(f"[참조 데이터] A/A0 로드 성공: {len(area)} points, A/A0=[{area.min():.4f}~{area.max():.4f}]")
             except Exception as e:
-                print(f"참조 A/A0 로드 실패: {e}")
+                print(f"[참조 데이터] A/A0 로드 실패: {e}")
+                import traceback
+                traceback.print_exc()
                 self.reference_area_data = None
         else:
+            print(f"[참조 데이터] A/A0 파일 없음: {area_file}")
             self.reference_area_data = None
 
     def _create_menu(self):
@@ -5768,23 +5777,25 @@ $\begin{array}{lcc}
         ttk.Label(settings_frame, text="(ε = factor × ξ, Persson 권장: 0.5~1.0)",
                   font=('Arial', 8), foreground='gray').pack(anchor=tk.W)
 
-        # q range
-        q_frame = ttk.LabelFrame(settings_frame, text="q 범위", padding=3)
+        # q range - Tab 3 (계산 설정)의 q_min/q_max 사용
+        q_frame = ttk.LabelFrame(settings_frame, text="q 범위 (계산 설정 탭 연동)", padding=3)
         q_frame.pack(fill=tk.X, pady=3)
 
         row_q1 = ttk.Frame(q_frame)
         row_q1.pack(fill=tk.X, pady=1)
         ttk.Label(row_q1, text="q_min (1/m):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.rms_q_min_var = tk.StringVar(value="auto")
-        ttk.Entry(row_q1, textvariable=self.rms_q_min_var, width=10).pack(side=tk.RIGHT)
+        self.rms_q_min_var = self.q_min_var  # 계산 설정 탭과 동일 변수 공유
+        ttk.Label(row_q1, textvariable=self.rms_q_min_var, font=('Arial', 8, 'bold'),
+                  foreground='blue').pack(side=tk.RIGHT)
 
         row_q2 = ttk.Frame(q_frame)
         row_q2.pack(fill=tk.X, pady=1)
         ttk.Label(row_q2, text="q_max (1/m):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.rms_q_max_var = tk.StringVar(value="auto")
-        ttk.Entry(row_q2, textvariable=self.rms_q_max_var, width=10).pack(side=tk.RIGHT)
+        self.rms_q_max_var = self.q_max_var  # 계산 설정 탭과 동일 변수 공유
+        ttk.Label(row_q2, textvariable=self.rms_q_max_var, font=('Arial', 8, 'bold'),
+                  foreground='blue').pack(side=tk.RIGHT)
 
-        ttk.Label(q_frame, text="'auto' = PSD 데이터 범위 사용",
+        ttk.Label(q_frame, text="※ 계산 설정 탭의 q 범위가 자동 적용됨",
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
         # Target h'rms display (synced with Tab 2)
@@ -5961,27 +5972,9 @@ $\begin{array}{lcc}
             # Get strain factor
             strain_factor = float(self.strain_factor_var.get())
 
-            # Get q range - use Tab 1/2 settings when 'auto' for consistency
-            q_min_str = self.rms_q_min_var.get().strip().lower()
-            q_max_str = self.rms_q_max_var.get().strip().lower()
-
-            if q_min_str == 'auto':
-                # Use Tab 1/2 q_min for consistency with G(q) calculation
-                try:
-                    q_min = float(self.q_min_var.get())
-                except:
-                    q_min = q_array[0]
-            else:
-                q_min = float(q_min_str)
-
-            if q_max_str == 'auto':
-                # Use Tab 1/2 q_max for consistency with G(q) calculation
-                try:
-                    q_max = float(self.q_max_var.get())
-                except:
-                    q_max = q_array[-1]
-            else:
-                q_max = float(q_max_str)
+            # Get q range from 계산 설정 탭 (q_min_var, q_max_var)
+            q_min = float(self.q_min_var.get())
+            q_max = float(self.q_max_var.get())
 
             # Filter q range
             mask = (q_array >= q_min) & (q_array <= q_max)
@@ -7864,13 +7857,18 @@ $\begin{array}{lcc}
                     # Add vertical line at v=1 m/s
                     self.ax_mu_v.axvline(x=1.0, color='green', linestyle='--', alpha=0.5, linewidth=1)
 
-            # Plot reference μ_visc data if enabled
-            if hasattr(self, 'reference_mu_data') and hasattr(self, 'show_ref_mu_var'):
-                if self.show_ref_mu_var.get() and self.reference_mu_data is not None:
+            # Plot reference μ_visc data (항상 시도)
+            try:
+                if self.reference_mu_data is not None:
                     ref_v = self.reference_mu_data['v']
                     ref_mu = self.reference_mu_data['mu']
-                    self.ax_mu_v.semilogx(ref_v, ref_mu, 'r-', linewidth=1.5, alpha=0.7,
-                                         label='참조 (Persson)')
+                    self.ax_mu_v.semilogx(ref_v, ref_mu, 'r-', linewidth=2, alpha=0.8,
+                                         label='참조 (Persson)', zorder=5)
+                    print(f"[DEBUG] 참조 μ_visc 플롯 완료: {len(ref_v)} points, v=[{ref_v.min():.2e}~{ref_v.max():.2e}], μ=[{ref_mu.min():.4f}~{ref_mu.max():.4f}]")
+                else:
+                    print("[DEBUG] reference_mu_data is None - 참조 파일 로드 실패했을 수 있음")
+            except Exception as e:
+                print(f"[DEBUG] 참조 μ_visc 플롯 오류: {e}")
 
             self.ax_mu_v.legend(loc='upper left', fontsize=7)
 
@@ -7898,13 +7896,18 @@ $\begin{array}{lcc}
             self.ax_mu_cumulative.semilogx(v, P_qmax_array, f'{color}-', linewidth=2,
                                             marker='s', markersize=4, label=label_str)
 
-            # Overlay reference A/A0 data if available
-            if hasattr(self, 'reference_area_data') and hasattr(self, 'show_ref_mu_var'):
-                if self.show_ref_mu_var.get() and self.reference_area_data is not None:
+            # Overlay reference A/A0 data (항상 시도)
+            try:
+                if self.reference_area_data is not None:
                     ref_v = self.reference_area_data['v']
                     ref_area = self.reference_area_data['area']
-                    self.ax_mu_cumulative.semilogx(ref_v, ref_area, 'r-', linewidth=1.5,
-                                                    alpha=0.7, label='참조 A/A0 (Persson)')
+                    self.ax_mu_cumulative.semilogx(ref_v, ref_area, 'r-', linewidth=2,
+                                                    alpha=0.8, label='참조 A/A0 (Persson)', zorder=5)
+                    print(f"[DEBUG] 참조 A/A0 플롯 완료: {len(ref_v)} points")
+                else:
+                    print("[DEBUG] reference_area_data is None")
+            except Exception as e:
+                print(f"[DEBUG] 참조 A/A0 플롯 오류: {e}")
 
             self.ax_mu_cumulative.set_title(f'실접촉 면적비율 A/A0{title_suffix}', fontweight='bold', fontsize=8)
             self.ax_mu_cumulative.set_xlabel('속도 v (m/s)')
@@ -7915,9 +7918,8 @@ $\begin{array}{lcc}
             # Set y-axis to show data with padding
             y_max_calc = np.max(P_qmax_array) * 1.2
             # Include reference data in y-axis range
-            if hasattr(self, 'reference_area_data') and self.reference_area_data is not None:
-                if hasattr(self, 'show_ref_mu_var') and self.show_ref_mu_var.get():
-                    y_max_calc = max(y_max_calc, np.max(self.reference_area_data['area']) * 1.2)
+            if self.reference_area_data is not None:
+                y_max_calc = max(y_max_calc, np.max(self.reference_area_data['area']) * 1.2)
             y_max = max(y_max_calc, 0.05)
             if not np.isfinite(y_max):
                 y_max = 1.0
