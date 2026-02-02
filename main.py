@@ -5030,13 +5030,14 @@ class PerssonModelGUI_V2:
                              s=50, zorder=3, edgecolors='black', linewidth=0.5)
 
         # Add connecting line with gradient using line segments
-        from matplotlib.collections import LineCollection
-        points = np.array([v, P_final]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        norm = plt.Normalize(0, len(v)-1)
-        lc = LineCollection(segments, cmap='viridis', norm=norm, linewidth=2, alpha=0.6)
-        lc.set_array(np.arange(len(v)))
-        ax4.add_collection(lc)
+        if len(v) >= 2:
+            from matplotlib.collections import LineCollection
+            points = np.array([v, P_final]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            norm = plt.Normalize(0, len(v)-1)
+            lc = LineCollection(segments, cmap='viridis', norm=norm, linewidth=2, alpha=0.6)
+            lc.set_array(np.arange(len(v)))
+            ax4.add_collection(lc)
 
         ax4.set_xscale('log')
         ax4.set_xlabel('속도 v (m/s)', fontweight='bold', fontsize=LABEL_FONT, labelpad=3)
@@ -7229,37 +7230,29 @@ $\begin{array}{lcc}
             n_q = int(self.n_q_var.get())
             n_phi = int(self.n_phi_var.get())
 
-            # Get q range
-            if self.auto_q_range_var.get():
-                q_min = float(self.q_min_var.get())
-                q_max = float(self.q_max_var.get())
-            else:
-                q_min = float(self.q_min_manual_var.get())
-                q_max = float(self.q_max_manual_var.get())
+            # Get q range (use same variables as Tab 3)
+            q_min = float(self.q_min_var.get())
+            q_max = float(self.q_max_var.get())
 
             # Get velocity range
             v_min = float(self.v_min_var.get())
             v_max = float(self.v_max_var.get())
-            n_v = int(self.n_v_var.get())
+            n_v = int(self.n_velocity_var.get())
 
             q_array = np.logspace(np.log10(q_min), np.log10(q_max), n_q)
             v_array = np.logspace(np.log10(v_min), np.log10(v_max), n_v)
 
             # Update g_calculator with new (shifted) material
-            from persson_model.core.g_factor import GFactorCalculator
+            from persson_model.core.g_calculator import GCalculator
 
-            # Create modulus functions from shifted material
-            def storage_func(omega):
-                return self.material.get_storage_modulus(omega, temperature=temperature)
+            # Create complex modulus function from shifted material
+            def modulus_func(omega):
+                return self.material.get_modulus(omega, temperature=temperature)
 
-            def loss_func(omega):
-                return self.material.get_loss_modulus(omega, temperature=temperature)
-
-            # Recreate g_calculator with shifted material
-            self.g_calculator = GFactorCalculator(
+            # Recreate g_calculator with shifted material (선형 계산만)
+            self.g_calculator = GCalculator(
                 psd_func=self.psd_model,
-                storage_modulus_func=storage_func,
-                loss_modulus_func=loss_func,
+                modulus_func=modulus_func,
                 sigma_0=sigma_0,
                 velocity=v_array[0],
                 poisson_ratio=poisson,
