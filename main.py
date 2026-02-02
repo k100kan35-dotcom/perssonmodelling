@@ -5790,14 +5790,18 @@ $\begin{array}{lcc}
         row_q1 = ttk.Frame(q_frame)
         row_q1.pack(fill=tk.X, pady=1)
         ttk.Label(row_q1, text="q_min (1/m):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.rms_q_min_var = self.q_min_var  # 계산 설정 탭과 동일 변수 공유
+        self.rms_q_min_var = tk.StringVar(value=self.q_min_var.get())  # 별도 변수 (Tab 2 값 보호)
+        # q_min_var → rms_q_min_var 단방향 동기화 (Tab 2 변경 시 Tab 4 표시 업데이트)
+        self.q_min_var.trace_add('write', lambda *args: self.rms_q_min_var.set(self.q_min_var.get()))
         ttk.Label(row_q1, textvariable=self.rms_q_min_var, font=('Arial', 8, 'bold'),
                   foreground='blue').pack(side=tk.RIGHT)
 
         row_q2 = ttk.Frame(q_frame)
         row_q2.pack(fill=tk.X, pady=1)
         ttk.Label(row_q2, text="q_max (1/m):", font=('Arial', 8)).pack(side=tk.LEFT)
-        self.rms_q_max_var = self.q_max_var  # 계산 설정 탭과 동일 변수 공유
+        self.rms_q_max_var = tk.StringVar(value=self.q_max_var.get())  # 별도 변수 (Tab 2 값 보호)
+        # q_max_var → rms_q_max_var 단방향 동기화 (Tab 2 변경 시 Tab 4 표시 업데이트)
+        self.q_max_var.trace_add('write', lambda *args: self.rms_q_max_var.set(self.q_max_var.get()))
         ttk.Label(row_q2, textvariable=self.rms_q_max_var, font=('Arial', 8, 'bold'),
                   foreground='blue').pack(side=tk.RIGHT)
 
