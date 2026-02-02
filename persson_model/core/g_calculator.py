@@ -46,7 +46,8 @@ class GCalculator:
         n_angle_points: int = 36,
         integration_method: str = 'trapz',
         storage_modulus_func: Callable[[float], float] = None,
-        loss_modulus_func: Callable[[float], float] = None
+        loss_modulus_func: Callable[[float], float] = None,
+        gamma: float = 0.0
     ):
         """
         Initialize G(q) calculator.
@@ -72,6 +73,10 @@ class GCalculator:
             Function that returns E'(ω) separately (for nonlinear correction)
         loss_modulus_func : callable, optional
             Function that returns E''(ω) separately (for nonlinear correction)
+        gamma : float, optional
+            Partial contact correction parameter for S(q).
+            S(q) = gamma + (1 - gamma) * P(q)^2
+            Linear case: gamma=0 → S(q) = P(q)^2 (default: 0.0)
         """
         self.psd_func = psd_func
         self.modulus_func = modulus_func
@@ -82,6 +87,7 @@ class GCalculator:
         self.integration_method = integration_method
         self.storage_modulus_func = storage_modulus_func
         self.loss_modulus_func = loss_modulus_func
+        self.gamma = gamma
 
         # Precompute constant factor
         # Persson formula: |E / ((1-ν²)σ₀)|²
@@ -347,6 +353,9 @@ class GCalculator:
         """
         Calculate G(q) for an array of wavenumbers.
 
+        Uses cumulative integration with S(q) partial contact correction.
+        S(q) = gamma + (1 - gamma) * P(q)^2
+
         Parameters
         ----------
         q_values : np.ndarray
@@ -359,52 +368,8 @@ class GCalculator:
         np.ndarray
             G(q) values corresponding to each q in q_values
         """
-        q_values = np.asarray(q_values)
-
-        if q_min is None:
-            q_min = q_values[0]
-
-        G_values = np.zeros_like(q_values, dtype=float)
-
-        for i, q in enumerate(q_values):
-            if q <= q_min:
-                G_values[i] = 0.0
-                continue
-
-            # Create integration points from q_min to q
-            # Use logarithmic spacing for better accuracy
-            n_points = max(20, int(np.log10(q / q_min) * 20))
-            q_int = np.logspace(np.log10(q_min), np.log10(q), n_points)
-
-            # Calculate integrand at each point
-            integrand_values = np.array([self._integrand_q(qi) for qi in q_int])
-
-            # Numerical integration
-            # Since we use log spacing, we need to integrate properly
-            if self.integration_method == 'trapz':
-                integral = np.trapz(integrand_values, q_int)
-            elif self.integration_method == 'simpson':
-                from scipy.integrate import simpson
-                if len(q_int) % 2 == 0:
-                    # Simpson's rule requires odd number of points
-                    integral = np.trapz(integrand_values, q_int)
-                else:
-                    integral = simpson(integrand_values, q_int)
-            else:
-                # Use quad for higher accuracy (slower)
-                integral, _ = integrate.quad(
-                    self._integrand_q,
-                    q_min,
-                    q,
-                    limit=100,
-                    epsabs=1e-12,
-                    epsrel=1e-10
-                )
-
-            # Apply prefactor 1/8
-            G_values[i] = integral / 8.0
-
-        return G_values
+        results = self.calculate_G_with_details(q_values, q_min=q_min)
+        return results['G']
 
     def calculate_G_single(
         self,
@@ -576,30 +541,46 @@ class GCalculator:
             # Calculate full integrand
             G_integrand_arr[i] = self._integrand_q(q)
 
-        # Calculate cumulative G using trapezoidal integration
+        # Calculate cumulative G with S(q) partial contact correction
+        # S(q) = gamma + (1 - gamma) * P(q)^2
+        # Linear case (gamma=0): S(q) = P(q)^2
+        # At each step: apply S(q) to reduce integrand in non-contact regions
+        from scipy.special import erf
+        S_arr = np.ones(n)
+
+        # Initialize: at q_min, full contact assumed
+        P_arr[0] = 1.0
+        S_arr[0] = self.gamma + (1 - self.gamma) * P_arr[0]**2  # = 1.0
+
         for i in range(1, n):
             if q_values[i] <= q_min:
+                P_arr[i] = 1.0
+                S_arr[i] = 1.0
                 continue
 
+            # Apply S(q) correction to integrand
+            # Use S from previous step for current point (forward Euler)
+            corrected_prev = G_integrand_arr[i-1] * S_arr[i-1]
+            corrected_curr = G_integrand_arr[i] * S_arr[i-1]
+
             # Trapezoidal rule: (f(i-1) + f(i)) / 2 * Δq
-            delta_G = 0.5 * (G_integrand_arr[i-1] + G_integrand_arr[i]) * \
+            delta_G = 0.5 * (corrected_prev + corrected_curr) * \
                       (q_values[i] - q_values[i-1])
 
             delta_G_arr[i] = delta_G / 8.0  # Apply 1/8 factor
             G_arr[i] = G_arr[i-1] + delta_G_arr[i]
 
-        # Calculate contact area ratio P(q) = erf(1 / (2√G))
-        # When G → 0: P → erf(∞) = 1.0 (full contact)
-        # When G → ∞: P → erf(0) = 0.0 (no contact)
-        from scipy.special import erf
-        for i in range(n):
+            # Compute P(q) from current cumulative G
             if G_arr[i] > 1e-10:
                 sqrt_G = np.sqrt(G_arr[i])
                 arg = 1.0 / (2.0 * sqrt_G)
                 arg = min(arg, 10.0)  # erf(10) ≈ 1.0
                 P_arr[i] = erf(arg)
             else:
-                P_arr[i] = 1.0  # Full contact when G is very small
+                P_arr[i] = 1.0
+
+            # Compute S(q) for next step
+            S_arr[i] = self.gamma + (1 - self.gamma) * P_arr[i]**2
 
         result = {
             'q': q_values,
@@ -609,7 +590,8 @@ class GCalculator:
             'G_integrand': G_integrand_arr,
             'delta_G': delta_G_arr,
             'G': G_arr,
-            'contact_area_ratio': P_arr
+            'contact_area_ratio': P_arr,
+            'S_q': S_arr
         }
 
         # Add inner integral details if stored

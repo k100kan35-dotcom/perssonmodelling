@@ -4437,7 +4437,8 @@ class PerssonModelGUI_V2:
                 velocity=v_array[0],  # Initial velocity
                 poisson_ratio=poisson,
                 n_angle_points=int(self.g_n_angle_var.get()),
-                integration_method='trapz'
+                integration_method='trapz',
+                gamma=0.0  # Linear S(q) = P(q)^2 partial contact correction
             )
 
             # =====================================================================
@@ -7274,7 +7275,8 @@ $\begin{array}{lcc}
                 sigma_0=sigma_0,
                 velocity=v_array[0],
                 poisson_ratio=poisson,
-                n_angle_points=int(self.g_n_angle_var.get())
+                n_angle_points=int(self.g_n_angle_var.get()),
+                gamma=0.0  # Linear S(q) = P(q)^2 partial contact correction
             )
 
             # Progress callback
