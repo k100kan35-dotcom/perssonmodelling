@@ -256,7 +256,7 @@ class PerssonModelGUI_V2:
         mu_file = os.path.join(ref_dir, 'persson_ref_mu_visc_linear.txt')
         if os.path.exists(mu_file):
             try:
-                data = np.loadtxt(mu_file, comments='#')
+                data = np.loadtxt(mu_file, comments='#', encoding='utf-8')
                 log_v = data[:, 0]
                 mu = data[:, 1]
                 self.reference_mu_data = {
@@ -279,7 +279,7 @@ class PerssonModelGUI_V2:
         area_file = os.path.join(ref_dir, 'persson_ref_contact_area_linear.txt')
         if os.path.exists(area_file):
             try:
-                data = np.loadtxt(area_file, comments='#')
+                data = np.loadtxt(area_file, comments='#', encoding='utf-8')
                 log_v = data[:, 0]
                 area = data[:, 1]
                 self.reference_area_data = {
