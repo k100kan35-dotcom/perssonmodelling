@@ -4764,9 +4764,10 @@ class PerssonModelGUI_V2:
 
         except Exception as e:
             self.calc_button.config(state='normal')
-            messagebox.showerror("Error", f"Calculation failed:\n{str(e)}")
             import traceback
-            traceback.print_exc()
+            tb = traceback.format_exc()
+            print(f"G calculation error:\n{tb}")
+            messagebox.showerror("Error", f"Calculation failed:\n{str(e)}\n\n{tb[-500:]}")
 
     def _plot_g_results(self):
         """Plot G(q,v) 2D results with enhanced visualizations."""
@@ -5119,9 +5120,11 @@ class PerssonModelGUI_V2:
             if q1_idx > 0:
                 # Use interpolation for more accurate q1
                 from scipy.interpolate import interp1d
-                # Create interpolator
-                f_interp = interp1d(slope_rms_cumulative[q1_idx-10:q1_idx+10],
-                                   q_parse[q1_idx-10:q1_idx+10],
+                # Safe slice bounds (prevent negative index wrap-around)
+                sl_start = max(0, q1_idx - 10)
+                sl_end = min(len(slope_rms_cumulative), q1_idx + 10)
+                f_interp = interp1d(slope_rms_cumulative[sl_start:sl_end],
+                                   q_parse[sl_start:sl_end],
                                    kind='linear', fill_value='extrapolate')
                 q1_determined = float(f_interp(target_slope_rms))
             else:
