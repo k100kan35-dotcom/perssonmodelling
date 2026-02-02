@@ -7245,28 +7245,18 @@ $\begin{array}{lcc}
             # Update g_calculator with new (shifted) material
             from persson_model.core.g_calculator import GCalculator
 
-            # Create modulus functions from shifted material
-            def storage_func(omega):
-                return self.material.get_storage_modulus(omega, temperature=temperature)
-
-            def loss_func(omega):
-                return self.material.get_loss_modulus(omega, temperature=temperature)
-
+            # Create complex modulus function from shifted material
             def modulus_func(omega):
-                E_prime = storage_func(omega)
-                E_loss = loss_func(omega)
-                return E_prime + 1j * E_loss
+                return self.material.get_modulus(omega, temperature=temperature)
 
-            # Recreate g_calculator with shifted material
+            # Recreate g_calculator with shifted material (선형 계산만)
             self.g_calculator = GCalculator(
                 psd_func=self.psd_model,
                 modulus_func=modulus_func,
                 sigma_0=sigma_0,
                 velocity=v_array[0],
                 poisson_ratio=poisson,
-                n_angle_points=n_phi,
-                storage_modulus_func=storage_func,
-                loss_modulus_func=loss_func
+                n_angle_points=n_phi
             )
 
             # Progress callback
