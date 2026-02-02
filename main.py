@@ -7921,15 +7921,13 @@ $\begin{array}{lcc}
             self.ax_mu_cumulative.legend(loc='best', fontsize=7)
             self.ax_mu_cumulative.grid(True, alpha=0.3)
 
-            # Set y-axis to show data with padding
-            y_max_calc = np.max(P_qmax_array) * 1.2
-            # Include reference data in y-axis range
+            # Set y-axis to show data with padding (데이터 기반 자동 스케일링)
+            y_max_calc = np.max(P_qmax_array) * 1.3
             if self.reference_area_data is not None:
-                y_max_calc = max(y_max_calc, np.max(self.reference_area_data['area']) * 1.2)
-            y_max = max(y_max_calc, 0.05)
-            if not np.isfinite(y_max):
-                y_max = 1.0
-            self.ax_mu_cumulative.set_ylim(0, y_max)
+                y_max_calc = max(y_max_calc, np.max(self.reference_area_data['area']) * 1.3)
+            if not np.isfinite(y_max_calc) or y_max_calc <= 0:
+                y_max_calc = 1.0
+            self.ax_mu_cumulative.set_ylim(0, y_max_calc)
 
             # Plot 3: P(q), S(q) for middle velocity
             mid_idx = len(details['details']) // 2
